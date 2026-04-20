@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WikiChat — Game Concepts</title>
+<style>
+  :root {
+    --bg: #0D1117;
+    --bg2: #161B22;
+    --bg3: #1C2128;
+    --border: #30363D;
+    --teal: #45B8B0;
+    --teal-dim: #2d7a75;
+    --text: #E6EDF3;
+    --text-dim: #8B949E;
+    --green: #3FB950;
+    --red: #F85149;
+    --yellow: #D29922;
+    --purple: #A371F7;
+    --orange: #E3832D;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--teal);
+    letter-spacing: 0.02em;
+  }
+  header p {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-left: auto;
+  }
+  .badge {
+    background: var(--teal-dim);
+    color: var(--teal);
+    padding: 2px 8px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Nav */
+  nav {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 32px;
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+  nav button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 12px 16px;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  nav button:hover { color: var(--text); }
+  nav button.active {
+    color: var(--teal);
+    border-bottom-color: var(--teal);
+  }
+
+  /* Comparison grid */
+  .comparison {
+    padding: 24px 32px;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 900px;
+  }
+  th {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+  }
+  th.concept-header {
+    color: var(--text);
+    font-size: 13px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  td {
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    vertical-align: top;
+    font-size: 13px;
+    background: var(--bg);
+  }
+  tr:hover td { background: var(--bg2); }
+  td.label {
+    background: var(--bg2);
+    color: var(--text-dim);
+    font-weight: 500;
+    white-space: nowrap;
+    width: 120px;
+  }
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 600;
+    margin: 1px;
+  }
+  .tag-green { background: rgba(63,185,80,.15); color: var(--green); }
+  .tag-red { background: rgba(248,81,73,.15); color: var(--red); }
+  .tag-yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .tag-teal { background: rgba(69,184,176,.15); color: var(--teal); }
+  .tag-purple { background: rgba(163,113,247,.15); color: var(--purple); }
+  .tag-orange { background: rgba(227,131,45,.15); color: var(--orange); }
+
+  /* Concept cards */
+  .concepts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+    padding: 24px 32px;
+  }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.1s;
+  }
+  .card:hover {
+    border-color: var(--teal);
+    transform: translateY(-1px);
+  }
+  .card.selected { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal-dim); }
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .card-icon {
+    font-size: 28px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .card-title { font-size: 15px; font-weight: 600; color: var(--text); }
+  .card-subtitle { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .card-mots {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .card-section { margin-bottom: 12px; }
+  .card-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .card-section p { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  .pros-cons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .pros, .cons {
+    background: var(--bg3);
+    border-radius: 2px;
+    padding: 8px 10px;
+  }
+  .pros-label { font-size: 10px; font-weight: 700; color: var(--green); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .cons-label { font-size: 10px; font-weight: 700; color: var(--red); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .pros li, .cons li {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: 12px;
+    line-height: 1.5;
+  }
+
+  /* Vote */
+  .vote-bar {
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    bottom: 0;
+  }
+  .vote-bar span { color: var(--text-dim); font-size: 13px; }
+  .vote-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 6px 16px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .vote-btn:hover { border-color: var(--teal); color: var(--teal); }
+  .vote-btn.voted { background: var(--teal-dim); border-color: var(--teal); color: var(--teal); }
+  #vote-result { color: var(--text-dim); font-size: 12px; margin-left: auto; }
+
+  /* Single concept detail */
+  .detail { display: none; padding: 24px 32px; max-width: 860px; }
+  .detail.active { display: block; }
+  .detail h2 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  .detail h3 { font-size: 14px; font-weight: 600; color: var(--teal); margin: 20px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .detail p { color: var(--text-dim); margin-bottom: 10px; line-height: 1.65; }
+  .detail ul { color: var(--text-dim); margin-left: 20px; margin-bottom: 10px; }
+  .detail li { margin-bottom: 4px; }
+  .detail code {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-family: 'Cascadia Code', 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 10px 14px;
+    display: block;
+    white-space: pre;
+    overflow-x: auto;
+    margin-bottom: 10px;
+    color: var(--teal);
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badge">WikiChat</div>
+  <h1>Game Concepts — 5 Visions</h1>
+  <p>Choisir une direction artistique et mécanique</p>
+</header>
+
+<nav id="main-nav">
+  <button class="active" onclick="showView('overview')">Vue d'ensemble</button>
+  <button onclick="showView('comparison')">Tableau comparatif</button>
+  <button onclick="showConcept(0)">A — Village</button>
+  <button onclick="showConcept(1)">B — Cité des Flux</button>
+  <button onclick="showConcept(2)">C — Labyrinthe</button>
+  <button onclick="showConcept(3)">D — QG des Héros</button>
+  <button onclick="showConcept(4)">E — Interface Arcane</button>
+</nav>
+
+<!-- Overview -->
+<div id="view-overview" class="concepts-grid">
+
+  <div class="card" onclick="showConcept(0)">
+    <div class="card-header">
+      <div class="card-icon">🏡</div>
+      <div>
+        <div class="card-title">A — Le Village Vivant</div>
+        <div class="card-subtitle">Animal Crossing · Stardew Valley · A Short Hike</div>
+      </div>
+    </div>
+    <div class="card-mots">
+      <span class="tag tag-green">Contemplatif</span>
+      <span class="tag tag-teal">Chaleureux</span>
+      <span class="tag tag-yellow">Organique</span>
+    </div>
+    <div class="card-section">
+      <div class="card-section-label">Concept</div>
+      <p>Vue top-down 2D. Agents = villageois avec des routines. Projets = maisons décorées selon leur domaine. Exploration libre à pied.</p>
+    </div>
+    <div class="pros-cons">
+      <div class="pros">
+        <div class="pros-label">Points forts</div>
+        <ul>
+          <li>Attachement émotionnel aux agents</li>
+          <li>Accessible universellement</li>
+          <li>Exploration naturelle</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <div class="cons-label">Limites</div>
+        <ul>
+          <li>100+ projets = carte illisible</li>
+          <li>Pas de vue macro</li>
+          <li>Rythme lent peut frustrer</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" onclick="showConcept(1)">
+    <div class="card-header">
+      <div class="card-icon">🏭</div>
+      <div>
+        <div class="card-title">B — La Cité des Flux</div>
+        <div class="card-subtitle">SimCity · Factorio · Mini Metro · Opus Magnum</div>
+      </div>
+    </div>
+    <div class="card-mots">
+      <span class="tag tag-teal">Systémique</span>
+      <span class="tag tag-green">Efficace</span>
+      <span class="tag tag-purple">Lisible</span>
+    </div>
+    <div class="card-section">
+      <div class="card-section-label">Concept</div>
+      <p>Vue isométrique macro. Flux de données visibles comme des convoyeurs animés. Le joueur optimise le système en temps réel.</p>
+    </div>
+    <div class="pros-cons">
+      <div class="pros">
+        <div class="pros-label">Points forts</div>
+        <ul>
+          <li>100+ projets gérables</li>
+          <li>Flux cross-projets visibles</li>
+          <li>Feedback immédiat</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <div class="cons-label">Limites</div>
+        <ul>
+          <li>Agents anonymes, peu d'attachement</li>
+          <li>Courbe d'apprentissage</li>
+          <li>Rythme stressant</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" onclick="showConcept(2)">
+    <div class="card-header">
+      <div class="card-icon">🗝️</div>
+      <div>
+        <div class="card-title">C — Le Labyrinthe des Connaissances</div>
+        <div class="card-subtitle">Hollow Knight · Ori · Dead Cells · Hades</div>
+      </div>
+    </div>
+    <div class="card-mots">
+      <span class="tag tag-purple">Mystérieux</span>
+      <span class="tag tag-teal">Progressif</span>
+      <span class="tag tag-yellow">Révélateur</span>
+    </div>
+    <div class="card-section">
+      <div class="card-section-label">Concept</div>
+      <p>Monde 2D interconnecté à explorer. Zones verrouillées par le Savoir accumulé. Agents dormants à réveiller. Boss = projets en erreur.</p>
+    </div>
+    <div class="pros-cons">
+      <div class="pros">
+        <div class="pros-label">Points forts</div>
+        <ul>
+          <li>Sentiment de découverte fort</li>
+          <li>Progression narrative</li>
+          <li>Tension naturelle</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <div class="cons-label">Limites</div>
+        <ul>
+          <li>Vue globale impossible</li>
+          <li>Navigation lente pour urgences</li>
+          <li>Progression peut bloquer</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" onclick="showConcept(3)">
+    <div class="card-header">
+      <div class="card-icon">⚔️</div>
+      <div>
+        <div class="card-title">D — Le QG des Héros</div>
+        <div class="card-subtitle">Persona 5 · Darkest Dungeon · FTL · Into The Breach</div>
+      </div>
+    </div>
+    <div class="card-mots">
+      <span class="tag tag-red">Stratégique</span>
+      <span class="tag tag-orange">Tendu</span>
+      <span class="tag tag-teal">Maîtrisé</span>
+    </div>
+    <div class="card-section">
+      <div class="card-section-label">Concept</div>
+      <p>Interface hybride QG + panel missions. Agents = héros avec classes et niveaux. Missions planifiées et rapports en temps réel.</p>
+    </div>
+    <div class="pros-cons">
+      <div class="pros">
+        <div class="pros-label">Points forts</div>
+        <ul>
+          <li>Décisions claires et stratégiques</li>
+          <li>Héros attachants avec historique</li>
+          <li>Progression longue durée</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <div class="cons-label">Limites</div>
+        <ul>
+          <li>Moins intuitif non-gamers</li>
+          <li>Tension peut être contre-productive</li>
+          <li>Friction gestion énergie</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" onclick="showConcept(4)">
+    <div class="card-header">
+      <div class="card-icon">✦</div>
+      <div>
+        <div class="card-title">E — L'Interface Arcane</div>
+        <div class="card-subtitle">Dwarf Fortress · Hacknet · Her Story · Orwell</div>
+      </div>
+    </div>
+    <div class="card-mots">
+      <span class="tag tag-purple">Ésotérique</span>
+      <span class="tag tag-teal">Immersif</span>
+      <span class="tag tag-yellow">Révélé</span>
+    </div>
+    <div class="card-section">
+      <div class="card-section-label">Concept</div>
+      <p>Pas de carte ni de personnage — que des glyphes et des runes. Le joueur compose des "sorts" pour spawner des agents. L'interface EST le monde.</p>
+    </div>
+    <div class="pros-cons">
+      <div class="pros">
+        <div class="pros-label">Points forts</div>
+        <ul>
+          <li>Esthétique unique et mémorable</li>
+          <li>Immersion totale</li>
+          <li>Dense en information</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <div class="cons-label">Limites</div>
+        <ul>
+          <li>Courbe très abrupte</li>
+          <li>Inaccessible au grand public</li>
+          <li>Peu adapté à l'usage pro quotidien</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Comparison table -->
+<div id="view-comparison" class="comparison hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Critère</th>
+        <th class="concept-header">🏡 Village Vivant</th>
+        <th class="concept-header">🏭 Cité des Flux</th>
+        <th class="concept-header">🗝️ Labyrinthe</th>
+        <th class="concept-header">⚔️ QG des Héros</th>
+        <th class="concept-header">✦ Interface Arcane</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="label">Vue</td>
+        <td>Top-down 2D libre</td>
+        <td>Isométrique macro</td>
+        <td>2D side-scroll</td>
+        <td>Interface hybride</td>
+        <td>Glyphes orbitants</td>
+      </tr>
+      <tr>
+        <td class="label">Rythme</td>
+        <td><span class="tag tag-green">Lent / Contemplatif</span></td>
+        <td><span class="tag tag-red">Rapide / Stressant</span></td>
+        <td><span class="tag tag-yellow">Progressif</span></td>
+        <td><span class="tag tag-orange">Tendu / Stratégique</span></td>
+        <td><span class="tag tag-purple">Mystérieux / Progressif</span></td>
+      </tr>
+      <tr>
+        <td class="label">Scalabilité 100+ projets</td>
+        <td><span class="tag tag-red">Faible</span></td>
+        <td><span class="tag tag-green">Excellente</span></td>
+        <td><span class="tag tag-yellow">Moyenne</span></td>
+        <td><span class="tag tag-green">Bonne</span></td>
+        <td><span class="tag tag-teal">Très bonne</span></td>
+      </tr>
+      <tr>
+        <td class="label">Attachement agents</td>
+        <td><span class="tag tag-green">Fort (villageois)</span></td>
+        <td><span class="tag tag-red">Faible (workers)</span></td>
+        <td><span class="tag tag-teal">Moyen (lucioles)</span></td>
+        <td><span class="tag tag-green">Fort (héros)</span></td>
+        <td><span class="tag tag-yellow">Moyen (glyphes)</span></td>
+      </tr>
+      <tr>
+        <td class="label">Vue globale</td>
+        <td><span class="tag tag-red">Non</span></td>
+        <td><span class="tag tag-green">Oui (macro)</span></td>
+        <td><span class="tag tag-red">Non</span></td>
+        <td><span class="tag tag-yellow">Partielle (panel)</span></td>
+        <td><span class="tag tag-teal">Oui (orbites)</span></td>
+      </tr>
+      <tr>
+        <td class="label">Accessibilité</td>
+        <td><span class="tag tag-green">Universelle</span></td>
+        <td><span class="tag tag-yellow">Moyenne</span></td>
+        <td><span class="tag tag-yellow">Gamers</span></td>
+        <td><span class="tag tag-yellow">Gamers</span></td>
+        <td><span class="tag tag-red">Power-users</span></td>
+      </tr>
+      <tr>
+        <td class="label">Cross-projet visible</td>
+        <td><span class="tag tag-teal">Chemins / ponts</span></td>
+        <td><span class="tag tag-green">Convoyeurs animés</span></td>
+        <td><span class="tag tag-yellow">Passages</span></td>
+        <td><span class="tag tag-yellow">Partage d'artifacts</span></td>
+        <td><span class="tag tag-green">Lignes de flux runes</span></td>
+      </tr>
+      <tr>
+        <td class="label">Urgence / alertes</td>
+        <td><span class="tag tag-yellow">Orage sur zone</span></td>
+        <td><span class="tag tag-green">Convoyeur rouge + HUD</span></td>
+        <td><span class="tag tag-yellow">Boss zone atmosphère</span></td>
+        <td><span class="tag tag-green">Alerte rouge + timer</span></td>
+        <td><span class="tag tag-teal">Glyphe qui s'éteint</span></td>
+      </tr>
+      <tr>
+        <td class="label">Prototype min</td>
+        <td>1 maison interactive</td>
+        <td>1 bâtiment + convoyeur SSE</td>
+        <td>1 zone + luciole</td>
+        <td>QG + 1 mission + rapports</td>
+        <td>5 glyphes + 1 sort</td>
+      </tr>
+      <tr>
+        <td class="label">Identité WikiChat</td>
+        <td><span class="tag tag-teal">Chaleureuse / grand public</span></td>
+        <td><span class="tag tag-purple">Professionnelle / efficace</span></td>
+        <td><span class="tag tag-yellow">Narrative / poétique</span></td>
+        <td><span class="tag tag-orange">Opérationnelle / tendue</span></td>
+        <td><span class="tag tag-purple">Unique / expérimentale</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Individual concept details -->
+<div id="view-concept-0" class="detail">
+  <h2>🏡 A — Le Village Vivant</h2>
+  <div class="card-mots" style="margin: 8px 0 20px;">
+    <span class="tag tag-green">Contemplatif</span>
+    <span class="tag tag-teal">Chaleureux</span>
+    <span class="tag tag-yellow">Organique</span>
+  </div>
+  <h3>Screenshot imaginaire</h3>
+  <p>Vue top-down légèrement inclinée. Place centrale avec fontaine teal scintillante. Maisons colorées par domaine — "panoramax3d" a un toit bleu-vert et une lunette d'observation. Les chemins entre maisons sont tracés là où les agents passent le plus. Une zone brumeuse au loin se lève progressivement quand on s'en approche.</p>
+  <h3>Boucle joueur</h3>
+  <p><strong>0-10 min</strong> : réveil dans sa maison (wikichat hub). Tom Nook explique en 3 bulles. On sort, 2-3 maisons visibles. On entre dans la plus proche — artifacts sur les étagères, villageois qui tape sur son ordi. On lui parle → il raconte.</p>
+  <p><strong>10-20 min</strong> : panneau de missions devant la mairie. 3 missions actives. On accepte, un agent GitWatcher apparaît, on l'accompagne, il produit un rapport (coffre brillant).</p>
+  <h3>5 moments forts</h3>
+  <ul>
+    <li><strong>Premier lever de brume</strong> — zone inconnue se révèle pixel par pixel</li>
+    <li><strong>Fête de KB</strong> — knowledge base complète, feux d'artifice teal, musique spéciale</li>
+    <li><strong>Villageois qui s'en va</strong> — agent terminé, animation départ depuis la gare</li>
+    <li><strong>Orage sur zone en erreur</strong> — nuages rouges, éclairs, project blocker critique</li>
+    <li><strong>Visite surprise</strong> — agent d'un autre projet arrive avec un colis cross-projet</li>
+  </ul>
+  <h3>Transposition technique</h3>
+  <code>Joueur entre dans maison     → GET /api/projects/:slug/wikichat/artifacts
+Joueur parle à villageois   → GET messages WikiChat de cet agent
+Joueur accepte mission      → POST /api/spawn/headless avec prompt ciblé
+Coffre brillant apparaît    → SSE event artifact partagé
+Feux d'artifice             → SSE event KB complète</code>
+</div>
+
+<div id="view-concept-1" class="detail">
+  <h2>🏭 B — La Cité des Flux</h2>
+  <div class="card-mots" style="margin: 8px 0 20px;">
+    <span class="tag tag-teal">Systémique</span>
+    <span class="tag tag-green">Efficace</span>
+    <span class="tag tag-purple">Lisible</span>
+  </div>
+  <h3>Screenshot imaginaire</h3>
+  <p>Vue isométrique, fond gris anthracite. Barre HUD horizontale avec 6 jauges. Tour WikiChat centrale qui émet des pulsations bleues. Bâtiments-projets reliés par des convoyeurs animés — petits cubes colorés (teal = artifact, bleu = message, violet = KB chunk) qui glissent en temps réel.</p>
+  <h3>Boucle joueur</h3>
+  <p><strong>0-5 min</strong> : observer les flux, identifier un convoyeur engorgé ou un bâtiment silencieux.</p>
+  <p><strong>5-15 min</strong> : glisser un worker sur un bâtiment inactif → agent headless spawné, bâtiment s'anime, nouveau convoyeur créé.</p>
+  <p><strong>15-30 min</strong> : optimiser — créer des convoyeurs directs, placer des workers KnowledgeBuilder sur les backlogs.</p>
+  <h3>5 moments forts</h3>
+  <ul>
+    <li><strong>Première saturation</strong> — convoyeur rouge, cubes entassés, "OVERLOAD" clignote</li>
+    <li><strong>Chaîne de valeur complète</strong> — artifact traverse 3 convoyeurs, 2 bâtiments s'illuminent simultanément</li>
+    <li><strong>Panne en cascade</strong> — projet tombe, 3 dépendants passent en "idle"</li>
+    <li><strong>Record de débit</strong> — tous les convoyeurs verts, animation "OPTIMAL FLOW"</li>
+    <li><strong>Nouveau bâtiment</strong> — camion de construction, montage en accéléré</li>
+  </ul>
+  <h3>Transposition technique</h3>
+  <code>Joueur clique bâtiment      → GET /api/projects/:slug/messages + artifacts
+Joueur glisse worker        → POST /api/spawn/headless {project, prompt}
+Convoyeur s'anime           → SSE event: message ou artifact entre projets
+Bâtiment clignote rouge     → SSE event: project_error ou blocker
+Jauge KB monte              → SSE event: kb_updated</code>
+</div>
+
+<div id="view-concept-2" class="detail">
+  <h2>🗝️ C — Le Labyrinthe des Connaissances</h2>
+  <div class="card-mots" style="margin: 8px 0 20px;">
+    <span class="tag tag-purple">Mystérieux</span>
+    <span class="tag tag-teal">Progressif</span>
+    <span class="tag tag-yellow">Révélateur</span>
+  </div>
+  <h3>Screenshot imaginaire</h3>
+  <p>Fond noir profond. Vue 2D side-scrolling. Joueur = silhouette teal lumineuse. Caverne centrale (WikiChat Hub) avec pierres bleues gravées de glyphes. Passages vers des zones aux ambiances distinctes. Lucioles bleues (agents dormants) au sol. Mini-map révélée progressivement en haut à droite.</p>
+  <h3>Boucle joueur</h3>
+  <p><strong>0-10 min</strong> : explorer 2-3 passages depuis le Hub. Entrer dans une zone, voir les fresques murales (artifacts récents). Réveiller une luciole (spawn agent). Revenir avec du Savoir.</p>
+  <p><strong>10-25 min</strong> : débloquer des portes verrouillées par seuil de Savoir. Explorer les zones révélées.</p>
+  <h3>5 moments forts</h3>
+  <ul>
+    <li><strong>Premier réveil de luciole</strong> — agent s'illumine, mélodie, nous suit</li>
+    <li><strong>Porte qui s'ouvre</strong> — chaîne de runes brisée, musique de la nouvelle zone</li>
+    <li><strong>Boss zone</strong> — sol craquelé rouge, musique tendue, erreurs = tentacules</li>
+    <li><strong>Artifact rare</strong> — faisceau vertical, artifact flottant</li>
+    <li><strong>Zone secrète</strong> — fresque cachée révèle un agent spécial</li>
+  </ul>
+  <h3>Transposition technique</h3>
+  <code>Joueur entre dans zone       → GET /api/projects/:slug/messages (fresques)
+Joueur réveille luciole     → POST /api/spawn/headless {project, prompt}
+Cristal KB collecté         → GET /api/wikichat/artifacts
+Porte s'ouvre               → condition: nb artifacts projet >= seuil
+Boss zone                   → SSE event: project_error (atmosphère orageuse)</code>
+</div>
+
+<div id="view-concept-3" class="detail">
+  <h2>⚔️ D — Le QG des Héros</h2>
+  <div class="card-mots" style="margin: 8px 0 20px;">
+    <span class="tag tag-red">Stratégique</span>
+    <span class="tag tag-orange">Tendu</span>
+    <span class="tag tag-teal">Maîtrisé</span>
+  </div>
+  <h3>Screenshot imaginaire</h3>
+  <p>Interface divisée : QG isométrique (gauche 60%) + panel de contrôle (droite 40%). Dans le QG : Salle KB, Forge de Code, Salle d'Ops, Salle de Repos. Dans le panel : 3 missions actives avec héros (portrait pixel-art), classe, progression, dernier message comme lettre de mission.</p>
+  <h3>Boucle joueur</h3>
+  <p><strong>0-10 min</strong> : lire les rapports en attente, décider quel héros sur quelle mission, configurer et envoyer.</p>
+  <p><strong>10-30 min</strong> : gérer les lettres qui arrivent, envoyer renforts si blocage, rappeler et réassigner.</p>
+  <p><strong>30-60 min</strong> : améliorer les salles du QG avec les artifacts accumulés, débloquer de nouveaux types de héros.</p>
+  <h3>5 moments forts</h3>
+  <ul>
+    <li><strong>Retour de mission</strong> — héros revient avec rapport de debriefing complet</li>
+    <li><strong>Mission critique</strong> — alerte rouge, timer, 2 héros disponibles, 30 secondes pour décider</li>
+    <li><strong>Upgrade de salle</strong> — animation construction, nouvelle capacité immédiate</li>
+    <li><strong>Héros qui monte de niveau</strong> — portrait change, XP éclate en étoiles</li>
+    <li><strong>Urgence multi-projets</strong> — 3 alertes, pas assez de héros pour tout couvrir</li>
+  </ul>
+  <h3>Transposition technique</h3>
+  <code>Joueur assigne héros         → POST /api/spawn/headless {project, prompt, tools}
+Lettre de mission arrive    → SSE event: message (Salle d'Ops)
+Héros revient               → SSE event: session_ended (artifact déposé)
+Améliorer salle KB          → modification config → agents avec nouveau system-prompt
+Mission urgente             → SSE event: project_error (alerte rouge + timer)</code>
+</div>
+
+<div id="view-concept-4" class="detail">
+  <h2>✦ E — L'Interface Arcane</h2>
+  <div class="card-mots" style="margin: 8px 0 20px;">
+    <span class="tag tag-purple">Ésotérique</span>
+    <span class="tag tag-teal">Immersif</span>
+    <span class="tag tag-yellow">Révélé</span>
+  </div>
+  <h3>Screenshot imaginaire</h3>
+  <p>Fond absolument noir. Grand glyphe central pulsant (WikiChat hub). Autour en orbite : 8 glyphes-projets uniques avec halos colorés. Entre eux : lignes de runes animées = flux de données. En bas : barre de commande avec glyphes sélectionnables pour composer des "sorts". À droite : grimoire partiel (artifacts déchiffrés).</p>
+  <h3>Boucle joueur</h3>
+  <p><strong>0-10 min</strong> : déchiffrer — survol d'un glyphe révèle le nom et 2 messages. Comprendre que les glyphes = projets. Tenter la ligne de commande.</p>
+  <p><strong>10-25 min</strong> : le grimoire se remplit. Chaque artifact = nouvelle rune de commande. Composer des sorts complexes.</p>
+  <p><strong>25-60 min</strong> : maîtriser le vocabulaire symbolique. Déclencher des réactions en chaîne entre glyphes.</p>
+  <h3>5 moments forts</h3>
+  <ul>
+    <li><strong>Premier glyphe déchiffré</strong> — nom du projet révélé, grimoire s'ouvre</li>
+    <li><strong>Premier sort réussi</strong> — agent-glyphe apparaît en orbite, lignes de flux s'animent</li>
+    <li><strong>Tempête de runes</strong> — plusieurs SSE simultanés, glyphes pulsent vite, écran vibre</li>
+    <li><strong>Glyphe inconnu</strong> — nouveau projet en périphérie, runes illisibles qui se révèlent progressivement</li>
+    <li><strong>Grimoire complet</strong> — Vue Constellation déverrouillée</li>
+  </ul>
+  <h3>Transposition technique</h3>
+  <code>Glyphe pulsant              → nb messages récents = fréquence pulsation
+Ligne de flux animée        → SSE event: message/artifact inter-projets
+Sort ⊕ + glyphe + ⟳         → POST /api/spawn/headless {project, prompt}
+Grimoire page               → GET /api/wikichat/artifacts
+Orbite distance             → calculée depuis dernière activité projet
+Glyphe s'obscurcit          → absence SSE events depuis >7 jours</code>
+</div>
+
+<!-- Vote bar -->
+<div class="vote-bar">
+  <span>Votre choix :</span>
+  <button class="vote-btn" onclick="vote('A')">🏡 A — Village</button>
+  <button class="vote-btn" onclick="vote('B')">🏭 B — Cité</button>
+  <button class="vote-btn" onclick="vote('C')">🗝️ C — Labyrinthe</button>
+  <button class="vote-btn" onclick="vote('D')">⚔️ D — QG</button>
+  <button class="vote-btn" onclick="vote('E')">✦ E — Arcane</button>
+  <div id="vote-result"></div>
+</div>
+
+<script>
+const navBtns = document.querySelectorAll('#main-nav button');
+const views = ['overview', 'comparison', 'concept-0', 'concept-1', 'concept-2', 'concept-3', 'concept-4'];
+
+function hideAll() {
+  document.getElementById('view-overview').classList.add('hidden');
+  document.getElementById('view-comparison').classList.add('hidden');
+  document.querySelectorAll('.detail').forEach(d => d.classList.remove('active'));
+  navBtns.forEach(b => b.classList.remove('active'));
+}
+
+function showView(name) {
+  hideAll();
+  const el = document.getElementById('view-' + name);
+  if (el) {
+    el.classList.remove('hidden');
+    el.classList.add('active');
+  }
+  const idx = views.indexOf(name);
+  if (idx >= 0 && navBtns[idx]) navBtns[idx].classList.add('active');
+}
+
+function showConcept(i) {
+  hideAll();
+  document.getElementById('view-concept-' + i).classList.add('active');
+  if (navBtns[2 + i]) navBtns[2 + i].classList.add('active');
+}
+
+function vote(letter) {
+  document.querySelectorAll('.vote-btn').forEach(b => b.classList.remove('voted'));
+  event.target.classList.add('voted');
+  const names = { A: 'Le Village Vivant', B: 'La Cité des Flux', C: 'Le Labyrinthe', D: 'Le QG des Héros', E: "L'Interface Arcane" };
+  document.getElementById('vote-result').textContent = `→ Direction choisie : Concept ${letter} — ${names[letter]}`;
+  localStorage.setItem('wikichat-concept-vote', letter);
+}
+
+// Restore vote
+const saved = localStorage.getItem('wikichat-concept-vote');
+if (saved) {
+  const btn = [...document.querySelectorAll('.vote-btn')].find(b => b.textContent.includes(saved));
+  if (btn) { btn.classList.add('voted'); vote.call({ target: btn }, saved); }
+}
+
+// Initial view
+showView('overview');
+</script>
+</body>
+</html>

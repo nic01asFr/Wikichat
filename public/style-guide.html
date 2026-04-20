@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WikiChat — Style Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Inter:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<style>
+/* ── WikiChat Design Tokens v1.1 ── */
+:root {
+  --wc-primary: #45B8B0;
+  --wc-bg: #0D1117;
+  --wc-surface: #161B22;
+  --wc-border: #30363D;
+  --wc-text: #E6EDF3;
+  --wc-text-dim: #8B949E;
+  --wc-success: #3FB950;
+  --wc-warning: #D29922;
+  --wc-error: #F85149;
+  --wc-info: #58A6FF;
+  --wc-accent: #BC8CFF;
+  --wc-agent-architect: #7EB8DA;
+  --wc-agent-designer: #C4A0E0;
+  --wc-agent-developer: #6DBF7B;
+  --wc-agent-analyst: #C9A84C;
+  --wc-agent-system: #8B949E;
+  --wc-space-xs: 4px;
+  --wc-space-sm: 8px;
+  --wc-space-md: 16px;
+  --wc-space-lg: 24px;
+  --wc-space-xl: 32px;
+  --wc-radius-sm: 1px;
+  --wc-radius-md: 2px;
+  --wc-radius-lg: 4px;
+  --wc-shadow-sm: 2px 2px 0px rgba(0,0,0,0.3);
+  --wc-shadow-md: 4px 4px 0px rgba(0,0,0,0.3);
+  --wc-transition: 150ms ease;
+  --wc-z-sticky: 700;
+  --wc-z-overlay: 800;
+  --wc-z-tooltip: 900;
+  --wc-z-modal: 1000;
+  --wc-focus-ring: 2px solid var(--wc-primary);
+  --wc-focus-offset: 2px;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; image-rendering:pixelated; }
+html,body { background:var(--wc-bg); color:var(--wc-text); font-family:'Inter',sans-serif; font-size:14px; line-height:1.6; }
+
+/* ── Layout ── */
+.sg-page { max-width:1100px; margin:0 auto; padding:32px 24px; }
+.sg-header { margin-bottom:48px; padding-bottom:24px; border-bottom:1px solid var(--wc-border); }
+.sg-header h1 { font-family:'Silkscreen',monospace; font-size:18px; color:var(--wc-primary); -webkit-font-smoothing:none; margin-bottom:8px; }
+.sg-header p { font-size:12px; color:var(--wc-text-dim); }
+.sg-header .tagline { font-family:'Silkscreen',monospace; font-size:10px; color:var(--wc-text-dim); margin-top:4px; -webkit-font-smoothing:none; }
+
+.sg-section { margin-bottom:56px; }
+.sg-title { font-family:'Silkscreen',monospace; font-size:12px; color:var(--wc-primary); margin-bottom:16px; padding-bottom:8px; border-bottom:1px solid var(--wc-border); -webkit-font-smoothing:none; text-transform:uppercase; letter-spacing:1px; }
+.sg-note { font-size:12px; color:var(--wc-text-dim); margin:8px 0; }
+.sg-note code { font-family:'JetBrains Mono',monospace; background:var(--wc-surface); padding:1px 4px; border-radius:2px; color:var(--wc-text); font-size:11px; }
+
+/* ── Swatches ── */
+.sg-swatches { display:flex; flex-wrap:wrap; gap:8px; }
+.sg-swatch { width:160px; min-height:100px; padding:8px; display:flex; flex-direction:column; justify-content:flex-end; border-radius:var(--wc-radius-lg); box-shadow:var(--wc-shadow-md); }
+.sg-swatch__name { font-family:'Silkscreen',monospace; font-size:9px; -webkit-font-smoothing:none; }
+.sg-swatch__hex { font-family:'JetBrains Mono',monospace; font-size:11px; opacity:0.9; }
+.sg-swatch__usage { font-family:'Inter',sans-serif; font-size:10px; opacity:0.7; margin-top:4px; }
+
+/* ── Typography ── */
+.sg-type-block { margin-bottom:16px; padding:16px; background:var(--wc-surface); border:1px solid var(--wc-border); border-radius:var(--wc-radius-lg); }
+.sg-type-label { font-size:11px; color:var(--wc-text-dim); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.5px; }
+.sg-type-table { width:100%; border-collapse:collapse; font-size:12px; }
+.sg-type-table th { text-align:left; padding:6px 8px; color:var(--wc-text-dim); border-bottom:1px solid var(--wc-border); font-weight:500; }
+.sg-type-table td { padding:6px 8px; border-bottom:1px solid rgba(48,54,61,0.5); }
+
+/* ── Patterns ── */
+.sg-patterns { display:flex; flex-wrap:wrap; gap:12px; }
+.sg-pattern { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.sg-pattern__block { width:160px; height:80px; border:1px solid var(--wc-border); border-radius:var(--wc-radius-lg); }
+.sg-pattern__name { font-family:'Silkscreen',monospace; font-size:9px; color:var(--wc-text-dim); -webkit-font-smoothing:none; }
+.pattern-dots { background-color:var(--wc-surface); background-image:radial-gradient(var(--wc-border) 1px, transparent 1px); background-size:4px 4px; }
+.pattern-crosshatch { background-color:var(--wc-surface); background-image:repeating-linear-gradient(45deg,var(--wc-border) 0,var(--wc-border) 1px,transparent 0,transparent 8px),repeating-linear-gradient(-45deg,var(--wc-border) 0,var(--wc-border) 1px,transparent 0,transparent 8px); opacity:0.6; }
+.pattern-dither { background:repeating-conic-gradient(var(--wc-bg) 0% 25%,var(--wc-surface) 0% 50%) 0 0 / 4px 4px; }
+.pattern-scanlines { background-color:var(--wc-surface); background-image:repeating-linear-gradient(0deg,transparent,transparent 1px,rgba(0,0,0,0.07) 1px,rgba(0,0,0,0.07) 2px); }
+
+/* ── Icons ── */
+.icon-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,1fr)); gap:12px; }
+.icon-card { display:flex; flex-direction:column; align-items:center; gap:8px; padding:12px; background:var(--wc-surface); border:1px solid var(--wc-border); border-radius:var(--wc-radius-lg); }
+.icon-card svg { image-rendering:pixelated; }
+.icon-label { font-family:'Silkscreen',monospace; font-size:9px; color:var(--wc-text-dim); text-align:center; -webkit-font-smoothing:none; }
+
+/* ── Components ── */
+.sg-components { display:flex; flex-direction:column; gap:20px; }
+.sg-comp-row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; }
+.sg-comp-label { font-size:11px; color:var(--wc-text-dim); margin-bottom:8px; }
+
+/* Buttons */
+.wc-btn { font-family:'Silkscreen',monospace; font-size:9px; padding:8px 14px; border:none; border-radius:var(--wc-radius-md); cursor:pointer; box-shadow:var(--wc-shadow-sm); transition:var(--wc-transition); -webkit-font-smoothing:none; letter-spacing:0.5px; }
+.wc-btn-primary { background:var(--wc-primary); color:var(--wc-bg); }
+.wc-btn-primary:hover { background:#3AA8A0; }
+.wc-btn-ghost { background:transparent; color:var(--wc-text); border:1px solid var(--wc-border); }
+.wc-btn-ghost:hover { border-color:var(--wc-primary); color:var(--wc-primary); }
+.wc-btn-danger { background:var(--wc-error); color:var(--wc-text); }
+
+/* Agent card */
+.wc-agent-card { background:var(--wc-surface); border:1px solid var(--wc-border); border-radius:var(--wc-radius-lg); padding:10px; width:180px; box-shadow:var(--wc-shadow-sm); }
+.wc-agent-name { font-family:'Silkscreen',monospace; font-size:9px; color:var(--wc-text); margin-bottom:4px; -webkit-font-smoothing:none; }
+.wc-agent-role { font-size:10px; color:var(--wc-text-dim); margin-bottom:6px; }
+.wc-hp-bar { height:4px; background:var(--wc-border); border-radius:1px; overflow:hidden; margin-bottom:6px; }
+.wc-hp-fill { height:100%; border-radius:1px; }
+.wc-badge { display:inline-block; font-family:'Silkscreen',monospace; font-size:8px; padding:2px 5px; border-radius:1px; -webkit-font-smoothing:none; }
+
+/* Toast */
+.wc-toast { display:inline-flex; align-items:center; gap:8px; background:var(--wc-surface); border:1px solid var(--wc-border); border-left:3px solid var(--wc-primary); border-radius:var(--wc-radius-lg); padding:8px 12px; font-size:12px; box-shadow:var(--wc-shadow-md); min-width:260px; }
+.wc-toast--success { border-left-color:var(--wc-success); }
+.wc-toast--error { border-left-color:var(--wc-error); }
+.wc-toast--warning { border-left-color:var(--wc-warning); }
+
+/* Dialog */
+.wc-dialog { background:var(--wc-bg); border:2px solid var(--wc-primary); border-radius:var(--wc-radius-lg); padding:16px; max-width:400px; box-shadow:var(--wc-shadow-md); }
+.wc-dialog-speaker { font-family:'Silkscreen',monospace; font-size:9px; color:var(--wc-primary); margin-bottom:8px; -webkit-font-smoothing:none; }
+.wc-dialog-text { font-family:'Silkscreen',monospace; font-size:9px; color:var(--wc-text); line-height:2; -webkit-font-smoothing:none; }
+.wc-dialog-hint { font-family:'Silkscreen',monospace; font-size:8px; color:var(--wc-text-dim); margin-top:8px; text-align:right; -webkit-font-smoothing:none; }
+
+/* HUD strip */
+.wc-hud { display:flex; align-items:center; gap:12px; padding:8px 14px; background:linear-gradient(#000e,transparent); font-family:'Silkscreen',monospace; font-size:8px; -webkit-font-smoothing:none; border-radius:var(--wc-radius-lg); }
+.wc-hud-item { color:var(--wc-text-dim); }
+.wc-hud-item.primary { color:var(--wc-primary); }
+.wc-hud-item.success { color:var(--wc-success); }
+.wc-hud-item.info { color:var(--wc-info); }
+.wc-hud-item.accent { color:var(--wc-accent); }
+
+/* Canvas sections */
+canvas { display:block; image-rendering:pixelated; }
+</style>
+</head>
+<body>
+<div class="sg-page">
+
+  <!-- Header -->
+  <div class="sg-header">
+    <h1>WikiChat — Style Guide</h1>
+    <p class="tagline">Your agents, talking.</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--wc-text-dim)">Direction artistique : <span style="color:var(--wc-primary)">"Stardew Valley de nuit"</span> — dark ET chaleureux. v1.1 · validé ArtDirector</p>
+  </div>
+
+  <!-- ── Section 1: Palette Core ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">1 — Palette Core</h2>
+    <div class="sg-swatches">
+      <div class="sg-swatch" style="background:#45B8B0">
+        <span class="sg-swatch__name">Pixel Teal</span>
+        <span class="sg-swatch__hex">#45B8B0</span>
+        <span class="sg-swatch__usage">Primary — accents, CTAs, logo</span>
+      </div>
+      <div class="sg-swatch" style="background:#0D1117;border:1px solid #30363D">
+        <span class="sg-swatch__name" style="color:#E6EDF3">Midnight</span>
+        <span class="sg-swatch__hex" style="color:#E6EDF3">#0D1117</span>
+        <span class="sg-swatch__usage" style="color:#8B949E">Background principal</span>
+      </div>
+      <div class="sg-swatch" style="background:#161B22;border:1px solid #30363D">
+        <span class="sg-swatch__name" style="color:#E6EDF3">Charcoal</span>
+        <span class="sg-swatch__hex" style="color:#E6EDF3">#161B22</span>
+        <span class="sg-swatch__usage" style="color:#8B949E">Surface — cards, panels</span>
+      </div>
+      <div class="sg-swatch" style="background:#30363D">
+        <span class="sg-swatch__name" style="color:#E6EDF3">Slate</span>
+        <span class="sg-swatch__hex" style="color:#E6EDF3">#30363D</span>
+        <span class="sg-swatch__usage" style="color:#8B949E">Borders, séparateurs</span>
+      </div>
+      <div class="sg-swatch" style="background:#E6EDF3">
+        <span class="sg-swatch__name" style="color:#0D1117">Cloud</span>
+        <span class="sg-swatch__hex" style="color:#0D1117">#E6EDF3</span>
+        <span class="sg-swatch__usage" style="color:#30363D">Texte principal</span>
+      </div>
+      <div class="sg-swatch" style="background:#8B949E">
+        <span class="sg-swatch__name" style="color:#0D1117">Fog</span>
+        <span class="sg-swatch__hex" style="color:#0D1117">#8B949E</span>
+        <span class="sg-swatch__usage" style="color:#161B22">Texte secondaire, labels</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Section 2: Palette Sémantique ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">2 — Palette Sémantique</h2>
+    <div class="sg-swatches">
+      <div class="sg-swatch" style="background:#3FB950"><span class="sg-swatch__name">Success</span><span class="sg-swatch__hex">#3FB950</span><span class="sg-swatch__usage">Online, connected</span></div>
+      <div class="sg-swatch" style="background:#D29922"><span class="sg-swatch__name">Warning</span><span class="sg-swatch__hex">#D29922</span><span class="sg-swatch__usage">Busy, warnings</span></div>
+      <div class="sg-swatch" style="background:#F85149"><span class="sg-swatch__name">Error</span><span class="sg-swatch__hex">#F85149</span><span class="sg-swatch__usage">Errors, disconnect</span></div>
+      <div class="sg-swatch" style="background:#58A6FF"><span class="sg-swatch__name">Info</span><span class="sg-swatch__hex">#58A6FF</span><span class="sg-swatch__usage">Info, liens</span></div>
+      <div class="sg-swatch" style="background:#BC8CFF"><span class="sg-swatch__name">Accent</span><span class="sg-swatch__hex">#BC8CFF</span><span class="sg-swatch__usage">Artifacts, special</span></div>
+    </div>
+  </section>
+
+  <!-- ── Section 3: Palette Agents ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">3 — Palette Agents</h2>
+    <p class="sg-note">Hue-shifted — aucune collision avec les couleurs sémantiques. Skin sprite : <code>#E6C9A0</code></p>
+    <div class="sg-swatches">
+      <div class="sg-swatch" style="background:#7EB8DA"><span class="sg-swatch__name">Architect</span><span class="sg-swatch__hex">#7EB8DA</span><span class="sg-swatch__usage">Bleu acier</span></div>
+      <div class="sg-swatch" style="background:#C4A0E0"><span class="sg-swatch__name" style="color:#0D1117">Designer</span><span class="sg-swatch__hex" style="color:#0D1117">#C4A0E0</span><span class="sg-swatch__usage" style="color:#30363D">Lavande</span></div>
+      <div class="sg-swatch" style="background:#6DBF7B"><span class="sg-swatch__name">Developer</span><span class="sg-swatch__hex">#6DBF7B</span><span class="sg-swatch__usage">Vert forêt</span></div>
+      <div class="sg-swatch" style="background:#C9A84C"><span class="sg-swatch__name" style="color:#0D1117">Analyst</span><span class="sg-swatch__hex" style="color:#0D1117">#C9A84C</span><span class="sg-swatch__usage" style="color:#30363D">Or antique</span></div>
+      <div class="sg-swatch" style="background:#8B949E"><span class="sg-swatch__name" style="color:#0D1117">System</span><span class="sg-swatch__hex" style="color:#0D1117">#8B949E</span><span class="sg-swatch__usage" style="color:#161B22">Pierre — NPC</span></div>
+    </div>
+  </section>
+
+  <!-- ── Section 4: Typographie ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">4 — Typographie</h2>
+
+    <div class="sg-type-block">
+      <div class="sg-type-label">Silkscreen — Pixel display (titres, headers game mode)</div>
+      <div style="font-family:'Silkscreen',monospace;font-size:16px;color:#45B8B0;-webkit-font-smoothing:none;margin-bottom:6px">Wiki<span style="color:#E6EDF3">Chat</span></div>
+      <div style="font-family:'Silkscreen',monospace;font-size:12px;color:#E6EDF3;-webkit-font-smoothing:none;margin-bottom:4px">#general · #coordination · #visual-identity</div>
+      <div style="font-family:'Silkscreen',monospace;font-size:10px;color:#8B949E;-webkit-font-smoothing:none;margin-bottom:4px">ArtDirector · UIDesigner · PixelArtist · BrandDesigner</div>
+      <div style="font-family:'Silkscreen',monospace;font-size:9px;color:#8B949E;-webkit-font-smoothing:none;text-transform:uppercase;letter-spacing:1px">CHANNELS · AGENTS EN LIGNE · STATUS</div>
+    </div>
+
+    <div class="sg-type-block">
+      <div class="sg-type-label">Inter — Body text (documentation, UI texte)</div>
+      <div style="font-family:'Inter',sans-serif;font-size:24px;font-weight:700;color:#E6EDF3;margin-bottom:4px">H1 — Brand Identity System</div>
+      <div style="font-family:'Inter',sans-serif;font-size:18px;font-weight:600;color:#E6EDF3;margin-bottom:4px">H2 — Palette de couleurs</div>
+      <div style="font-family:'Inter',sans-serif;font-size:14px;color:#E6EDF3;line-height:1.6;max-width:560px;margin-bottom:4px">Body — WikiChat est un hub MCP multi-agents, local-first. Il orchestre des sessions Claude Code comme des villageois dans un village numérique. Direction : "Stardew Valley de nuit".</div>
+      <div style="font-family:'Inter',sans-serif;font-size:12px;color:#8B949E">Small — Dernière mise à jour · 5 agents en ligne</div>
+    </div>
+
+    <div class="sg-type-block">
+      <div class="sg-type-label">JetBrains Mono — Code, terminal, monospace UI</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#E6EDF3;background:#0D1117;padding:12px;border:1px solid #30363D;border-radius:2px">
+        <span style="color:#8B949E">// Design tokens v1.1</span><br>
+        <span style="color:#BC8CFF">const</span> primary = <span style="color:#45B8B0">'#45B8B0'</span>;<br>
+        <span style="color:#BC8CFF">const</span> direction = <span style="color:#45B8B0">'Stardew Valley de nuit'</span>;<br>
+        <span style="color:#58A6FF">console</span>.<span style="color:#E6EDF3">log</span>(<span style="color:#45B8B0">`WikiChat — Your agents, talking.`</span>);
+      </div>
+    </div>
+
+    <div class="sg-type-block">
+      <div class="sg-type-label">Hiérarchie complète</div>
+      <table class="sg-type-table">
+        <tr><th>Niveau</th><th>Font</th><th>Taille</th><th>Couleur</th></tr>
+        <tr><td>H1</td><td>Inter Bold / Silkscreen</td><td>24px / 16px</td><td>#E6EDF3</td></tr>
+        <tr><td>H2</td><td>Inter Semibold / Silkscreen</td><td>18px / 12px</td><td>#E6EDF3</td></tr>
+        <tr><td>Body</td><td>Inter Regular</td><td>14px</td><td>#E6EDF3</td></tr>
+        <tr><td>Code</td><td>JetBrains Mono</td><td>13px</td><td>#E6EDF3</td></tr>
+        <tr><td>Label pixel</td><td>Silkscreen</td><td>10px</td><td>#8B949E</td></tr>
+        <tr><td>Small</td><td>Inter Regular</td><td>12px</td><td>#8B949E</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Section 5: Patterns ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">5 — Background Patterns</h2>
+    <div class="sg-patterns">
+      <div class="sg-pattern">
+        <div class="sg-pattern__block pattern-dots"></div>
+        <span class="sg-pattern__name">Dot Grid</span>
+        <span class="sg-note" style="font-size:10px">Panels secondaires</span>
+      </div>
+      <div class="sg-pattern">
+        <div class="sg-pattern__block pattern-crosshatch"></div>
+        <span class="sg-pattern__name">Crosshatch</span>
+        <span class="sg-note" style="font-size:10px">Zones disabled</span>
+      </div>
+      <div class="sg-pattern">
+        <div class="sg-pattern__block pattern-dither"></div>
+        <span class="sg-pattern__name">Dither 2×2</span>
+        <span class="sg-note" style="font-size:10px">Transitions sections</span>
+      </div>
+      <div class="sg-pattern">
+        <div class="sg-pattern__block pattern-scanlines"></div>
+        <span class="sg-pattern__name">Scanlines</span>
+        <span class="sg-note" style="font-size:10px">Overlays décoratifs</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Section 6: Logo / Favicon ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">6 — Logo & Favicon</h2>
+    <p class="sg-note">Concept : bulle de chat pixel-art contenant un toit de maison. Palette : Teal + Cloud sur Midnight.</p>
+    <div class="icon-grid" style="max-width:500px">
+      <div class="icon-card">
+        <svg viewBox="0 0 16 16" width="16" height="16" shape-rendering="crispEdges">
+          <rect x="4" y="2" width="8" height="1" fill="#45B8B0"/>
+          <rect x="3" y="3" width="10" height="1" fill="#45B8B0"/>
+          <rect x="2" y="4" width="12" height="5" fill="#45B8B0"/>
+          <rect x="3" y="9" width="10" height="1" fill="#45B8B0"/>
+          <rect x="4" y="10" width="8" height="1" fill="#45B8B0"/>
+          <rect x="3" y="10" width="1" height="1" fill="#45B8B0"/>
+          <rect x="2" y="11" width="1" height="1" fill="#45B8B0"/>
+          <rect x="1" y="12" width="1" height="1" fill="#45B8B0"/>
+          <!-- toit maison à l'intérieur -->
+          <rect x="8" y="5" width="1" height="1" fill="#E6EDF3"/>
+          <rect x="7" y="6" width="3" height="1" fill="#E6EDF3"/>
+          <rect x="6" y="7" width="5" height="2" fill="#E6EDF3"/>
+          <!-- porte -->
+          <rect x="8" y="8" width="1" height="1" fill="#45B8B0"/>
+          <!-- outline -->
+          <rect x="4" y="1" width="8" height="1" fill="#E6EDF3"/>
+          <rect x="1" y="4" width="1" height="5" fill="#E6EDF3"/>
+          <rect x="14" y="4" width="1" height="5" fill="#E6EDF3"/>
+        </svg>
+        <span class="icon-label">16×16</span>
+      </div>
+      <div class="icon-card">
+        <svg viewBox="0 0 16 16" width="32" height="32" shape-rendering="crispEdges" style="image-rendering:pixelated">
+          <rect x="4" y="2" width="8" height="1" fill="#45B8B0"/>
+          <rect x="3" y="3" width="10" height="1" fill="#45B8B0"/>
+          <rect x="2" y="4" width="12" height="5" fill="#45B8B0"/>
+          <rect x="3" y="9" width="10" height="1" fill="#45B8B0"/>
+          <rect x="4" y="10" width="8" height="1" fill="#45B8B0"/>
+          <rect x="3" y="10" width="1" height="1" fill="#45B8B0"/>
+          <rect x="2" y="11" width="1" height="1" fill="#45B8B0"/>
+          <rect x="1" y="12" width="1" height="1" fill="#45B8B0"/>
+          <rect x="8" y="5" width="1" height="1" fill="#E6EDF3"/>
+          <rect x="7" y="6" width="3" height="1" fill="#E6EDF3"/>
+          <rect x="6" y="7" width="5" height="2" fill="#E6EDF3"/>
+          <rect x="8" y="8" width="1" height="1" fill="#45B8B0"/>
+          <rect x="4" y="1" width="8" height="1" fill="#E6EDF3"/>
+          <rect x="1" y="4" width="1" height="5" fill="#E6EDF3"/>
+          <rect x="14" y="4" width="1" height="5" fill="#E6EDF3"/>
+        </svg>
+        <span class="icon-label">32×32</span>
+      </div>
+      <div class="icon-card">
+        <svg viewBox="0 0 16 16" width="64" height="64" shape-rendering="crispEdges" style="image-rendering:pixelated">
+          <rect x="4" y="2" width="8" height="1" fill="#45B8B0"/>
+          <rect x="3" y="3" width="10" height="1" fill="#45B8B0"/>
+          <rect x="2" y="4" width="12" height="5" fill="#45B8B0"/>
+          <rect x="3" y="9" width="10" height="1" fill="#45B8B0"/>
+          <rect x="4" y="10" width="8" height="1" fill="#45B8B0"/>
+          <rect x="3" y="10" width="1" height="1" fill="#45B8B0"/>
+          <rect x="2" y="11" width="1" height="1" fill="#45B8B0"/>
+          <rect x="1" y="12" width="1" height="1" fill="#45B8B0"/>
+          <rect x="8" y="5" width="1" height="1" fill="#E6EDF3"/>
+          <rect x="7" y="6" width="3" height="1" fill="#E6EDF3"/>
+          <rect x="6" y="7" width="5" height="2" fill="#E6EDF3"/>
+          <rect x="8" y="8" width="1" height="1" fill="#45B8B0"/>
+          <rect x="4" y="1" width="8" height="1" fill="#E6EDF3"/>
+          <rect x="1" y="4" width="1" height="5" fill="#E6EDF3"/>
+          <rect x="14" y="4" width="1" height="5" fill="#E6EDF3"/>
+        </svg>
+        <span class="icon-label">64×64 upscale</span>
+      </div>
+      <div class="icon-card" style="gap:4px">
+        <div style="font-family:'Silkscreen',monospace;font-size:18px;color:#45B8B0;-webkit-font-smoothing:none;letter-spacing:2px">Wiki<span style="color:#E6EDF3">Chat</span></div>
+        <span class="icon-label">Wordmark — Silkscreen</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Section 7: Composants UI ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">7 — Composants UI</h2>
+    <div class="sg-components">
+
+      <div>
+        <div class="sg-comp-label">Boutons</div>
+        <div class="sg-comp-row">
+          <button class="wc-btn wc-btn-primary">INTERAGIR [A]</button>
+          <button class="wc-btn wc-btn-ghost">FERMER [B]</button>
+          <button class="wc-btn wc-btn-danger">SUPPRIMER</button>
+          <button class="wc-btn wc-btn-primary" disabled style="opacity:0.4;cursor:not-allowed">DÉSACTIVÉ</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="sg-comp-label">Badges statut agent</div>
+        <div class="sg-comp-row">
+          <span class="wc-badge" style="background:rgba(63,185,80,0.15);color:#3FB950">● ONLINE</span>
+          <span class="wc-badge" style="background:rgba(210,153,34,0.15);color:#D29922">● BUSY</span>
+          <span class="wc-badge" style="background:rgba(88,166,255,0.15);color:#58A6FF">● REVIEWING</span>
+          <span class="wc-badge" style="background:rgba(139,148,158,0.15);color:#8B949E">● IDLE</span>
+          <span class="wc-badge" style="background:rgba(248,81,73,0.15);color:#F85149">● STALE</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="sg-comp-label">Agent cards</div>
+        <div class="sg-comp-row">
+          <div class="wc-agent-card">
+            <div class="wc-agent-name" style="color:#7EB8DA">ArtDirector</div>
+            <div class="wc-agent-role">Directeur artistique · Lv.12</div>
+            <div class="wc-hp-bar"><div class="wc-hp-fill" style="width:90%;background:#3FB950"></div></div>
+            <span class="wc-badge" style="background:rgba(63,185,80,0.15);color:#3FB950;font-size:7px">● AVAILABLE</span>
+          </div>
+          <div class="wc-agent-card">
+            <div class="wc-agent-name" style="color:#C9A84C">KnowledgeBuilder</div>
+            <div class="wc-agent-role">Bibliothécaire · Lv.8</div>
+            <div class="wc-hp-bar"><div class="wc-hp-fill" style="width:45%;background:#D29922"></div></div>
+            <span class="wc-badge" style="background:rgba(210,153,34,0.15);color:#D29922;font-size:7px">● BUSY</span>
+          </div>
+          <div class="wc-agent-card">
+            <div class="wc-agent-name" style="color:#8B949E">GitWatcher</div>
+            <div class="wc-agent-role">Guetteur · Lv.3</div>
+            <div class="wc-hp-bar"><div class="wc-hp-fill" style="width:20%;background:#F85149"></div></div>
+            <span class="wc-badge" style="background:rgba(248,81,73,0.15);color:#F85149;font-size:7px">● STALE</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sg-comp-label">Toasts</div>
+        <div style="display:flex;flex-direction:column;gap:8px;max-width:340px">
+          <div class="wc-toast wc-toast--success"><span style="color:#3FB950">✓</span> Villageois arrive: ArtDirector</div>
+          <div class="wc-toast wc-toast--error"><span style="color:#F85149">✗</span> Un agent a quitté le village</div>
+          <div class="wc-toast wc-toast--warning"><span style="color:#D29922">!</span> 5 nouveaux messages en attente</div>
+          <div class="wc-toast"><span style="color:#BC8CFF">◆</span> 73 projets cartographiés</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sg-comp-label">Dialog box (typewriter)</div>
+        <div class="wc-dialog">
+          <div class="wc-dialog-speaker">WIKICHAT — Tom Nook</div>
+          <div class="wc-dialog-text">Bienvenue sur WikiChat Island ! Vos agents travaillent pendant que vous dormez...</div>
+          <div class="wc-dialog-hint">▼ A / Espace pour continuer</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sg-comp-label">HUD strip</div>
+        <div style="background:#0D1117;padding:4px;border-radius:4px">
+          <div class="wc-hud">
+            <span class="wc-hud-item primary" style="font-size:10px">WikiChat</span>
+            <span class="wc-hud-item primary">&gt; wikichat</span>
+            <span class="wc-hud-item success">4 agents</span>
+            <span class="wc-hud-item info">142 msgs</span>
+            <span class="wc-hud-item accent">⚡87 📨142 🌱34 📚21</span>
+            <span class="wc-hud-item" style="margin-left:auto">🌙 nuit</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Section 8: Tiles jeu ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">8 — Tiles Jeu (palette validée)</h2>
+    <p class="sg-note">Tiles 32×32 dessinées en JS Canvas pur (fillRect). Nouvelle palette appliquée.</p>
+    <canvas id="canvas-tiles" width="400" height="300" style="border:1px solid var(--wc-border);border-radius:var(--wc-radius-lg)"></canvas>
+  </section>
+
+  <!-- ── Section 9: Cycle Jour/Nuit ── -->
+  <section class="sg-section">
+    <h2 class="sg-title">9 — Cycle Jour / Nuit</h2>
+    <p class="sg-note">4 phases d'ambiance. Notre UI vit en mode "Nuit" — les autres phases enrichissent le monde in-game.</p>
+    <canvas id="canvas-daynight" width="760" height="140" style="border:1px solid var(--wc-border);border-radius:var(--wc-radius-lg)"></canvas>
+  </section>
+
+</div><!-- /sg-page -->
+
+<script>
+// ── Tiles showcase ──
+(function() {
+  const canvas = document.getElementById('canvas-tiles');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const T = 32;
+  const P = {
+    midnight:'#0D1117', charcoal:'#161B22', slate:'#30363D',
+    cloud:'#E6EDF3', fog:'#8B949E', teal:'#45B8B0',
+    green:'#6DBF7B', gold:'#C9A84C', red:'#F85149',
+    accent:'#BC8CFF'
+  };
+
+  function px(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x,y,w,h); }
+
+  function drawFloor(ox,oy){
+    for(let y=0;y<T;y++) for(let x=0;x<T;x++) px(ox+x,oy+y,1,1,(x+y)%3===0?'#4A7A4A':P.green);
+    px(ox+4,oy+6,2,1,'#3D6B3D'); px(ox+18,oy+20,2,1,'#3D6B3D'); px(ox+26,oy+12,2,1,'#3D6B3D');
+  }
+  function drawWall(ox,oy){
+    px(ox,oy,T,T,P.fog);
+    for(let r=0;r<4;r++){
+      const yo=oy+r*8; px(ox,yo+7,T,1,P.slate);
+      const off=r%2===0?0:8;
+      for(let c=off;c<T;c+=16) px(ox+c,yo,1,8,P.slate);
+    }
+    px(ox,oy,T,1,P.cloud);
+  }
+  function drawRoad(ox,oy){
+    px(ox,oy,T,T,P.teal);
+    for(let i=0;i<T;i+=6) px(ox+15,oy+i,2,3,P.cloud);
+    for(let y=0;y<T;y+=4){ px(ox,oy+y,1,2,'#3A9E97'); px(ox+31,oy+y,1,2,'#3A9E97'); }
+  }
+  function drawTask(ox,oy){
+    px(ox,oy,T,T,P.midnight);
+    px(ox+4,oy+2,24,22,P.gold);
+    px(ox+4,oy+2,24,1,P.cloud); px(ox+4,oy+2,1,22,P.cloud); px(ox+27,oy+2,1,22,P.cloud); px(ox+4,oy+23,24,1,P.cloud);
+    px(ox+7,oy+5,8,6,P.cloud); px(ox+17,oy+5,8,6,P.cloud); px(ox+7,oy+14,8,6,P.cloud);
+    px(ox+8,oy+7,6,1,P.midnight); px(ox+8,oy+9,4,1,P.midnight);
+    px(ox+10,oy+4,2,2,P.red); px(ox+20,oy+4,2,2,P.red);
+    px(ox+8,oy+24,3,8,P.fog); px(ox+21,oy+24,3,8,P.fog);
+  }
+  function drawShelf(ox,oy){
+    px(ox,oy,T,T,P.midnight); px(ox+2,oy+1,28,30,P.charcoal);
+    for(let r=0;r<3;r++){
+      const sy=oy+2+r*10; px(ox+2,sy+8,28,2,P.gold);
+      if(r===0){ px(ox+4,sy+2,3,6,P.teal); px(ox+8,sy+3,3,5,P.red); px(ox+12,sy+1,3,7,P.green); }
+      else if(r===1){ px(ox+5,sy+4,4,4,P.teal); px(ox+5,sy+3,4,1,P.cloud); px(ox+14,sy+4,4,4,P.gold); px(ox+14,sy+3,4,1,P.cloud); }
+    }
+  }
+  function drawMonument(ox,oy){
+    px(ox,oy,T,T,P.midnight);
+    px(ox+4,oy+24,24,4,P.fog); px(ox+6,oy+20,20,4,P.fog);
+    px(ox+12,oy+6,8,14,P.cloud);
+    px(ox+10,oy+4,12,3,P.teal); px(ox+14,oy+1,4,3,P.teal);
+    px(ox+8,oy+8,2,1,P.teal); px(ox+22,oy+8,2,1,P.teal);
+    px(ox+6,oy+12,2,1,P.teal); px(ox+24,oy+12,2,1,P.teal);
+    px(ox+6,oy+18,20,2,P.teal);
+  }
+  function drawBlocker(ox,oy){
+    px(ox,oy,T,T,P.midnight);
+    px(ox+6,oy+8,20,16,P.slate); px(ox+8,oy+6,16,2,P.slate); px(ox+10,oy+4,12,2,P.slate);
+    px(ox+4,oy+12,2,8,P.slate); px(ox+26,oy+12,2,8,P.slate);
+    px(ox+10,oy+6,8,1,P.fog); px(ox+8,oy+8,2,4,P.fog);
+    px(ox+14,oy+10,1,6,P.midnight); px(ox+15,oy+16,4,1,P.midnight);
+    px(ox+16,oy+12,4,1,P.red); px(ox+17,oy+11,2,3,P.red);
+  }
+  function drawDesk(ox,oy){
+    px(ox,oy,T,T,P.midnight);
+    px(ox+2,oy+16,28,3,P.gold); px(ox+4,oy+19,3,10,P.gold); px(ox+25,oy+19,3,10,P.gold);
+    px(ox+8,oy+4,16,12,P.slate); px(ox+9,oy+5,14,10,P.midnight);
+    px(ox+10,oy+6,8,1,P.teal); px(ox+10,oy+8,10,1,P.teal);
+    px(ox+10,oy+10,6,1,P.green); px(ox+10,oy+12,9,1,P.green);
+    px(ox+14,oy+16,4,1,P.fog);
+    px(ox+24,oy+12,4,4,P.cloud); px(ox+25,oy+13,2,2,P.teal);
+  }
+
+  ctx.fillStyle = P.midnight; ctx.fillRect(0,0,400,300);
+  const tiles = [
+    {name:'floor',fn:drawFloor},{name:'wall',fn:drawWall},{name:'road',fn:drawRoad},{name:'task',fn:drawTask},
+    {name:'shelf',fn:drawShelf},{name:'monument',fn:drawMonument},{name:'blocker',fn:drawBlocker},{name:'desk',fn:drawDesk}
+  ];
+  ctx.font = '10px "JetBrains Mono",monospace';
+  tiles.forEach((t,i) => {
+    const col=i%4, row=Math.floor(i/4);
+    const x=16+col*96, y=20+row*140;
+    t.fn(x,y);
+    ctx.fillStyle='#8B949E'; ctx.fillText(t.name,x,y+T+14);
+    // grid overlay
+    ctx.strokeStyle='rgba(48,54,61,0.4)'; ctx.lineWidth=1;
+    ctx.strokeRect(x,y,T,T);
+  });
+})();
+
+// ── Day/Night cycle ──
+(function() {
+  const canvas = document.getElementById('canvas-daynight');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const W=180, H=120, gap=10;
+
+  const phases = [
+    {name:'Dawn',  sky:'#2D1B4E', ground:'#1A3A1A', accent:'#D29922', sun:'#D29922', sunY:70},
+    {name:'Day',   sky:'#4A7FBA', ground:'#6BA86B', accent:'#E6EDF3', sun:'#FFFAAA', sunY:20}, // Day-only palette — not part of main UI tokens
+    {name:'Dusk',  sky:'#5E2D4E', ground:'#3A4A2A', accent:'#F85149', sun:'#F85149', sunY:70},
+    {name:'Night', sky:'#0D1117', ground:'#161B22', accent:'#45B8B0', sun:null,      sunY:0}
+  ];
+
+  phases.forEach((p,i) => {
+    const ox=i*(W+gap);
+    ctx.fillStyle=p.sky; ctx.fillRect(ox,0,W,H*0.6);
+    ctx.fillStyle=p.ground; ctx.fillRect(ox,H*0.6,W,H*0.4);
+
+    // sun/moon
+    if(p.sun){ ctx.fillStyle=p.sun; ctx.fillRect(ox+140,p.sunY,16,16); ctx.fillRect(ox+138,p.sunY+2,20,12); }
+    else { ctx.fillStyle='#E6EDF3'; ctx.fillRect(ox+140,15,14,14); ctx.fillStyle=p.sky; ctx.fillRect(ox+146,13,12,12); }
+
+    // stars at night
+    if(p.name==='Night'){ ctx.fillStyle='#E6EDF3'; [[20,10],[50,25],[90,8],[120,30],[40,40],[75,18]].forEach(([sx,sy])=>ctx.fillRect(ox+sx,sy,2,2)); }
+
+    // house
+    ctx.fillStyle='#0D1117';
+    ctx.fillRect(ox+30,46,40,26); ctx.fillRect(ox+25,42,50,6); ctx.fillRect(ox+35,34,30,10); ctx.fillRect(ox+45,28,10,8);
+
+    // windows
+    ctx.fillStyle=p.name==='Night'||p.name==='Dusk'?'#C9A84C':p.accent;
+    ctx.fillRect(ox+36,52,8,8); ctx.fillRect(ox+52,52,8,8);
+
+    // door
+    ctx.fillStyle=p.name==='Night'?'#45B8B0':'#8B949E';
+    ctx.fillRect(ox+46,58,8,14);
+
+    // tree
+    ctx.fillStyle=p.name==='Day'?'#4A7A4A':'#0F1A0F';
+    ctx.fillRect(ox+8,44,12,20); ctx.fillRect(ox+10,36,8,10); ctx.fillRect(ox+12,30,4,8);
+    ctx.fillStyle='#3A2A1A'; ctx.fillRect(ox+13,64,2,8);
+
+    // path
+    ctx.fillStyle=p.name==='Night'?'#1A2A2A':'#3A9E97';
+    ctx.fillRect(ox+60,Math.floor(H*0.6),20,Math.floor(H*0.4));
+
+    // label
+    ctx.fillStyle=p.accent; ctx.font='bold 11px monospace';
+    ctx.fillText(p.name,ox+W/2-20,H-5);
+  });
+})();
+</script>
+</body>
+</html>

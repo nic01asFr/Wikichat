@@ -1,0 +1,146 @@
+/**
+ * state.mjs — Shared state store with message cap
+ * Inspired by pixel-agents' centralized OfficeState pattern.
+ */
+
+import { randomUUID } from "crypto";
+
+export const MAX_MESSAGES = parseInt(process.env.MAX_MESSAGES || "2000");
+
+export const state = {
+  /** Map<sessionId, SessionObject> */
+  sessions: new Map(),
+  /** Map<channelName, ChannelObject> */
+  channels: new Map(),
+  /** Message[] — capped at MAX_MESSAGES, evicts oldest */
+  messages: [],
+  /** Map<sessionId, resolver[]> — long-polling waiters */
+  waiters: new Map(),
+  /** Map<messageId, Set<readerName>> — read receipts */
+  reads: new Map(),
+  /** Map<projectName, ProjectObject> */
+  projects: new Map(),
+};
+
+// Default channels
+for (const [name, description] of [
+  ["general", "Canal par défaut pour les discussions générales"],
+  ["coordination", "Canal pour la coordination de tâches entre agents"],
+  ["system", "Événements système : connexions, déconnexions, statuts"],
+  ["museum-updates", "Donations et nouveaux exhibits du Musée (Blathers)"],
+  ["roost", "The Roost — conversations libres, tables thématiques, événements Brewster"],
+]) {
+  state.channels.set(name, {
+    name, description, createdBy: "system",
+    createdAt: new Date(),
+    isSystem: name === "system",
+  });
+}
+
+/** Channel message count cache — O(1) lookup instead of filtering */
+const _channelCounts = new Map();
+export function getChannelCount(channel) { return _channelCounts.get(channel) || 0; }
+/** Rebuild channel counts from current messages (call after loading persisted messages) */
+export function rebuildChannelCounts() {
+  _channelCounts.clear();
+  for (const m of state.messages) {
+    if (m.channel) _channelCounts.set(m.channel, (_channelCounts.get(m.channel) || 0) + 1);
+  }
+}
+
+/** Hook for persistence — set by persistence.mjs at boot */
+let _onMessagePush = null;
+export function setOnMessagePush(fn) { _onMessagePush = fn; }
+
+/** Add a message and evict oldest if over cap */
+export function pushMessage(msg) {
+  // Update channel count cache
+  const ch = msg.channel;
+  if (ch) _channelCounts.set(ch, (_channelCounts.get(ch) || 0) + 1);
+
+  state.messages.push(msg);
+  if (state.messages.length > MAX_MESSAGES) {
+    const evict = Math.floor(MAX_MESSAGES * 0.1);
+    const evicted = state.messages.splice(0, evict);
+    // Clean up read receipts and channel counts for evicted messages
+    for (const m of evicted) {
+      state.reads.delete(m.id);
+      if (m.channel) {
+        const c = _channelCounts.get(m.channel);
+        if (c > 1) _channelCounts.set(m.channel, c - 1);
+        else _channelCounts.delete(m.channel);
+      }
+    }
+  }
+  if (_onMessagePush) _onMessagePush();
+  return msg;
+}
+
+/** Create a system message and push it */
+export function sysMsg(channel, content) {
+  return pushMessage({
+    id: randomUUID(), from: "system", fromName: "🔔 Système",
+    channel, content, timestamp: new Date(),
+  });
+}
+
+/** Find session by display name (case-insensitive) */
+export function getSessionByName(name) {
+  for (const [id, s] of state.sessions) {
+    if (s.name.toLowerCase() === name.toLowerCase()) return { id, ...s };
+  }
+  return null;
+}
+
+/** Get display name for a session ID */
+export function getSessionName(sessionId) {
+  return state.sessions.get(sessionId)?.name ?? `session-${sessionId.slice(0, 6)}`;
+}
+
+/** Build or get a DM channel key between two session IDs */
+export function dmChannelKey(idA, idB) {
+  const [a, b] = [idA, idB].sort();
+  return `dm:${a.slice(0, 8)}-${b.slice(0, 8)}`;
+}
+
+/** Time helpers */
+export function timeSince(date) {
+  const s = Math.floor((Date.now() - new Date(date)) / 1000);
+  if (s < 60) return `il y a ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `il y a ${m}min`;
+  const h = Math.floor(m / 60);
+  return `il y a ${h}h${m % 60}min`;
+}
+
+export function timeUntil(date) {
+  const s = Math.floor((new Date(date) - Date.now()) / 1000);
+  if (s <= 0) return "maintenant";
+  if (s < 60) return `dans ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `dans ${m}min`;
+  const h = Math.floor(m / 60);
+  return `dans ${h}h${m % 60}min`;
+}
+
+/** Cron expression for "in N minutes from now" */
+export function cronInMinutes(n) {
+  const t = new Date(Date.now() + n * 60 * 1000);
+  return `${t.getMinutes()} ${t.getHours()} ${t.getDate()} ${t.getMonth() + 1} *`;
+}
+
+/** Word-overlap score for duplicate task detection */
+export function overlapScore(a = "", b = "") {
+  const words = s => new Set(s.toLowerCase().split(/\W+/).filter(w => w.length > 3));
+  const wa = words(a), wb = words(b);
+  const inter = [...wa].filter(w => wb.has(w)).length;
+  return inter / Math.max(1, Math.min(wa.size, wb.size));
+}
+
+/** Summary of active ETAs (excluding a session) */
+export function getEtaSummary(excludeId) {
+  const now = Date.now();
+  return [...state.sessions.values()]
+    .filter(s => s.sessionId !== excludeId && s.eta && new Date(s.eta) > now)
+    .map(s => `  ⏳ ${s.name}: ${timeUntil(s.eta)}${s.etaReason ? ` (${s.etaReason})` : ""}`);
+}

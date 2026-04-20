@@ -1,0 +1,2198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WikiChat — Le Village sur la Rivière</title>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;image-rendering:pixelated;}
+html,body{width:100%;height:100%;background:#0a1a0a;overflow:hidden;}
+canvas#world{display:block;width:100%;height:100%;}
+
+/* HUD */
+#hud{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:6px 12px;
+  background:linear-gradient(rgba(0,0,0,.85),transparent);
+  font-family:'Silkscreen',monospace;font-size:9px;pointer-events:none;z-index:10;}
+#hud-zone{color:#f0c040;}
+#hud-right{margin-left:auto;color:#444;font-size:7px;}
+.hud-pill{padding:1px 7px;border-radius:2px;font-size:8px;}
+.pill-msg{background:rgba(88,166,255,.2);color:#58a6ff;}
+.pill-art{background:rgba(69,184,176,.2);color:#45b8b0;}
+.pill-kb{background:rgba(188,140,255,.2);color:#bc8cff;}
+.pill-dm{background:rgba(240,192,64,.2);color:#f0c040;}
+
+/* Minimap */
+#minimap{position:fixed;bottom:12px;right:12px;border:2px solid #2a3a2a;border-radius:2px;z-index:10;cursor:pointer;}
+#minimap-label{position:fixed;bottom:12px;right:12px;
+  font-family:'Silkscreen',monospace;font-size:6px;color:#3a5a3a;
+  padding:2px 4px;pointer-events:none;z-index:11;}
+
+/* Dialog */
+#dialog{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+  width:min(560px,88vw);background:#061206;border:3px solid #4a7a2a;border-radius:2px;
+  padding:12px 16px;display:none;z-index:20;font-family:'Silkscreen',monospace;}
+#dialog-speaker{font-size:8px;color:#8bac0f;margin-bottom:6px;}
+#dialog-text{font-size:8px;color:#d8e8d0;line-height:1.9;}
+#dialog-next{font-size:6px;color:#5a8a2a;margin-top:5px;text-align:right;animation:blink 1s step-end infinite;}
+@keyframes blink{50%{opacity:0}}
+
+/* Boat catch panel */
+#catch-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(500px,85vw);background:#060c16;border:3px solid #45b8b0;border-radius:2px;
+  padding:16px 20px;display:none;z-index:25;font-family:'Silkscreen',monospace;}
+#catch-title{font-size:8px;color:#45b8b0;margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+#catch-body{font-size:7px;color:#8bc8c0;line-height:1.8;max-height:200px;overflow-y:auto;}
+#catch-close{margin-top:12px;background:#0d2a28;border:2px solid #45b8b0;color:#45b8b0;
+  font-family:'Silkscreen',monospace;font-size:7px;padding:5px 14px;cursor:pointer;border-radius:1px;}
+
+/* Map overlay */
+#map-overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;
+  align-items:center;justify-content:center;z-index:30;flex-direction:column;gap:8px;}
+#map-overlay.show{display:flex;}
+#map-label{font-family:'Silkscreen',monospace;font-size:9px;color:#4a7a2a;letter-spacing:.1em;}
+#map-canvas{border:2px solid #2a4a2a;border-radius:2px;}
+
+/* Side panel */
+#side{position:fixed;right:0;top:0;bottom:0;width:200px;background:#040c04;border-left:1px solid #1a2a1a;
+  display:flex;flex-direction:column;font-family:'Silkscreen',monospace;font-size:7px;
+  z-index:10;transition:transform .2s;}
+#side.hidden{transform:translateX(200px);}
+#side-tabs{display:flex;border-bottom:1px solid #1a2a1a;}
+.stab{flex:1;padding:7px 3px;text-align:center;cursor:pointer;color:#444;border-bottom:2px solid transparent;font-size:6px;}
+.stab.active{color:#8bac0f;border-bottom-color:#4a7a2a;}
+#side-content{flex:1;overflow-y:auto;padding:6px;}
+.scard{background:#060c06;border:1px solid #1a2a1a;border-radius:1px;padding:5px;margin-bottom:4px;cursor:pointer;}
+.scard:hover{border-color:#4a7a2a;}
+.sc-name{color:#d8e8d0;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sc-sub{color:#444;font-size:6px;}
+.sc-dot{width:5px;height:5px;border-radius:50%;display:inline-block;margin-right:3px;}
+
+/* Hint */
+#hint{position:fixed;bottom:6px;left:8px;font-family:'Silkscreen',monospace;font-size:6px;
+  color:#2a3a2a;line-height:2;pointer-events:none;z-index:10;}
+
+/* Network view toggle */
+#net-toggle{position:fixed;top:32px;left:8px;display:flex;gap:4px;z-index:10;}
+.net-btn{background:rgba(0,0,0,.7);border:1px solid #2a3a2a;color:#3a5a3a;
+  font-family:'Silkscreen',monospace;font-size:6px;padding:3px 6px;cursor:pointer;border-radius:1px;}
+.net-btn.active{border-color:#45b8b0;color:#45b8b0;}
+
+/* Transport legend */
+#transport-legend{position:fixed;bottom:48px;left:8px;font-family:'Silkscreen',monospace;font-size:6px;
+  color:#2a4a2a;line-height:2.2;pointer-events:none;z-index:10;}
+</style>
+</head>
+<body>
+<canvas id="world"></canvas>
+
+<div id="hud">
+  <span style="color:#45b8b0;font-family:'Silkscreen',monospace;font-size:10px;font-weight:700">⛵ WikiChat</span>
+  <span id="hud-zone" style="color:#f0c040">—</span>
+  <span class="hud-pill pill-msg" id="pill-msg">📨 0</span>
+  <span class="hud-pill pill-art" id="pill-art">📦 0</span>
+  <span class="hud-pill pill-kb"  id="pill-kb">📚 0</span>
+  <span class="hud-pill pill-dm"  id="pill-dm">💌 0</span>
+  <span id="hud-time" style="color:#6a8a6a;font-size:7px">☀️</span>
+  <span id="hud-right">ZQSD déplacer · A attraper/parler · M carte · Tab panneau · N réseau</span>
+</div>
+
+<canvas id="minimap" width="160" height="90"></canvas>
+
+<div id="dialog">
+  <div id="dialog-speaker"></div>
+  <div id="dialog-text"></div>
+  <div id="dialog-next">▼ A / Espace</div>
+</div>
+
+<div id="catch-panel">
+  <div id="catch-title">⛵ <span id="catch-type-label">Artifact</span></div>
+  <div id="catch-body"></div>
+  <button id="catch-close" onclick="closeCatch()">RELÂCHER [A/Espace]</button>
+</div>
+
+<div id="map-overlay">
+  <div id="map-label">CARTE DU VILLAGE — [M] pour fermer</div>
+  <canvas id="map-canvas"></canvas>
+</div>
+
+<div id="side" class="hidden">
+  <div id="side-tabs">
+    <div class="stab active" onclick="showTab('agents')" id="stab-agents">AGENTS</div>
+    <div class="stab" onclick="showTab('projects')" id="stab-projects">PROJETS</div>
+  </div>
+  <div id="side-content"></div>
+</div>
+
+<div id="net-toggle">
+  <button class="net-btn active" id="nbtn-river" onclick="toggleNet('river')">🌊 Rivière</button>
+  <button class="net-btn" id="nbtn-tram" onclick="toggleNet('tram')">🚋 Tramway</button>
+  <button class="net-btn" id="nbtn-pigeon" onclick="toggleNet('pigeon')">🐦 Pigeons</button>
+  <button class="net-btn" id="nbtn-elec" onclick="toggleNet('elec')">⚡ Énergie</button>
+  <button class="net-btn" id="nbtn-fiber" onclick="toggleNet('fiber')">📡 Fibre IA</button>
+</div>
+
+<div id="transport-legend">
+  🌊 Rivière = artifacts + messages<br>
+  🚋 Tramway = KB chunks<br>
+  🐦 Pigeons = messages directs<br>
+  ⚡ Énergie = activité agents<br>
+  📡 Fibre = IA native + trajets agents
+</div>
+
+<div id="hint">ZQSD: déplacer · A: attraper bateau/parler · M: carte · Tab: agents<br>N: vue réseau · F: voyage rapide</div>
+
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════
+const T = 32;         // tile size px
+const RIVER_H = 8;    // river height in tiles
+const BOAT_SPEED = 0.025;
+const STEP = 26;      // cluster spacing
+
+// Convert map world coordinates (centered 0,0) to tile grid
+function worldToTile(wx, wy, mapW, mapH) {
+  return {
+    tx: Math.round((wx + 1000) / 2000 * mapW),
+    ty: Math.round((wy + 1000) / 2000 * mapH),
+  };
+}
+
+// ── Network visibility ──────────────────────────────────────
+const netVisible = { river: true, tram: false, pigeon: false, elec: false, fiber: false };
+function toggleNet(k) {
+  netVisible[k] = !netVisible[k];
+  const btn = document.getElementById('nbtn-' + k);
+  if (btn) btn.classList.toggle('active', netVisible[k]);
+}
+
+// ── Neighborhood themes ─────────────────────────────────────
+const HOODS = {
+  mcp:    { name:'Nexus Arcane',   floor:'#120820', path:'#3a1a6a', accent:'#bc8cff', wall:'#2a1050', roof:'#8855cc', smoke:'#cc99ff', water:'#6622aa' },
+  python: { name:'Pythonia',       floor:'#0e2210', path:'#4a6a14', accent:'#5dd672', wall:'#1a3a1a', roof:'#6ab83a', smoke:'#aade88', water:'#3a8a20' },
+  node:   { name:'NodeVille',      floor:'#141e08', path:'#5a6a14', accent:'#b4e84a', wall:'#2a3210', roof:'#c8d840', smoke:'#e8f490', water:'#7a9a10' },
+  rust:   { name:'Forge Oxide',    floor:'#200c04', path:'#7a3a10', accent:'#ffa657', wall:'#3a1808', roof:'#cc6622', smoke:'#ffbb88', water:'#aa4410' },
+  react:  { name:'Cristal',        floor:'#080e20', path:'#2040aa', accent:'#58a6ff', wall:'#101830', roof:'#3366cc', smoke:'#88aaff', water:'#2244aa' },
+  db:     { name:'Archives',       floor:'#06060e', path:'#1a1a5a', accent:'#7a9aff', wall:'#0e0e22', roof:'#4455aa', smoke:'#9999ee', water:'#2233aa' },
+  docker: { name:'Port Conteneur', floor:'#040e14', path:'#145a7a', accent:'#2196f3', wall:'#082030', roof:'#1166aa', smoke:'#66aadd', water:'#0a4488' },
+  data:   { name:'Quartier Data',  floor:'#0a0e18', path:'#2a3a7a', accent:'#a371f7', wall:'#141828', roof:'#6644cc', smoke:'#bb88ee', water:'#442288' },
+  default:{ name:'Terres Libres',  floor:'#0c1406', path:'#4a5a2a', accent:'#8b949e', wall:'#182010', roof:'#5a6a4a', smoke:'#aab8a0', water:'#3a4a2a' },
+};
+
+function getHood(stack) {
+  const s = ((stack || []).join(' ')).toLowerCase();
+  if (s.includes('mcp') || s.includes('claude') || s.includes('anthropic') || s.includes('ai')) return HOODS.mcp;
+  if (s.includes('rust') || s.includes('c++') || s.includes('zig') || s.includes('go')) return HOODS.rust;
+  if (s.includes('react') || s.includes('vue') || s.includes('svelte') || s.includes('angular') || s.includes('frontend')) return HOODS.react;
+  if (s.includes('postgres') || s.includes('mysql') || s.includes('sqlite') || s.includes('mongo') || s.includes('redis')) return HOODS.db;
+  if (s.includes('docker') || s.includes('k8s') || s.includes('kubernetes') || s.includes('nginx')) return HOODS.docker;
+  if (s.includes('node') || s.includes('express') || s.includes('deno') || s.includes('bun')) return HOODS.node;
+  if (s.includes('python') || s.includes('django') || s.includes('flask') || s.includes('fastapi') || s.includes('pandas')) return HOODS.python;
+  if (s.includes('data') || s.includes('analytics') || s.includes('grist') || s.includes('csv')) return HOODS.data;
+  return HOODS.default;
+}
+
+const AGENT_COLORS = ['#e94560','#45b8b0','#58a6ff','#d29922','#bc8cff','#3fb950','#ffa657','#ff7b72','#39d353'];
+function agentColor(name) {
+  let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+  return AGENT_COLORS[h % AGENT_COLORS.length];
+}
+
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+let world = null;
+let mapData = null; // from /api/map/generate
+let gd = { sessions:[], projects:[], channels:[], recentMessages:[], stats:{} };
+let registryProjects = [];
+let boats = [];
+let tramParticles = [];
+let pigeons = [];
+let elecNodes = [];
+let agents = [];
+let particles = [];
+let transitLinks = [];
+let player = { x:0, y:0, dir:'down', color:'#ffffff' };
+let cam = { x:0, y:0, tx:0, ty:0 };
+let tick = 0;
+let daylight = 1;
+let toasts = [];
+let sideOpen = false, sideTab = 'agents';
+let mapMode = false;
+let nearBoat = null;
+let caughtBoat = null;
+let dlgQueue = [], dlgActive = false, dlgFullText = '', dlgDisplayed = 0, dlgTyping = false;
+let ftOpen = false;
+let boatCounts = { msg:0, artifact:0, kb:0, dm:0 };
+let maturityIndex = {};
+let visitedZones = new Set();
+let lastZone = null;
+
+// ── Fog of war ───────────────────────────────────────────────
+let discoveredIslands = new Set(
+  JSON.parse(localStorage.getItem('wikichat-discovered') || '[]')
+);
+
+// ── Transport stats ─────────────────────────────────────────
+let tramActive = false;
+let pigeonActive = false;
+
+// ═══════════════════════════════════════════════════════════
+// DAY / NIGHT
+// ═══════════════════════════════════════════════════════════
+function computeDaylight() {
+  const h = new Date().getHours() + new Date().getMinutes() / 60;
+  if (h >= 8 && h < 18) return 1;
+  if (h >= 6 && h < 8) return (h - 6) / 2;
+  if (h >= 18 && h < 20) return 1 - (h - 18) / 2;
+  return 0.12;
+}
+
+// ═══════════════════════════════════════════════════════════
+// FOG OF WAR HELPERS
+// ═══════════════════════════════════════════════════════════
+function isIslandDiscovered(gx, gy) {
+  if (!mapData || !mapData.islands) return true; // fallback
+  for (const island of mapData.islands) {
+    if (discoveredIslands.has(island.id)) {
+      const pos = worldToTile(island.position.x, island.position.y, world.mapW, world.mapH);
+      const rx = Math.round((island.shape?.rx || 90) / 2000 * world.mapW);
+      const ry = Math.round((island.shape?.ry || 70) / 2000 * world.mapH);
+      const norm = ((gx - pos.tx) ** 2) / (rx ** 2) + ((gy - pos.ty) ** 2) / (ry ** 2);
+      if (norm <= 1.5) return true; // slightly larger than island
+    }
+  }
+  return false;
+}
+
+function revealAround(px, py) {
+  if (!mapData || !mapData.islands || !world) return;
+  for (const island of mapData.islands) {
+    if (discoveredIslands.has(island.id)) continue;
+    const pos = worldToTile(island.position.x, island.position.y, world.mapW, world.mapH);
+    const radius = Math.round(((island.shape?.rx || island.radius || 90) / 2000 * world.mapW +
+                               (island.shape?.ry || island.radius || 70) / 2000 * world.mapH) / 2);
+    const dist = Math.hypot(px - pos.tx, py - pos.ty);
+    if (dist < radius + 15) {
+      discoveredIslands.add(island.id);
+      try { localStorage.setItem('wikichat-discovered', JSON.stringify([...discoveredIslands])); } catch(e) {}
+      // Reveal particles burst
+      for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2;
+        const r = radius * 0.5;
+        addParticle(pos.tx + Math.cos(angle) * r, pos.ty + Math.sin(angle) * r,
+          '#45b8b0', { size: 3, life: 40, rise: 2, spread: 3 });
+      }
+      addToast('Île découverte : ' + (island.theme_name || island.name || island.id), '#45b8b0');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════════════════
+function addToast(msg, color) {
+  toasts.push({ msg: msg.slice(0, 48), color: color || '#58a6ff', life: 180 });
+  if (toasts.length > 4) toasts.shift();
+}
+
+// ═══════════════════════════════════════════════════════════
+// WORLD GENERATION
+// ═══════════════════════════════════════════════════════════
+function buildWorldFromMap(map, projects) {
+  const WORLD_W = 220, WORLD_H = 140;
+  const riverY = Math.floor(WORLD_H * 0.65);
+  const tiles = Array.from({length: WORLD_H}, () =>
+    Array.from({length: WORLD_W}, () => ({ type:'grass', solid:false, data:null }))
+  );
+  const zones = [];
+
+  // River
+  for (let y = riverY; y < riverY + RIVER_H; y++)
+    for (let x = 0; x < WORLD_W; x++)
+      tiles[y][x] = { type:'river', solid:true, depth: y-riverY, current:true };
+
+  const hubTile = worldToTile(0, 0, WORLD_W, WORLD_H);
+
+  // Bridge at hub
+  for (let y = riverY; y < riverY + RIVER_H; y++) {
+    for (let x = hubTile.tx - 2; x <= hubTile.tx + 2; x++) {
+      if (x < 0 || x >= WORLD_W) continue;
+      tiles[y][x] = { type: x === hubTile.tx ? 'bridge-center' : 'bridge', solid:false, zone:'Hub Central' };
+    }
+  }
+
+  for (const island of map.islands) {
+    const pos = worldToTile(island.position.x, island.position.y, WORLD_W, WORLD_H);
+    const rx = Math.round((island.shape?.rx || island.radius || 90) / 2000 * WORLD_W);
+    const ry = Math.round((island.shape?.ry || Math.round((island.radius||90)*0.75)) / 2000 * WORLD_H);
+    const palette = island.palette || HOODS.default;
+    const isHub = island.id === 'hub';
+    const zoneName = island.theme_name || island.name || island.id;
+
+    for (let dy = -ry-1; dy <= ry+1; dy++) {
+      for (let dx = -rx-1; dx <= rx+1; dx++) {
+        const gx = pos.tx+dx, gy = pos.ty+dy;
+        if (gx < 0 || gx >= WORLD_W || gy < 0 || gy >= WORLD_H) continue;
+        const t = tiles[gy][gx];
+        if (t.type==='river'||t.type==='bridge'||t.type==='bridge-center') continue;
+        const norm = (dx*dx)/(rx*rx)+(dy*dy)/(ry*ry);
+        if (norm <= 1.0) {
+          t.type = norm > 0.75 ? 'hood-edge' : 'hood-floor';
+          t.solid = false; t.hood = palette; t.zone = zoneName;
+        }
+      }
+    }
+
+    if (isHub && island.buildings) {
+      for (const bld of island.buildings) {
+        // bld.x/y are relative to hub center — convert to tile offsets
+        const bx = pos.tx + Math.round(bld.x * WORLD_W / 2000);
+        const by = pos.ty + Math.round(bld.y * WORLD_H / 2000);
+        const bp = { tx: bx, ty: by };
+        const bt = tiles[bp.ty]?.[bp.tx];
+        if (bt && bt.type !== 'river') { bt.type='hub-building'; bt.solid=true; bt.zone='Hub Central'; bt.hood=palette; bt.data={btype:bld.type,label:bld.label,emoji:bld.emoji}; }
+      }
+      const mt = tiles[pos.ty]?.[pos.tx];
+      if (mt) { mt.type='mairie'; mt.solid=true; mt.zone='Hub Central'; mt.hood=palette; }
+    }
+
+    for (const slot of (island.villager_slots||[])) {
+      if (!slot.project_slug) continue;
+      const proj = projects.find(p=>p.slug===slot.project_slug||p.name===slot.project_slug);
+      const sw = { x: island.position.x+(slot.position?.x||0), y: island.position.y+(slot.position?.y||0) };
+      const hp = worldToTile(sw.x, sw.y, WORLD_W, WORLD_H);
+      const ht = tiles[hp.ty]?.[hp.tx];
+      if (ht && ht.type==='hood-floor') {
+        const st2 = ((proj?.stack||[]).join(' ')).toLowerCase();
+        const hasAI = st2.includes('mcp')||st2.includes('claude')||st2.includes('ai');
+        ht.type='house'; ht.solid=true; ht.hood=palette; ht.zone=zoneName;
+        ht.data={project:proj||{name:slot.project_slug,slug:slot.project_slug,stack:[]},active:false,maturity:30,hasAI,underConstruction:false};
+      }
+    }
+
+    if (!isHub && pos.tx != null && pos.ty != null && hubTile.tx != null) {
+      const srcY = Math.max(0, Math.min(pos.ty, riverY - 1));
+      const dstY = Math.max(0, riverY - 1);
+      if (srcY !== dstY || pos.tx !== hubTile.tx) {
+        drawPath(tiles, pos.tx, srcY, hubTile.tx, dstY);
+      }
+    }
+
+    const ct = tiles[pos.ty]?.[pos.tx];
+    if (ct && !isHub && ct.type==='hood-floor') { ct.type='fountain'; ct.solid=true; ct.zone=zoneName; ct.hood=palette; }
+
+    zones.push({ name:zoneName, ox:pos.tx-rx, oy:pos.ty-ry, w:rx*2, h:ry*2, hood:palette, isHub, projects:(island.villager_slots||[]).map(s=>({slug:s.project_slug})) });
+  }
+
+  drawTramTracks(tiles, WORLD_W, WORLD_H);
+  world = { tiles, zones, mapW:WORLD_W, mapH:WORLD_H, riverY, riverH:RIVER_H };
+  player.x = hubTile.tx; player.y = hubTile.ty;
+  cam.x = player.x*T - canvas.width/2; cam.y = player.y*T - canvas.height/2;
+  cam.tx = cam.x; cam.ty = cam.y;
+  // Hub always discovered
+  discoveredIslands.add('hub');
+  try { localStorage.setItem('wikichat-discovered', JSON.stringify([...discoveredIslands])); } catch(e) {}
+}
+
+function buildWorld(projects) {
+  if (!projects || !projects.length) {
+    world = { tiles:[[]], zones:[], mapW:20, mapH:16, riverY:7, riverH:RIVER_H };
+    return;
+  }
+
+  // ── Map-API fast path ────────────────────────────────────────
+  if (mapData && mapData.islands && mapData.islands.length) {
+    buildWorldFromMap(mapData, projects);
+    return;
+  }
+
+  // ── Legacy procedural path (fallback) ───────────────────────
+  // Group by domain (hood type)
+  const domainMap = {};
+  const hubProject = projects.find(p =>
+    (p.path||'').toLowerCase().includes('wikichat') ||
+    (p.name||'').toLowerCase() === 'wikichat'
+  ) || projects[0];
+
+  for (const p of projects) {
+    if (p === hubProject) continue;
+    const hood = getHood(p.stack);
+    const key = hood.name;
+    if (!domainMap[key]) domainMap[key] = { hood, projects:[] };
+    domainMap[key].projects.push(p);
+  }
+  const domains = Object.values(domainMap);
+
+  // World dimensions
+  const totalProj = projects.length;
+  const mapW = Math.max(220, Math.ceil(totalProj / 3) * STEP + 60);
+  const mapH = Math.max(100, 70);
+  const riverY = Math.floor(mapH * 0.44);
+
+  // Init tiles
+  const tiles = Array.from({length: mapH}, () =>
+    Array.from({length: mapW}, () => ({ type:'grass', solid:false, data:null }))
+  );
+  const zones = [];
+
+  // Draw river
+  for (let y = riverY; y < riverY + RIVER_H; y++) {
+    for (let x = 0; x < mapW; x++) {
+      if (y < 0 || y >= mapH) continue;
+      const depth = y - riverY;
+      tiles[y][x] = {
+        type: 'river',
+        solid: true, // player can't walk on water
+        depth: depth,
+        current: true
+      };
+    }
+  }
+
+  // Draw WikiChat hub (mairie/bridge at center)
+  const hubCX = Math.floor(mapW / 2);
+  const HUB_W = 18, HUB_H = 12;
+  // North part of hub (above river)
+  const hubNY = riverY - HUB_H;
+  placeNeighborhood(tiles, zones, [hubProject], HOODS.mcp, hubCX - HUB_W/2, hubNY, HUB_W, HUB_H, true);
+  // Bridge over river
+  for (let y = riverY; y < riverY + RIVER_H; y++) {
+    for (let x = hubCX - 2; x <= hubCX + 2; x++) {
+      if (x < 0 || x >= mapW || y < 0 || y >= mapH) continue;
+      tiles[y][x] = { type: 'bridge', solid:false, zone:'wikichat-hub' };
+    }
+  }
+  // Bridge road tiles (visual planks)
+  for (let y = riverY; y < riverY + RIVER_H; y++) {
+    tiles[y][hubCX] = { type: 'bridge-center', solid:false, zone:'wikichat-hub' };
+  }
+
+  // Distribute domains along north/south banks
+  const northDomains = domains.slice(0, Math.ceil(domains.length / 2));
+  const southDomains = domains.slice(Math.ceil(domains.length / 2));
+
+  // North bank — place neighborhoods left/right of hub
+  const northSlotsLeft = Math.ceil(northDomains.length / 2);
+  const northSlotsRight = northDomains.length - northSlotsLeft;
+  let northLeft = northDomains.slice(0, northSlotsLeft).reverse();
+  let northRight = northDomains.slice(northSlotsLeft);
+
+  northLeft.forEach((dom, i) => {
+    const projs = dom.projects.slice(0, Math.min(dom.projects.length, 12));
+    const nx = Math.max(2, hubCX - HUB_W/2 - (i + 1) * (STEP + 8) - 18);
+    const ny = 3;
+    const nh = Math.min(riverY - ny - 3, 20);
+    const nw = Math.min(22, 10 + Math.ceil(projs.length / 2) * 4);
+    placeNeighborhood(tiles, zones, projs, dom.hood, nx - nw/2, ny, nw, nh, false);
+    // Path from hood to hub north
+    drawPath(tiles, nx, ny + nh/2, hubCX - HUB_W/2, hubNY + HUB_H/2);
+  });
+
+  northRight.forEach((dom, i) => {
+    const projs = dom.projects.slice(0, Math.min(dom.projects.length, 12));
+    const nx = hubCX + HUB_W/2 + (i + 1) * (STEP + 8) + 4;
+    const ny = 3;
+    const nh = Math.min(riverY - ny - 3, 20);
+    const nw = Math.min(22, 10 + Math.ceil(projs.length / 2) * 4);
+    placeNeighborhood(tiles, zones, projs, dom.hood, nx - nw/2, ny, nw, nh, false);
+    drawPath(tiles, nx, ny + nh/2, hubCX + HUB_W/2, hubNY + HUB_H/2);
+  });
+
+  // South bank
+  const southY = riverY + RIVER_H + 2;
+  const southH = mapH - southY - 3;
+  southDomains.forEach((dom, i) => {
+    const projs = dom.projects.slice(0, Math.min(dom.projects.length, 12));
+    const spacing = (mapW - 20) / Math.max(southDomains.length, 1);
+    const sx = 10 + i * spacing;
+    const sw = Math.min(22, Math.max(12, 10 + Math.ceil(projs.length / 2) * 3));
+    placeNeighborhood(tiles, zones, projs, dom.hood, sx, southY, sw, Math.min(southH, 20), false);
+    // Path to nearest bridge
+    drawPath(tiles, sx + sw/2, southY, hubCX, riverY + RIVER_H);
+  });
+
+  // Draw tram tracks on main paths
+  drawTramTracks(tiles, mapW, mapH);
+
+  world = { tiles, zones, mapW, mapH, riverY, riverH: RIVER_H };
+
+  // Player starts on hub bridge north
+  player.x = hubCX;
+  player.y = hubNY + 3;
+  cam.x = player.x * T - canvas.width / 2;
+  cam.y = player.y * T - canvas.height / 2;
+  cam.tx = cam.x; cam.ty = cam.y;
+}
+
+function placeNeighborhood(tiles, zones, projects, hood, ox, oy, w, h, isHub) {
+  const mapH = tiles.length, mapW = tiles[0].length;
+  ox = Math.max(1, Math.min(mapW - w - 1, Math.floor(ox)));
+  oy = Math.max(1, Math.min(mapH - h - 1, Math.floor(oy)));
+  w = Math.max(8, Math.floor(w)); h = Math.max(8, Math.floor(h));
+
+  // Ground / floor of neighborhood
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      const isEdge = dx === 0 || dy === 0 || dx === w-1 || dy === h-1;
+      const tile = tiles[oy+dy]?.[ox+dx];
+      if (!tile || tile.type === 'river' || tile.type === 'bridge') continue;
+      tile.type = isEdge ? 'hood-edge' : 'hood-floor';
+      tile.solid = false;
+      tile.hood = hood;
+      tile.zone = hood.name;
+    }
+  }
+
+  // Hood name sign at entrance
+  const signX = ox + Math.floor(w/2), signY = oy + h - 1;
+  if (tiles[signY]?.[signX]) {
+    tiles[signY][signX] = { type:'sign', solid:false, zone:hood.name,
+      data:{ text: hood.name }, hood };
+  }
+
+  // Landmark in center-top
+  if (isHub) {
+    const lx = ox + Math.floor(w/2), ly = oy + 2;
+    if (tiles[ly]?.[lx]) tiles[ly][lx] = { type:'mairie', solid:true, zone:hood.name, hood };
+  }
+
+  // Fountain or landmark
+  const fx = ox + Math.floor(w/2), fy = oy + Math.floor(h/2);
+  if (tiles[fy]?.[fx] && !isHub) {
+    tiles[fy][fx] = { type:'fountain', solid:true, zone:hood.name, hood };
+  }
+
+  // Houses for each project
+  const housePositions = [];
+  for (let pi = 0; pi < projects.length && pi < 10; pi++) {
+    const row = Math.floor(pi / 3), col = pi % 3;
+    const hx = ox + 1 + col * Math.floor((w-2)/3);
+    const hy = oy + 1 + row * Math.floor((h-3)/Math.ceil(projects.length/3));
+    if (hx < ox+w-1 && hy < oy+h-2) housePositions.push({ x:hx, y:hy, proj:projects[pi] });
+  }
+
+  for (const hp of housePositions) {
+    const t = tiles[hp.y]?.[hp.x];
+    if (t && t.type === 'hood-floor') {
+      const mat = maturityIndex[hp.proj.name] || maturityIndex[hp.proj.slug] || 30;
+      const hasChimney = (hp.proj.markers || hp.proj.activeClaims || []).length > 0;
+      const stackStr = ((hp.proj.stack||[]).join(' ')).toLowerCase();
+      const hasAI = stackStr.includes('mcp')||stackStr.includes('claude')||stackStr.includes('anthropic')||stackStr.includes('ai')||stackStr.includes('openai')||stackStr.includes('llm');
+      t.type = 'house'; t.solid = true;
+      t.data = { project: hp.proj, active: hasChimney, maturity: mat, hasAI, underConstruction: false };
+      t.zone = hood.name; t.hood = hood;
+    }
+  }
+
+  // Docks / pontons near river
+  zones.push({ name: hood.name, ox, oy, w, h, hood, isHub, projects });
+}
+
+function drawPath(tiles, x1, y1, x2, y2) {
+  if (x1==null||y1==null||x2==null||y2==null||isNaN(x1)||isNaN(y1)||isNaN(x2)||isNaN(y2)) return;
+  const mapH = tiles.length, mapW = tiles[0].length;
+  const steps = Math.max(Math.abs(x2-x1), Math.abs(y2-y1));
+  if (steps === 0) return;
+  for (let i = 0; i <= steps; i++) {
+    const x = Math.round(x1 + (x2-x1) * i/steps);
+    const y = Math.round(y1 + (y2-y1) * i/steps);
+    if (x < 0 || x >= mapW || y < 0 || y >= mapH) continue;
+    const t = tiles[y][x];
+    if (t && t.type !== 'river' && t.type !== 'bridge' && t.type !== 'house' &&
+        t.type !== 'mairie' && t.type !== 'fountain' && t.type !== 'sign') {
+      t.type = 'path'; t.solid = false;
+    }
+  }
+}
+
+function drawTramTracks(tiles, mapW, mapH) {
+  // Tram tracks run along the north bank parallel to river
+  if (!world) return;
+  const ry = world.riverY;
+  for (let x = 0; x < mapW; x++) {
+    const y = ry - 3;
+    if (y >= 0 && y < mapH) {
+      const t = tiles[y][x];
+      if (t && (t.type === 'path' || t.type === 'grass')) {
+        t.tramTrack = true;
+      }
+    }
+    // South bank tram
+    const y2 = ry + RIVER_H + 3;
+    if (y2 >= 0 && y2 < mapH) {
+      const t = tiles[y2][x];
+      if (t && (t.type === 'path' || t.type === 'grass')) {
+        t.tramTrack = true;
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// BOAT SYSTEM (river flux)
+// ═══════════════════════════════════════════════════════════
+const BOAT_DEFS = {
+  msg:      { color:'#58a6ff', icon:'📨', label:'Message',  size:5 },
+  artifact: { color:'#45b8b0', icon:'📦', label:'Artifact', size:6 },
+  kb:       { color:'#bc8cff', icon:'📚', label:'Savoir',   size:5 },
+  dm:       { color:'#f0c040', icon:'💌', label:'DM',       size:5 },
+  error:    { color:'#f85149', icon:'⚠️',  label:'Erreur',   size:5 },
+};
+
+function addBoat(type, data) {
+  if (!world) return;
+  const def = BOAT_DEFS[type] || BOAT_DEFS.msg;
+  boats.push({
+    wx: -3 + Math.random() * 2,
+    wy: world.riverY + RIVER_H / 2 + (Math.random() - 0.5) * 2,
+    type, data, def,
+    age: 0,
+    wobble: Math.random() * Math.PI * 2,
+    speed: BOAT_SPEED * (0.7 + Math.random() * 0.6),
+  });
+  boatCounts[type] = (boatCounts[type] || 0) + 1;
+  updateHUDPills();
+}
+
+function updateHUDPills() {
+  document.getElementById('pill-msg').textContent = '📨 ' + (boatCounts.msg || 0);
+  document.getElementById('pill-art').textContent = '📦 ' + (boatCounts.artifact || 0);
+  document.getElementById('pill-kb').textContent  = '📚 ' + (boatCounts.kb || 0);
+  document.getElementById('pill-dm').textContent  = '💌 ' + (boatCounts.dm || 0);
+}
+
+function stepBoats() {
+  if (!world) return;
+  nearBoat = null;
+  for (let i = boats.length - 1; i >= 0; i--) {
+    const b = boats[i];
+    b.wx += b.speed;
+    b.wy = world.riverY + RIVER_H/2 + Math.sin(b.wobble + tick * 0.04) * 0.5;
+    b.wobble += 0.01;
+    b.age++;
+    if (b.wx > world.mapW + 5) { boats.splice(i, 1); continue; }
+    // Check proximity to player (must be near river)
+    const dx = b.wx - player.x, dy = b.wy - player.y;
+    if (Math.hypot(dx, dy) < 2.5 && !caughtBoat) nearBoat = b;
+  }
+  // Spawn demo boats if few real ones
+  if (boats.length < 3 && tick % 180 === 0) {
+    const types = ['msg', 'artifact', 'kb'];
+    addBoat(types[tick/180 % types.length | 0], { text:'Flux actif…', ts: Date.now() });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// TRAM PARTICLES (KB flux on tracks)
+// ═══════════════════════════════════════════════════════════
+function stepTrams() {
+  if (!netVisible.tram) { tramParticles = []; return; }
+  if (tick % 40 === 0 && world) {
+    // Add a tram from a random north or south track position
+    const ry = world.riverY;
+    const y = Math.random() < 0.5 ? ry - 3 : ry + RIVER_H + 3;
+    if (y >= 0 && y < world.mapH) {
+      tramParticles.push({
+        x: 0, y, vx: 0.15, vy: 0,
+        life: world.mapW / 0.15 * 0.5,
+        color: '#bc8cff', trail: []
+      });
+    }
+  }
+  for (let i = tramParticles.length - 1; i >= 0; i--) {
+    const t = tramParticles[i];
+    t.trail.push({x:t.x, y:t.y});
+    if (t.trail.length > 8) t.trail.shift();
+    t.x += t.vx; t.y += t.vy;
+    t.life--;
+    if (t.life <= 0 || t.x > world.mapW + 2) tramParticles.splice(i, 1);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// PIGEON SYSTEM (DMs between agents)
+// ═══════════════════════════════════════════════════════════
+function stepPigeons() {
+  if (!netVisible.pigeon) { pigeons = []; return; }
+  if (tick % 90 === 0 && agents.length >= 2) {
+    const a1 = agents[Math.floor(Math.random() * agents.length)];
+    const a2 = agents[Math.floor(Math.random() * agents.length)];
+    if (a1 !== a2) pigeons.push({
+      sx: a1.x, sy: a1.y, ex: a2.x, ey: a2.y,
+      x: a1.x, y: a1.y, progress: 0, life: 120
+    });
+  }
+  for (let i = pigeons.length - 1; i >= 0; i--) {
+    const p = pigeons[i];
+    p.progress = Math.min(1, p.progress + 0.012);
+    // Arc trajectory
+    const t = p.progress;
+    const arcY = -Math.sin(t * Math.PI) * 4;
+    p.x = p.sx + (p.ex - p.sx) * t;
+    p.y = p.sy + (p.ey - p.sy) * t + arcY;
+    p.life--;
+    if (p.life <= 0 || p.progress >= 1) pigeons.splice(i, 1);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// ENERGY NODES (agent activity heatmap)
+// ═══════════════════════════════════════════════════════════
+function updateElecNodes() {
+  elecNodes = [];
+  if (!netVisible.elec || !world) return;
+  for (const ag of agents) {
+    elecNodes.push({ x: ag.x, y: ag.y, color: ag.color, pulse: tick });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SEMANTIC LAYERS (fiber/construction/transit)
+// ═══════════════════════════════════════════════════════════
+
+// Mark houses as under construction when a busy agent is working on that project
+function computeSemanticLayers() {
+  if (!world) return;
+  const busyProjects = new Set(
+    agents.filter(ag => ag.session?.availability === 'busy' && ag.current_project)
+          .map(ag => ag.current_project)
+  );
+  for (let y = 0; y < world.mapH; y++) {
+    for (let x = 0; x < world.mapW; x++) {
+      const t = world.tiles[y][x];
+      if (t.type === 'house' && t.data?.project) {
+        const pname = t.data.project.name || t.data.project.slug;
+        t.data.underConstruction = busyProjects.has(pname);
+      }
+    }
+  }
+}
+
+// Build transit links: agents working outside their home zone
+function updateTransitLinks() {
+  if (!world) return;
+  transitLinks = [];
+  for (const ag of agents) {
+    if (!ag.current_project || !ag.homeZone) continue;
+    const destZone = world.zones.find(z =>
+      z.name === ag.current_project ||
+      z.projects?.some(p => (p.name||p.slug) === ag.current_project)
+    );
+    if (destZone && destZone.name !== ag.homeZone.name) {
+      transitLinks.push({ from: ag.homeZone, to: destZone, agent: ag });
+    }
+  }
+}
+
+function drawTransitLink(link) {
+  const fx = (link.from.ox + link.from.w / 2) * T - cam.x;
+  const fy = (link.from.oy + link.from.h / 2) * T - cam.y;
+  const tx = (link.to.ox + link.to.w / 2) * T - cam.x;
+  const ty = (link.to.oy + link.to.h / 2) * T - cam.y;
+
+  ctx.save();
+  // Animated dashed link being "built"
+  ctx.setLineDash([6, 8]);
+  ctx.lineDashOffset = -(tick * 2) % 28;
+  ctx.strokeStyle = link.agent.color;
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(fx, fy);
+  ctx.lineTo(tx, ty);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Agent moving dot along the path
+  const progress = ((tick * 0.008 + link.agent.name.charCodeAt(0) * 0.1) % 1);
+  const px = fx + (tx - fx) * progress;
+  const py = fy + (ty - fy) * progress;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = link.agent.color;
+  ctx.fillRect(px - 3, py - 3, 6, 6);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(px - 1, py - 1, 2, 2);
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// AGENT SYSTEM
+// ═══════════════════════════════════════════════════════════
+function spawnAgents() {
+  if (!world) return;
+  agents = (gd.sessions || []).filter(s => s.registered).map(s => {
+    const zone = world.zones.find(z => z.name === s.current_project) || world.zones[0];
+    const ax = zone ? zone.ox + 1 + Math.random() * (zone.w - 2) | 0 : player.x + 2;
+    const ay = zone ? zone.oy + 1 + Math.random() * (zone.h - 2) | 0 : player.y + 2;
+    return {
+      name: s.name || '?', role: s.role, availability: s.availability,
+      current_project: s.current_project, current_task: s.current_task,
+      mood: s.mood || (s.availability==='busy' ? 'focused' : 'idle'),
+      x: ax, y: ay, dir: 'down',
+      color: agentColor(s.name || '?'),
+      moveTimer: 20 + Math.random() * 40 | 0,
+      homeZone: zone, session: s,
+    };
+  });
+}
+
+function stepAgents() {
+  if (!world) return;
+  const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+  for (const ag of agents) {
+    ag.moveTimer--;
+    if (ag.moveTimer > 0) continue;
+    ag.moveTimer = 30 + Math.random() * 50 | 0;
+    const dir = DIRS[Math.random() * 4 | 0];
+    const nx = ag.x + dir[0], ny = ag.y + dir[1];
+    if (ny < 0 || ny >= world.mapH || nx < 0 || nx >= world.mapW) continue;
+    const tile = world.tiles[ny]?.[nx];
+    if (tile && !tile.solid) {
+      if (!ag.homeZone || tile.zone === ag.homeZone.name || Math.random() < 0.04) {
+        ag.x = nx; ag.y = ny;
+        ag.dir = dir[0]>0?'right':dir[0]<0?'left':dir[1]>0?'down':'up';
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// PARTICLE SYSTEM
+// ═══════════════════════════════════════════════════════════
+function addParticle(wx, wy, color, opts) {
+  if (particles.length > 60) return;
+  opts = opts || {};
+  particles.push({
+    x: wx * T - cam.x + T/2, y: wy * T - cam.y + T/2,
+    vx: (Math.random()-.5) * (opts.spread||2),
+    vy: -(Math.random() * (opts.rise||1.5) + .3),
+    life: opts.life||20, maxLife: opts.life||20,
+    color, size: opts.size||2
+  });
+}
+
+function stepParticles() {
+  for (let i = particles.length-1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (p.life <= 0) { particles.splice(i,1); continue; }
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ═══════════════════════════════════════════════════════════
+// CANVAS
+// ═══════════════════════════════════════════════════════════
+const canvas = document.getElementById('world');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+resize(); window.addEventListener('resize', resize);
+
+// ═══════════════════════════════════════════════════════════
+// TILE RENDERER
+// ═══════════════════════════════════════════════════════════
+function drawTile(gx, gy, t) {
+  const sx = Math.round(gx * T - cam.x), sy = Math.round(gy * T - cam.y);
+  if (sx < -T || sy < -T || sx > canvas.width+T || sy > canvas.height+T) return;
+  const hood = t.hood || HOODS.default;
+  const dl = daylight;
+
+  switch (t.type) {
+    case 'grass': {
+      // Checkerboard grass
+      const pat = (gx + gy) % 2;
+      ctx.fillStyle = pat ? '#1a2e10' : '#152508';
+      ctx.fillRect(sx, sy, T, T);
+      // Random flowers/tufts
+      if ((gx * 7 + gy * 13) % 11 === 0) {
+        ctx.fillStyle = dl < 0.5 ? '#1a3a10' : '#3a6a20';
+        ctx.fillRect(sx+6, sy+6, 4, 4);
+        ctx.fillRect(sx+20, sy+18, 3, 3);
+      }
+      if ((gx * 3 + gy * 17) % 17 === 0 && dl > 0.5) {
+        ctx.fillStyle = '#f0e040';
+        ctx.fillRect(sx+14, sy+10, 2, 2);
+      }
+      // Tram track overlay
+      if (t.tramTrack && netVisible.tram) {
+        ctx.fillStyle = '#3a2a60';
+        ctx.fillRect(sx+4, sy+14, T-8, 2);
+        ctx.fillRect(sx+4, sy+18, T-8, 2);
+        ctx.fillStyle = '#5a4a80';
+        for (let s = 0; s < T; s += 6) ctx.fillRect(sx+s, sy+13, 2, 8);
+      }
+      break;
+    }
+    case 'river': {
+      // Animated water
+      const wave = Math.sin(tick * 0.06 + gx * 0.4 + gy * 0.2) * 0.5 + 0.5;
+      const deep = t.depth > RIVER_H/2;
+      ctx.fillStyle = deep ? '#0d3a50' : '#1a5a70';
+      ctx.fillRect(sx, sy, T, T);
+      // Current ripples
+      ctx.fillStyle = `rgba(69,184,176,${0.08 + wave * 0.08})`;
+      ctx.fillRect(sx, sy, T, T);
+      // Shimmer lines
+      ctx.fillStyle = `rgba(100,220,210,${0.05 + wave * 0.06})`;
+      const ripOff = ((tick * 0.8 + gx * 3) % T) | 0;
+      ctx.fillRect(sx + ripOff, sy + T/3, T/4, 1);
+      ctx.fillRect(sx + (ripOff + T/2) % T, sy + T*2/3, T/5, 1);
+      // Edge foam (top/bottom bank)
+      if (t.depth === 0) {
+        ctx.fillStyle = 'rgba(180,240,230,0.25)';
+        ctx.fillRect(sx, sy, T, 3);
+      }
+      if (t.depth === RIVER_H - 1) {
+        ctx.fillStyle = 'rgba(180,240,230,0.2)';
+        ctx.fillRect(sx, sy+T-3, T, 3);
+      }
+      break;
+    }
+    case 'bridge':
+    case 'bridge-center': {
+      // Wooden bridge planks
+      ctx.fillStyle = '#5a3a14';
+      ctx.fillRect(sx, sy, T, T);
+      ctx.fillStyle = '#7a5428';
+      for (let b = 0; b < T; b += 5) {
+        ctx.fillRect(sx+1, sy+b, T-2, 3);
+      }
+      if (t.type === 'bridge-center') {
+        ctx.fillStyle = '#9a7a48';
+        ctx.fillRect(sx+T/2-1, sy, 2, T);
+      }
+      // Railing
+      ctx.fillStyle = '#8a5a28';
+      ctx.fillRect(sx, sy, 3, T);
+      ctx.fillRect(sx+T-3, sy, 3, T);
+      break;
+    }
+    case 'path': {
+      ctx.fillStyle = (gx+gy)%2 ? '#5a4a28' : '#4e4020';
+      ctx.fillRect(sx, sy, T, T);
+      // Foot marks
+      if ((gx*5+gy*7)%8===0) {
+        ctx.fillStyle = '#3a2e10';
+        ctx.fillRect(sx+10, sy+8, 4, 5);
+        ctx.fillRect(sx+18, sy+18, 4, 5);
+      }
+      if (t.tramTrack && netVisible.tram) {
+        ctx.fillStyle = 'rgba(120,80,200,0.6)';
+        ctx.fillRect(sx+4, sy+14, T-8, 2);
+        ctx.fillRect(sx+4, sy+18, T-8, 2);
+      }
+      break;
+    }
+    case 'hood-floor': {
+      ctx.fillStyle = hood.floor;
+      ctx.fillRect(sx, sy, T, T);
+      if ((gx*3+gy*5)%7===0) {
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        ctx.fillRect(sx+8, sy+8, 2, 2);
+      }
+      // Garden vegetation — stades et santé
+      const vegSeed = (gx*7+gy*13)%23;
+      if (vegSeed===0) {
+        // Arbre — stade déterminé par pseudo-age
+        const treeAge = (gx*17+gy*31+gx*gy)%120;
+        const fruitColor = (gx*11+gy*7)%3===0?'#f04040':(gx*11+gy*7)%3===1?'#f0a040':'#c03080';
+        if (treeAge<20) {
+          // Semis
+          ctx.fillStyle='#5a9a2a'; ctx.fillRect(sx+15,sy+18,2,8);
+          ctx.fillStyle='#3a7a1a'; ctx.fillRect(sx+11,sy+18,4,3); ctx.fillRect(sx+17,sy+18,4,3);
+        } else if (treeAge<50) {
+          // Jeune arbre
+          ctx.fillStyle='#5a3010'; ctx.fillRect(sx+14,sy+14,4,10);
+          ctx.fillStyle='#2a6a1a'; ctx.fillRect(sx+8,sy+8,14,10);
+          ctx.fillStyle='#1a5a0a'; ctx.fillRect(sx+10,sy+6,10,4);
+        } else if (treeAge<90) {
+          // Adulte
+          ctx.fillStyle='#4a2808'; ctx.fillRect(sx+13,sy+10,6,14);
+          ctx.fillStyle='#2a6a1a'; ctx.fillRect(sx+4,sy+4,22,14);
+          ctx.fillStyle='#1a5a0a'; ctx.fillRect(sx+6,sy+2,18,6);
+        } else {
+          // Fruitier — fruits visibles
+          ctx.fillStyle='#3a2008'; ctx.fillRect(sx+12,sy+10,8,14);
+          ctx.fillStyle='#1a5a0a'; ctx.fillRect(sx+2,sy+2,26,18);
+          ctx.fillStyle='#2a6a1a'; ctx.fillRect(sx+4,sy+4,22,14);
+          // Fruits
+          for(let fi=0;fi<4;fi++){
+            const fx=sx+6+fi*6, fy=sy+8+(fi%2)*5;
+            ctx.fillStyle=fruitColor; ctx.fillRect(fx,fy,4,4);
+            ctx.fillStyle='#ffffff'; ctx.fillRect(fx+1,fy,1,1);
+          }
+        }
+      } else if (vegSeed===1||vegSeed===2) {
+        // Fleurs — couleur selon accent du hood (santé du quartier)
+        const sway=Math.round(Math.sin(tick*0.03+gx*0.7)*1);
+        const fc = hood.accent||'#f0e040';
+        ctx.fillStyle=fc;
+        ctx.fillRect(sx+10,sy+14+sway,2,6); ctx.fillRect(sx+8,sy+16+sway,6,2);
+        ctx.fillStyle='#ffffff'; ctx.fillRect(sx+10,sy+16+sway,2,2);
+        if(vegSeed===2){
+          ctx.fillRect(sx+20,sy+18+sway,2,4); ctx.fillRect(sx+19,sy+19+sway,4,2);
+          ctx.fillStyle='#ffffff'; ctx.fillRect(sx+20,sy+18+sway,1,1);
+        }
+      } else if (vegSeed===5) {
+        // Arbuste
+        ctx.fillStyle='#3a5a1a'; ctx.fillRect(sx+6,sy+18,10,6);
+        ctx.fillStyle='#2a4a10'; ctx.fillRect(sx+8,sy+15,6,5);
+        ctx.fillStyle='#4a7a1a'; ctx.fillRect(sx+10,sy+14,4,3);
+      } else if (vegSeed===8) {
+        // Potager — carré de culture
+        ctx.fillStyle='#3a2010'; ctx.fillRect(sx+4,sy+14,24,12);
+        ctx.fillStyle='#4a2818';
+        for(let r=0;r<3;r++) ctx.fillRect(sx+4,sy+14+r*4,24,1); // sillons
+        ctx.fillStyle=hood.accent||'#3fb950';
+        ctx.fillRect(sx+6,sy+16,3,4); ctx.fillRect(sx+12,sy+16,3,4); ctx.fillRect(sx+18,sy+16,3,4);
+      }
+      break;
+    }
+    case 'hood-edge': {
+      ctx.fillStyle = hood.path;
+      ctx.fillRect(sx, sy, T, T);
+      ctx.fillStyle = hood.wall;
+      ctx.fillRect(sx+4, sy+4, T-8, T-8);
+      break;
+    }
+    case 'house': {
+      const proj = t.data?.project;
+      const active = t.data?.active;
+      ctx.fillStyle = hood.wall;
+      ctx.fillRect(sx, sy, T, T);
+      // Roof (upper 1/3)
+      ctx.fillStyle = hood.roof;
+      ctx.fillRect(sx+2, sy+2, T-4, T/3);
+      // Door
+      ctx.fillStyle = active ? '#ffe8a0' : '#2a1a08';
+      ctx.fillRect(sx+T/2-3, sy+T*2/3, 6, T/3-2);
+      // Window
+      ctx.fillStyle = active ? '#ffffa0' : '#1a1a2a';
+      ctx.fillRect(sx+4, sy+T/3+2, 7, 6);
+      ctx.fillRect(sx+T-11, sy+T/3+2, 7, 6);
+      // Chimney
+      ctx.fillStyle = hood.wall;
+      ctx.fillRect(sx+T-8, sy, 6, T/4);
+      // Smoke if active
+      if (active && tick % 4 === 0) {
+        addParticle(gx, gy - 0.5, hood.smoke, { size:2, life:15, rise:1, spread:0.8 });
+      }
+      // Name plate
+      if (proj) {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(sx+1, sy+T-8, T-2, 7);
+        ctx.fillStyle = hood.accent;
+        ctx.font = '5px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText((proj.name||proj.slug||'?').slice(0,8), sx+T/2, sy+T-2);
+        ctx.textAlign = 'left';
+      }
+      // AI fiber antenna (projects with AI/MCP stack)
+      if (t.data?.hasAI) {
+        ctx.fillStyle = '#45b8b0';
+        ctx.fillRect(sx+T-7, sy-6, 2, 8);   // mast
+        ctx.fillRect(sx+T-10, sy-6, 8, 1);  // crossbar
+        ctx.fillRect(sx+T-10, sy-4, 5, 1);  // signal bar 1
+        const aglow = Math.sin(tick * 0.1 + gx) * 0.5 + 0.5;
+        ctx.globalAlpha = 0.25 + aglow * 0.25;
+        ctx.fillStyle = '#45b8b0';
+        ctx.fillRect(sx+T-13, sy-10, 14, 14);
+        ctx.globalAlpha = 1;
+        // Small dot blinking
+        if (tick % 40 < 20) {
+          ctx.fillStyle = '#45ffee';
+          ctx.fillRect(sx+T-7, sy-8, 3, 3);
+        }
+      }
+      // Scaffolding overlay (agent actively working)
+      if (t.data?.underConstruction) {
+        ctx.globalAlpha = 0.65;
+        ctx.fillStyle = '#b8903a';
+        ctx.fillRect(sx, sy, 3, T);         // left pole
+        ctx.fillRect(sx+T-3, sy, 3, T);     // right pole
+        ctx.fillRect(sx, sy, T, 2);         // top beam
+        ctx.fillRect(sx, sy+T*0.55, T, 2);  // mid beam
+        // X braces
+        ctx.strokeStyle = '#b8903a';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx+3, sy+2); ctx.lineTo(sx+T-3, sy+T*0.55);
+        ctx.moveTo(sx+T-3, sy+2); ctx.lineTo(sx+3, sy+T*0.55);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        // Blinking construction lamp
+        if (tick % 50 < 25) {
+          ctx.fillStyle = '#f0c040';
+          ctx.fillRect(sx+T/2-2, sy-5, 4, 4);
+        }
+      }
+      break;
+    }
+    case 'fountain': {
+      ctx.fillStyle = hood.floor;
+      ctx.fillRect(sx, sy, T, T);
+      // Basin
+      ctx.fillStyle = hood.path;
+      ctx.fillRect(sx+4, sy+4, T-8, T-8);
+      ctx.fillStyle = hood.water;
+      ctx.fillRect(sx+6, sy+6, T-12, T-12);
+      // Animated center
+      const fwave = Math.sin(tick * 0.08 + gx + gy) * 0.5 + 0.5;
+      ctx.fillStyle = `rgba(150,230,220,${0.4 + fwave * 0.3})`;
+      ctx.fillRect(sx+T/2-2, sy+T/2-2, 4, 4);
+      break;
+    }
+    case 'mairie': {
+      // Town hall / WikiChat hub building
+      ctx.fillStyle = '#0d0820';
+      ctx.fillRect(sx, sy, T, T);
+      // Pillars
+      ctx.fillStyle = '#2a1a5a';
+      ctx.fillRect(sx+2, sy+4, 4, T-4);
+      ctx.fillRect(sx+T-6, sy+4, 4, T-4);
+      ctx.fillRect(sx+T/2-2, sy+4, 4, T-4);
+      // Roof
+      ctx.fillStyle = '#8855cc';
+      ctx.fillRect(sx+1, sy+2, T-2, 5);
+      // Glow
+      const mglow = Math.sin(tick * 0.05) * 0.5 + 0.5;
+      ctx.fillStyle = `rgba(188,140,255,${0.15 + mglow * 0.1})`;
+      ctx.fillRect(sx, sy, T, T);
+      // Sign
+      ctx.fillStyle = '#bc8cff';
+      ctx.font = '6px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('WikiChat', sx+T/2, sy+T-4);
+      ctx.textAlign = 'left';
+      break;
+    }
+    case 'hub-building': {
+      const btype = t.data?.btype;
+      if (btype==='nook') {
+        ctx.fillStyle='#3a2208'; ctx.fillRect(sx,sy,T,T);
+        for(let s=0;s<T-4;s+=6){ctx.fillStyle=(s/6)%2===0?'#cc8820':'#8a5a20';ctx.fillRect(sx+2+s,sy+2,3,6);}
+        ctx.fillStyle='#88aacc'; ctx.fillRect(sx+4,sy+12,8,7); ctx.fillRect(sx+T-12,sy+12,8,7);
+        ctx.fillStyle='#f0e040'; ctx.font='5px monospace'; ctx.textAlign='center'; ctx.fillText('NOOK',sx+T/2,sy+T-4); ctx.textAlign='left';
+        ctx.globalAlpha=0.12; ctx.fillStyle='#ffa032'; ctx.fillRect(sx-T,sy-T,3*T,3*T); ctx.globalAlpha=1;
+      } else if (btype==='museum') {
+        ctx.fillStyle='#d8d0b8'; ctx.fillRect(sx,sy,T,T);
+        ctx.fillStyle='#b8a860'; ctx.fillRect(sx+2,sy+2,T-4,8);
+        ctx.fillStyle='#c8c0a8'; for(let c=4;c<T-4;c+=8) ctx.fillRect(sx+c,sy+10,4,T-12);
+        ctx.fillStyle='#c0b8a0'; ctx.fillRect(sx,sy+T-6,T,3);
+        ctx.fillStyle='#ffffff'; ctx.fillRect(sx+T/2-5,sy+T-14,4,4); ctx.fillRect(sx+T/2+1,sy+T-14,4,4);
+      } else if (btype==='tailor') {
+        ctx.fillStyle='#d08880'; ctx.fillRect(sx,sy,T,T);
+        ctx.fillStyle='#c07060'; ctx.fillRect(sx+4,sy+4,T-8,5);
+        ctx.fillStyle='#f0d8d0'; ctx.fillRect(sx+8,sy+10,4,6); ctx.fillRect(sx+9,sy+8,2,2);
+        ctx.fillStyle='#4a8a30'; ctx.fillRect(sx+2,sy+T-6,3,4); ctx.fillRect(sx+T-5,sy+T-6,3,4);
+        ctx.fillStyle='#f04080'; ctx.fillRect(sx+1,sy+T-8,4,3); ctx.fillRect(sx+T-5,sy+T-8,4,3);
+      } else if (btype==='roost') {
+        ctx.fillStyle='#3a2010'; ctx.fillRect(sx,sy,T,T);
+        ctx.fillStyle='#5a3018'; ctx.fillRect(sx+2,sy+2,T-4,7);
+        ctx.fillStyle='#1a1a2a'; ctx.fillRect(sx+4,sy+12,10,8);
+        ctx.fillStyle='#aa2020'; ctx.fillRect(sx+4,sy+12,4,8); ctx.fillRect(sx+10,sy+12,4,8);
+        ctx.globalAlpha=0.2; ctx.fillStyle='#ff9a40'; ctx.fillRect(sx+2,sy+10,T-4,12); ctx.globalAlpha=1;
+        ctx.fillStyle='#c8a060'; ctx.fillRect(sx+T/2-3,sy+T-10,6,5);
+        if(tick%6<3){ctx.fillStyle='#d8b880';ctx.fillRect(sx+T/2-1,sy+T-13,1,2);ctx.fillRect(sx+T/2+2,sy+T-12,1,2);}
+      } else if (btype==='airport') {
+        ctx.fillStyle='#f0d040'; ctx.fillRect(sx,sy,T,T);
+        ctx.fillStyle='#e8c020'; ctx.fillRect(sx+2,sy+2,T-4,6);
+        ctx.fillStyle='#88aacc'; ctx.fillRect(sx+6,sy+T/2,8,10); ctx.fillRect(sx+T-14,sy+T/2,8,10);
+        ctx.fillStyle='#e83a20'; ctx.fillRect(sx+T-4,sy+2,2,8);
+        ctx.fillRect(sx+T-8+Math.round(Math.sin(tick*0.1)*2),sy+2,6,3);
+        ctx.fillStyle='#d8e8f0'; ctx.fillRect(sx+4,sy+T-8,18,3); ctx.fillRect(sx+8,sy+T-11,8,2);
+      } else if (btype==='pier') {
+        ctx.fillStyle='#5a3818'; ctx.fillRect(sx,sy,T,T);
+        for(let p=0;p<T;p+=4){ctx.fillStyle=(p/4)%2===0?'#7a5028':'#5a3818';ctx.fillRect(sx,sy+p,T,2);}
+        ctx.fillStyle='#40aa40'; ctx.fillRect(sx+T-8,sy+4,6,6);
+        ctx.globalAlpha=0.2; ctx.fillStyle='#40aa40'; ctx.fillRect(sx+T-14,sy-2,16,16); ctx.globalAlpha=1;
+        ctx.fillStyle='#6a4018'; ctx.fillRect(sx+2,sy+T-10,20,7);
+        ctx.fillStyle='#3a2010'; ctx.fillRect(sx+10,sy+T-14,2,6);
+      } else {
+        ctx.fillStyle='#1a2a18'; ctx.fillRect(sx,sy,T,T);
+        ctx.fillStyle='#45b8b0'; ctx.font='5px monospace'; ctx.textAlign='center';
+        ctx.fillText((t.data?.label||'?').slice(0,6),sx+T/2,sy+T-4); ctx.textAlign='left';
+      }
+      if(daylight<1){ctx.fillStyle=`rgba(0,0,30,${(1-daylight)*0.6})`;ctx.fillRect(sx,sy,T,T);}
+      // Floating label above building
+      if (t.data?.label) {
+        const lbl = t.data.label;
+        const lw = lbl.length * 4.5 + 6;
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillRect(sx + T/2 - lw/2, sy - 13, lw, 10);
+        ctx.fillStyle = '#f0c040';
+        ctx.font = '6px "Silkscreen",monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(lbl.slice(0,14), sx + T/2, sy - 5);
+        ctx.textAlign = 'left';
+      }
+      break;
+    }
+    case 'sign': {
+      ctx.fillStyle = hood ? hood.floor : '#1a2a1a';
+      ctx.fillRect(sx, sy, T, T);
+      ctx.fillStyle = hood ? hood.path : '#4a5a2a';
+      ctx.fillRect(sx+T/2-1, sy+T/2, 2, T/2);
+      ctx.fillStyle = hood ? hood.accent : '#8bac0f';
+      ctx.fillRect(sx+4, sy+4, T-8, T/2-2);
+      ctx.fillStyle = '#000';
+      ctx.font = '5px monospace';
+      ctx.textAlign = 'center';
+      const label = (t.data?.text || '').slice(0, 8);
+      ctx.fillText(label, sx+T/2, sy+T/3+2);
+      ctx.textAlign = 'left';
+      break;
+    }
+    case 'undiscovered': {
+      const depth = ((gx * 3 + gy * 7) % 5);
+      ctx.fillStyle = depth === 0 ? '#050d15' : '#030a10';
+      ctx.fillRect(sx, sy, T, T);
+      // Stars — static
+      const starSeed = (gx * 17 + gy * 31) % 97;
+      if (starSeed < 3) {
+        const stx = sx + (gx * 11) % T;
+        const sty = sy + (gy * 13) % T;
+        const bri = starSeed === 0 ? 0.7 : 0.35;
+        ctx.globalAlpha = bri;
+        ctx.fillStyle = '#aaccff';
+        ctx.fillRect(stx, sty, 1, 1);
+        ctx.globalAlpha = 1;
+      }
+      // Rare twinkling star
+      if (starSeed === 5 && (tick + gx + gy) % 60 < 4) {
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(sx + (gx*7)%T, sy + (gy*9)%T, 1, 1);
+        ctx.globalAlpha = 1;
+      }
+      break;
+    }
+    default: {
+      ctx.fillStyle = '#0c1206';
+      ctx.fillRect(sx, sy, T, T);
+    }
+  }
+
+  // Night overlay
+  if (daylight < 1) {
+    ctx.fillStyle = `rgba(0,0,30,${(1-daylight)*0.6})`;
+    ctx.fillRect(sx, sy, T, T);
+  }
+}
+
+// ── Draw boat ────────────────────────────────────────────────
+function drawBoat(b) {
+  if (!netVisible.river) return;
+  const sx = Math.round(b.wx * T - cam.x);
+  const sy = Math.round(b.wy * T - cam.y);
+  if (sx < -30 || sx > canvas.width+30 || sy < -30 || sy > canvas.height+30) return;
+
+  const def = b.def;
+  const glowSize = b === nearBoat ? 16 : 10;
+
+  // Glow
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = def.color;
+  ctx.fillRect(sx - glowSize/2 + 3, sy - glowSize/2, glowSize, glowSize);
+  ctx.globalAlpha = 1;
+
+  // Hull (triangle/paper boat shape)
+  ctx.fillStyle = def.color;
+  ctx.beginPath();
+  ctx.moveTo(sx + 8, sy - 2);
+  ctx.lineTo(sx + 14, sy + 5);
+  ctx.lineTo(sx + 2, sy + 5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Base hull
+  ctx.fillStyle = def.color;
+  ctx.fillRect(sx, sy + 5, 14, 4);
+
+  // Highlight if near player
+  if (b === nearBoat) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx - 2, sy - 4, 18, 16);
+    ctx.lineWidth = 1;
+
+    // [A] prompt
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(sx - 10, sy - 18, 44, 12);
+    ctx.fillStyle = '#45b8b0';
+    ctx.font = '7px "Silkscreen"';
+    ctx.textAlign = 'center';
+    ctx.fillText('[A] Attraper', sx + 7, sy - 9);
+    ctx.textAlign = 'left';
+  }
+
+  // Type icon
+  ctx.font = '8px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(def.icon, sx + 7, sy + 3);
+  ctx.textAlign = 'left';
+}
+
+// ── Draw tram particle ────────────────────────────────────────
+function drawTram(t) {
+  if (!netVisible.tram) return;
+  const sx = Math.round(t.x * T - cam.x);
+  const sy = Math.round(t.y * T - cam.y);
+  if (sx < -20 || sx > canvas.width+20) return;
+
+  // Trail
+  ctx.globalAlpha = 0.3;
+  for (let i = 0; i < t.trail.length; i++) {
+    const pt = t.trail[i];
+    const tsx = Math.round(pt.x * T - cam.x);
+    const tsy = Math.round(pt.y * T - cam.y);
+    ctx.fillStyle = t.color;
+    ctx.fillRect(tsx, tsy + T/2-2, T/3, 4);
+  }
+  ctx.globalAlpha = 1;
+
+  // Tram body
+  ctx.fillStyle = '#3a2060';
+  ctx.fillRect(sx, sy + T/2-4, T*1.2, 8);
+  ctx.fillStyle = t.color;
+  ctx.fillRect(sx+2, sy + T/2-2, T*1.2-4, 4);
+  // Windows
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(sx+4, sy + T/2-2, 4, 3);
+  ctx.fillRect(sx+10, sy + T/2-2, 4, 3);
+}
+
+// ── Draw pigeon ────────────────────────────────────────────────
+function drawPigeon(p) {
+  if (!netVisible.pigeon) return;
+  const sx = Math.round(p.x * T - cam.x) + T/2;
+  const sy = Math.round(p.y * T - cam.y) + T/2;
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = '#d0c8b8';
+  ctx.fillRect(sx-3, sy-2, 6, 3);
+  ctx.fillRect(sx-1, sy-4, 2, 2); // head
+  // Wings
+  ctx.fillStyle = '#b0a898';
+  ctx.fillRect(sx-5, sy-2, 4, 2);
+  ctx.fillRect(sx+1, sy-2, 4, 2);
+  ctx.globalAlpha = 1;
+}
+
+// ── Draw energy node ──────────────────────────────────────────
+function drawElecNode(n) {
+  if (!netVisible.elec) return;
+  const sx = Math.round(n.x * T - cam.x) + T/2;
+  const sy = Math.round(n.y * T - cam.y) + T/2;
+  const pulse = Math.sin((tick - n.pulse) * 0.1) * 0.5 + 0.5;
+  ctx.globalAlpha = 0.2 + pulse * 0.2;
+  ctx.fillStyle = n.color;
+  const r = 16 + pulse * 12;
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+// ── Draw agent (villager) ──────────────────────────────────────
+function drawAgent(ag) {
+  const sx = Math.round(ag.x * T - cam.x) + 4;
+  const sy = Math.round(ag.y * T - cam.y);
+  if (sx < -T || sy < -T || sx > canvas.width+T || sy > canvas.height+T) return;
+
+  const role = (ag.role || '').toLowerCase();
+  const mood = ag.mood || 'idle';
+  let bodyColor = ag.color;
+  let accessoryFn = null;
+
+  if (role.includes('analyst')||role.includes('analyse')) {
+    bodyColor='#C9A84C';
+    accessoryFn=(bx,by)=>{ctx.fillStyle='#ffffff';ctx.fillRect(bx+1,by+1,1,1);};
+  } else if (role.includes('design')) {
+    bodyColor='#C4A0E0';
+    accessoryFn=(bx,by)=>{ctx.fillStyle='#8855cc';ctx.fillRect(bx,by-1,4,1);};
+  } else if (role.includes('cod')||role.includes('dev')||role.includes('engineer')) {
+    bodyColor='#6DBF7B';
+    accessoryFn=(bx,by)=>{ctx.fillStyle='#88eeff';ctx.fillRect(bx,by+1,1,1);ctx.fillRect(bx+3,by+1,1,1);};
+  } else if (role.includes('curator')||role.includes('kb')) {
+    bodyColor='#45B8B0';
+    accessoryFn=(bx,by)=>{ctx.fillStyle=bodyColor;ctx.fillRect(bx-1,by+2,1,3);ctx.fillRect(bx+4,by+2,1,3);};
+  } else if (role.includes('explorer')||role.includes('crawl')) {
+    bodyColor='#58A6FF';
+    accessoryFn=(bx,by)=>{ctx.fillStyle='#d0aa40';ctx.fillRect(bx-1,by-1,6,1);};
+  } else if (role.includes('arch')||role.includes('nook')) {
+    bodyColor='#7EB8DA';
+    accessoryFn=(bx,by)=>{ctx.fillStyle='#ffffff';ctx.fillRect(bx+3,by+2,1,2);ctx.fillRect(bx+3,by+3,2,1);};
+  }
+
+  if (mood==='blocked') bodyColor='#f85149';
+  let alpha = mood==='waiting' ? 0.6 : 1;
+  if (mood==='curious') alpha = Math.sin(tick*0.05)*0.1+0.9;
+
+  ctx.globalAlpha=alpha*0.3; ctx.fillStyle='#000'; ctx.fillRect(sx+2,sy+T-4,T-12,4); ctx.globalAlpha=alpha;
+
+  const bx=sx+(T-8)/2, by=sy+T-16;
+
+  // Trail for collaborative
+  if (mood==='collaborative') {
+    ctx.globalAlpha=alpha*0.15; ctx.fillStyle=bodyColor;
+    ctx.fillRect(bx-2,by+2,2,2); ctx.fillRect(bx-4,by+3,2,2); ctx.globalAlpha=alpha;
+  }
+
+  // Halo for focused
+  if (mood==='focused') {
+    ctx.globalAlpha=alpha*0.2; ctx.fillStyle=bodyColor; ctx.fillRect(bx-3,by-3,14,14); ctx.globalAlpha=alpha;
+  }
+
+  // Shoes
+  ctx.fillStyle='#2a1a08';
+  const frame=tick%4;
+  if (mood!=='blocked'&&mood!=='waiting'&&frame===2){ctx.fillRect(bx-1,by+6,3,2);ctx.fillRect(bx+4,by+6,3,2);}
+  else if (mood!=='blocked'&&mood!=='waiting'&&frame===3){ctx.fillRect(bx,by+6,3,2);ctx.fillRect(bx+5,by+6,3,2);}
+  else {ctx.fillRect(bx,by+6,3,2);ctx.fillRect(bx+4,by+6,3,2);}
+
+  // Body
+  ctx.fillStyle=bodyColor; ctx.fillRect(bx+1,by+3,6,3);
+  // Skin+eyes
+  ctx.fillStyle='#e6c9a0'; ctx.fillRect(bx+2,by,4,2);
+  ctx.fillStyle='#111'; ctx.fillRect(bx+2,by+1,1,1); ctx.fillRect(bx+5,by+1,1,1);
+
+  if (accessoryFn) accessoryFn(bx+2, by);
+  ctx.globalAlpha=1;
+
+  // Name bubble
+  const dx=ag.x-player.x, dy2=ag.y-player.y;
+  if (Math.hypot(dx,dy2)<4) {
+    const lw=ag.name.length*4.5+6;
+    ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(bx+4-lw/2,sy-14,lw,10);
+    ctx.fillStyle=bodyColor; ctx.font='6px "Silkscreen"'; ctx.textAlign='center';
+    ctx.fillText(ag.name.slice(0,12),bx+4,sy-6); ctx.textAlign='left';
+    if (Math.hypot(dx,dy2)<2&&!dlgActive&&!caughtBoat) {
+      ctx.fillStyle='rgba(0,0,0,0.85)'; ctx.fillRect(bx-5,sy-26,60,10);
+      ctx.fillStyle='#8bac0f'; ctx.font='6px "Silkscreen"'; ctx.fillText('[A] Parler',bx,sy-18);
+    }
+  }
+}
+
+// ── Draw player ────────────────────────────────────────────────
+function drawPlayer() {
+  if (!world) return;
+  const sx = Math.round(player.x * T - cam.x) + 2;
+  const sy = Math.round(player.y * T - cam.y);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(sx+4, sy+T-4, T-12, 4);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(sx+4, sy+8, T-14, T-12);
+  ctx.fillStyle = '#ffddbb';
+  ctx.fillRect(sx+5, sy+2, T-16, T/3);
+  ctx.fillStyle = '#003399';
+  ctx.fillRect(sx+4, sy+8, T-14, 5);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(sx+7, sy+5, 2, 2);
+  ctx.fillRect(sx+T-18, sy+5, 2, 2);
+
+  // Direction indicator
+  ctx.fillStyle = '#ffffff';
+  switch(player.dir) {
+    case 'up':    ctx.fillRect(sx+T/2-5, sy+1, 4, 3); break;
+    case 'down':  ctx.fillRect(sx+T/2-5, sy+T-3, 4, 3); break;
+    case 'left':  ctx.fillRect(sx+1, sy+T/2-4, 3, 4); break;
+    case 'right': ctx.fillRect(sx+T-9, sy+T/2-4, 3, 4); break;
+  }
+}
+
+// ── Draw toasts ────────────────────────────────────────────────
+function drawToasts() {
+  let ty = canvas.height - 100;
+  for (let i = toasts.length-1; i >= 0; i--) {
+    const t = toasts[i];
+    t.life--;
+    if (t.life <= 0) { toasts.splice(i,1); continue; }
+    const alpha = Math.min(1, t.life/30);
+    const lw = t.msg.length * 5 + 14;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.fillRect(10, ty, lw, 14);
+    ctx.fillStyle = t.color;
+    ctx.font = '7px "Silkscreen"';
+    ctx.textAlign = 'left';
+    ctx.fillText(t.msg, 17, ty+10);
+    ctx.globalAlpha = 1;
+    ty -= 18;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// MINIMAP RENDERER
+// ═══════════════════════════════════════════════════════════
+const miniCanvas = document.getElementById('minimap');
+const mctx = miniCanvas.getContext('2d');
+const MM_W = 160, MM_H = 90;
+
+function renderMinimap() {
+  if (!world) return;
+  mctx.clearRect(0, 0, MM_W, MM_H);
+  const scaleX = MM_W / world.mapW;
+  const scaleY = MM_H / world.mapH;
+
+  for (let y = 0; y < world.mapH; y += 2) {
+    for (let x = 0; x < world.mapW; x += 2) {
+      const t = world.tiles[y]?.[x];
+      if (!t) continue;
+      // Fog of war on minimap
+      if (mapData && mapData.islands && !isIslandDiscovered(x, y)) {
+        mctx.fillStyle = '#030a10';
+        mctx.fillRect(x * scaleX, y * scaleY, 2, 2);
+        continue;
+      }
+      let c = '#0c1206';
+      switch(t.type) {
+        case 'river':        c = '#1a5a70'; break;
+        case 'bridge':       c = '#5a3a14'; break;
+        case 'path':         c = '#4a4020'; break;
+        case 'hood-floor':   c = t.hood ? t.hood.floor : '#1a2a1a'; break;
+        case 'hood-edge':    c = t.hood ? t.hood.path : '#2a3a2a'; break;
+        case 'house':        c = t.hood ? t.hood.roof : '#4a6a3a'; break;
+        case 'fountain':     c = '#45b8b0'; break;
+        case 'mairie':       c = '#8855cc'; break;
+        case 'grass':        c = (x+y)%4===0 ? '#1a2e10' : '#0e1a08'; break;
+      }
+      mctx.fillStyle = c;
+      mctx.fillRect(x * scaleX, y * scaleY, 2, 2);
+    }
+  }
+
+  // Boats on minimap
+  for (const b of boats) {
+    mctx.fillStyle = b.def.color;
+    mctx.fillRect(b.wx * scaleX - 1, b.wy * scaleY - 1, 2, 2);
+  }
+
+  // Player
+  const px = player.x * scaleX, py = player.y * scaleY;
+  mctx.fillStyle = tick%20<10 ? '#ffffff' : '#45b8b0';
+  mctx.fillRect(px-2, py-2, 4, 4);
+
+  // Agents
+  for (const ag of agents) {
+    mctx.fillStyle = ag.color;
+    mctx.fillRect(ag.x * scaleX, ag.y * scaleY, 2, 2);
+  }
+
+  // Camera viewport rect
+  mctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  mctx.lineWidth = 1;
+  mctx.strokeRect(
+    cam.x / T * scaleX, cam.y / T * scaleY,
+    (canvas.width / T) * scaleX, (canvas.height / T) * scaleY
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// GLOBAL MAP VIEW [M]
+// ═══════════════════════════════════════════════════════════
+function renderGlobalMap() {
+  if (!world) return;
+  const mcanvas = document.getElementById('map-canvas');
+  const mw = Math.min(window.innerWidth * 0.85, world.mapW * 3);
+  const mh = Math.min(window.innerHeight * 0.75, world.mapH * 3);
+  mcanvas.width = mw; mcanvas.height = mh;
+  const mc = mcanvas.getContext('2d');
+  mc.imageSmoothingEnabled = false;
+  const sx = mw / world.mapW, sy = mh / world.mapH;
+
+  for (let y = 0; y < world.mapH; y++) {
+    for (let x = 0; x < world.mapW; x++) {
+      const t = world.tiles[y]?.[x];
+      if (!t) continue;
+      let c = '#0c1206';
+      switch(t.type) {
+        case 'river':      c = '#1a6a80'; break;
+        case 'bridge':     c = '#7a5a28'; break;
+        case 'path':       c = '#5a5030'; break;
+        case 'hood-floor': c = t.hood ? t.hood.floor : '#1a2a1a'; break;
+        case 'hood-edge':  c = t.hood ? t.hood.path : '#2a3a2a'; break;
+        case 'house':      c = t.hood ? t.hood.roof : '#4a6a3a'; break;
+        case 'fountain':   c = '#45b8b0'; break;
+        case 'mairie':     c = '#8855cc'; break;
+        case 'sign':       c = t.hood ? t.hood.accent : '#4a7a2a'; break;
+        case 'grass':      c = '#0e1a08'; break;
+      }
+      mc.fillStyle = c;
+      mc.fillRect(x * sx, y * sy, Math.ceil(sx), Math.ceil(sy));
+    }
+  }
+
+  // Neighborhood labels
+  mc.font = `${Math.max(7, sx * 3)}px "Silkscreen"`;
+  mc.textAlign = 'center';
+  for (const z of world.zones) {
+    if (z.isHub) {
+      mc.fillStyle = '#bc8cff';
+      mc.fillText('⛵ WikiChat', (z.ox + z.w/2) * sx, (z.oy - 1) * sy);
+    } else {
+      mc.fillStyle = z.hood ? z.hood.accent : '#8b949e';
+      mc.fillText(z.hood?.name || z.name, (z.ox + z.w/2) * sx, (z.oy - 1) * sy);
+    }
+  }
+  mc.textAlign = 'left';
+
+  // Boats
+  for (const b of boats) {
+    mc.fillStyle = b.def.color;
+    mc.fillRect(b.wx * sx - 2, b.wy * sy - 2, 5, 5);
+  }
+
+  // Transit links (fiber view)
+  for (const link of transitLinks) {
+    const lfx = (link.from.ox + link.from.w/2) * sx;
+    const lfy = (link.from.oy + link.from.h/2) * sy;
+    const ltx = (link.to.ox + link.to.w/2) * sx;
+    const lty = (link.to.oy + link.to.h/2) * sy;
+    mc.strokeStyle = link.agent.color;
+    mc.globalAlpha = 0.4;
+    mc.setLineDash([3, 4]);
+    mc.lineWidth = 1;
+    mc.beginPath(); mc.moveTo(lfx, lfy); mc.lineTo(ltx, lty); mc.stroke();
+    mc.setLineDash([]);
+    mc.globalAlpha = 1;
+  }
+
+  // Agents
+  for (const ag of agents) {
+    mc.fillStyle = ag.color;
+    mc.fillRect(ag.x * sx - 2, ag.y * sy - 2, 4, 4);
+  }
+
+  // Player
+  mc.fillStyle = '#ffffff';
+  mc.fillRect(player.x * sx - 3, player.y * sy - 3, 6, 6);
+  mc.strokeStyle = '#45b8b0';
+  mc.lineWidth = 1;
+  mc.strokeRect(player.x * sx - 3, player.y * sy - 3, 6, 6);
+
+  // Legend
+  mc.font = '7px "Silkscreen"';
+  mc.fillStyle = '#6a8a6a';
+  mc.fillText('⛵ bateaux = flux  📡 antenne = IA native  🔧 feu = travaux en cours', 8, mh - 6);
+}
+
+// ═══════════════════════════════════════════════════════════
+// HUD UPDATE
+// ═══════════════════════════════════════════════════════════
+function updateHUD() {
+  // Zone name
+  let zoneName = '—';
+  if (world) {
+    const t = world.tiles[player.y]?.[player.x];
+    const zone = t?.zone;
+    if (zone) {
+      zoneName = zone;
+      if (zone !== lastZone) {
+        lastZone = zone;
+        visitedZones.add(zone);
+        addToast('→ ' + zone, '#f0c040');
+      }
+    }
+  }
+  document.getElementById('hud-zone').textContent = zoneName;
+
+  // Day/night
+  const h = new Date().getHours();
+  const timeEl = document.getElementById('hud-time');
+  if (h >= 6 && h < 8)  timeEl.textContent = '🌅 aube';
+  else if (h >= 8 && h < 18) timeEl.textContent = '☀️ jour';
+  else if (h >= 18 && h < 20) timeEl.textContent = '🌆 soir';
+  else timeEl.textContent = '🌙 nuit';
+}
+
+// ═══════════════════════════════════════════════════════════
+// SIDE PANEL
+// ═══════════════════════════════════════════════════════════
+function showTab(tab) {
+  sideTab = tab;
+  document.getElementById('stab-agents').classList.toggle('active', tab === 'agents');
+  document.getElementById('stab-projects').classList.toggle('active', tab === 'projects');
+  renderSidePanel();
+}
+
+function renderSidePanel() {
+  const cont = document.getElementById('side-content');
+  if (sideTab === 'agents') {
+    const ag = (gd.sessions || []).filter(s => s.registered);
+    cont.innerHTML = ag.map(s => {
+      const c = agentColor(s.name || '?');
+      const status = s.availability === 'available' ? '#3fb950' : s.availability === 'busy' ? '#f85149' : '#d29922';
+      return `<div class="scard" onclick="pingAgent('${s.name||''}')">
+        <div class="sc-name"><span class="sc-dot" style="background:${c}"></span>${(s.name||'?').slice(0,18)}</div>
+        <div class="sc-sub" style="color:${status}">${s.role||'agent'}</div>
+        ${s.current_project ? `<div class="sc-sub">${s.current_project.slice(0,18)}</div>` : ''}
+      </div>`;
+    }).join('') || '<div style="color:#2a4a2a;font-size:6px;padding:8px">Aucun agent enregistré</div>';
+  } else {
+    cont.innerHTML = registryProjects.slice(0,30).map(p => {
+      const hood = getHood(p.stack);
+      return `<div class="scard">
+        <div class="sc-name" style="color:${hood.accent}">${(p.name||p.slug||'?').slice(0,20)}</div>
+        <div class="sc-sub" style="color:${hood.path}">${hood.name}</div>
+      </div>`;
+    }).join('') || '<div style="color:#2a4a2a;font-size:6px;padding:8px">Aucun projet</div>';
+  }
+}
+
+function pingAgent(name) {}
+
+// ═══════════════════════════════════════════════════════════
+// DIALOG
+// ═══════════════════════════════════════════════════════════
+function showDialog(speaker, lines) {
+  dlgQueue = lines.slice();
+  dlgActive = true;
+  dlgTyping = false;
+  nextDlg(speaker);
+}
+function nextDlg(speaker) {
+  if (!dlgQueue.length) { closeDlg(); return; }
+  const text = dlgQueue.shift();
+  dlgFullText = text; dlgDisplayed = 0; dlgTyping = true;
+  document.getElementById('dialog-speaker').textContent = speaker || '';
+  document.getElementById('dialog-text').textContent = '';
+  document.getElementById('dialog').style.display = 'block';
+}
+function closeDlg() {
+  dlgActive = false; dlgTyping = false;
+  document.getElementById('dialog').style.display = 'none';
+}
+function stepDialog() {
+  if (!dlgTyping) return;
+  if (dlgDisplayed < dlgFullText.length) {
+    dlgDisplayed += 2;
+    document.getElementById('dialog-text').textContent = dlgFullText.slice(0, dlgDisplayed);
+  } else {
+    dlgTyping = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// BOAT CATCH
+// ═══════════════════════════════════════════════════════════
+function catchBoat(boat) {
+  caughtBoat = boat;
+  const def = boat.def;
+  const d = boat.data || {};
+  const panel = document.getElementById('catch-panel');
+  document.getElementById('catch-type-label').textContent = def.label;
+  document.getElementById('catch-panel').style.borderColor = def.color;
+
+  let body = '';
+  if (d.content) body += `<div style="margin-bottom:6px">${d.content.slice(0,300)}</div>`;
+  if (d.text) body += `<div style="margin-bottom:6px">${d.text.slice(0,300)}</div>`;
+  if (d.author || d.session_name) body += `<div style="color:#5a8a80">De : ${d.author||d.session_name||'?'}</div>`;
+  if (d.channel) body += `<div style="color:#5a8a80">Canal : #${d.channel}</div>`;
+  if (d.ts) body += `<div style="color:#3a5a50">${new Date(d.ts).toLocaleTimeString('fr-FR')}</div>`;
+  if (!body) body = `<div style="color:#3a5a50">Flux ${def.label} — type: ${boat.type}</div>`;
+
+  document.getElementById('catch-body').innerHTML = body;
+  panel.style.display = 'block';
+}
+
+function closeCatch() {
+  caughtBoat = null;
+  document.getElementById('catch-panel').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// PLAYER INTERACTION [A]
+// ═══════════════════════════════════════════════════════════
+function interact() {
+  if (caughtBoat) { closeCatch(); return; }
+  if (dlgActive) {
+    if (dlgTyping) { dlgDisplayed = dlgFullText.length; document.getElementById('dialog-text').textContent = dlgFullText; dlgTyping = false; }
+    else nextDlg(document.getElementById('dialog-speaker').textContent);
+    return;
+  }
+
+  // Catch nearby boat
+  if (nearBoat) { catchBoat(nearBoat); return; }
+
+  // Talk to nearby agent
+  for (const ag of agents) {
+    if (Math.abs(ag.x - player.x) <= 1 && Math.abs(ag.y - player.y) <= 1) {
+      const msgs = (gd.recentMessages || []).filter(m =>
+        m.session_name === ag.name || m.session_id === ag.session?.id
+      ).slice(0, 2);
+      const lines = msgs.length ?
+        msgs.map(m => `"${(m.content || '').slice(0, 100)}"`) :
+        [`Je suis ${ag.role || 'un agent'}. Rien de nouveau pour l'instant.`];
+      showDialog(ag.name, lines);
+      return;
+    }
+  }
+
+  // Check adjacent tiles
+  const DIRS = [[0,-1],[0,1],[-1,0],[1,0]];
+  for (const [dx, dy] of DIRS) {
+    const t = world?.tiles[player.y+dy]?.[player.x+dx];
+    if (!t) continue;
+    if (t.type === 'house' && t.data?.project) {
+      const p = t.data.project;
+      showDialog(p.name||p.slug||'Maison', [
+        `${p.name || p.slug} — ${t.zone || 'Quartier inconnu'}`,
+        `Stack: ${(p.stack || []).join(', ') || 'inconnue'}`,
+        p.description || 'Projet actif.'
+      ]);
+      return;
+    }
+    if (t.type === 'mairie') {
+      const sessions = (gd.sessions || []).filter(s => s.registered);
+      showDialog('WikiChat — Mairie', [
+        `${sessions.length} agents actifs sur le réseau.`,
+        `${(gd.channels||[]).length} canaux ouverts.`,
+        `La rivière porte les flux en temps réel. Attrape les bateaux pour lire les messages.`
+      ]);
+      return;
+    }
+    if (t.type === 'fountain') {
+      showDialog(t.zone || 'Fontaine', [`Fontaine du ${t.zone || 'quartier'}. L'eau reflète l'activité du coin.`]);
+      return;
+    }
+    if (t.type === 'sign') {
+      showDialog('Panneau', [t.data?.text || 'Un panneau indicateur.']);
+      return;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// INPUT
+// ═══════════════════════════════════════════════════════════
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'a' || e.key === 'A' || e.key === ' ') interact();
+  if (e.key === 'b' || e.key === 'B' || e.key === 'Escape') {
+    closeDlg(); closeCatch();
+  }
+  if (e.key === 'm' || e.key === 'M') {
+    mapMode = !mapMode;
+    const ov = document.getElementById('map-overlay');
+    if (mapMode) { ov.classList.add('show'); renderGlobalMap(); }
+    else ov.classList.remove('show');
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    sideOpen = !sideOpen;
+    document.getElementById('side').classList.toggle('hidden', !sideOpen);
+    if (sideOpen) renderSidePanel();
+  }
+  if (e.key === 'n' || e.key === 'N') {
+    // Cycle network views
+    const nets = ['river','tram','pigeon','elec','fiber'];
+    const activeNets = nets.filter(k => netVisible[k]);
+    const nextNet = nets[(nets.indexOf(activeNets[activeNets.length-1]||'river') + 1) % nets.length];
+    nets.forEach(k => { netVisible[k] = false; document.getElementById('nbtn-'+k)?.classList.remove('active'); });
+    netVisible[nextNet] = true; document.getElementById('nbtn-'+nextNet)?.classList.add('active');
+    addToast('Vue : ' + nextNet, '#45b8b0');
+  }
+  if (e.key === 'f' || e.key === 'F') {
+    if (world?.zones?.length) {
+      const z = world.zones[Math.random() * world.zones.length | 0];
+      player.x = z.ox + z.w/2 | 0;
+      player.y = z.oy + z.h/2 | 0;
+      addToast('Voyage → ' + z.name, '#f0c040');
+    }
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+let moveTimer = 0;
+function handleInput() {
+  if (dlgActive || caughtBoat) return;
+  moveTimer--;
+  if (moveTimer > 0) return;
+  let dx = 0, dy = 0;
+  if (keys['z']||keys['Z']||keys['ArrowUp'])    { dy=-1; player.dir='up'; }
+  if (keys['s']||keys['S']||keys['ArrowDown'])   { dy= 1; player.dir='down'; }
+  if (keys['q']||keys['Q']||keys['ArrowLeft'])   { dx=-1; player.dir='left'; }
+  if (keys['d']||keys['D']||keys['ArrowRight'])  { dx= 1; player.dir='right'; }
+  if (dx === 0 && dy === 0) return;
+  moveTimer = 6;
+  const nx = player.x + dx, ny = player.y + dy;
+  if (!world || ny<0 || ny>=world.mapH || nx<0 || nx>=world.mapW) return;
+  const tile = world.tiles[ny]?.[nx];
+  if (tile && !tile.solid) { player.x = nx; player.y = ny; }
+}
+
+// ═══════════════════════════════════════════════════════════
+// MAIN LOOP
+// ═══════════════════════════════════════════════════════════
+function loop() {
+  requestAnimationFrame(loop);
+  tick++;
+  handleInput();
+  // Fog of war reveal check (every 10 frames for performance)
+  if (tick % 10 === 0) revealAround(player.x, player.y);
+
+  // Camera lerp
+  cam.tx = player.x * T - canvas.width/2;
+  cam.ty = player.y * T - canvas.height/2;
+  cam.x += (cam.tx - cam.x) * 0.1;
+  cam.y += (cam.ty - cam.y) * 0.1;
+
+  // Step systems
+  if (tick % 3 === 0) stepAgents();
+  stepBoats();
+  stepTrams();
+  stepPigeons();
+  updateElecNodes();
+  if (tick % 120 === 0) { updateTransitLinks(); computeSemanticLayers(); }
+  stepDialog();
+  if (tick % 300 === 0) { daylight = computeDaylight(); }
+
+  // ─ Draw ─────────────────────────────────────────
+  ctx.fillStyle = '#0a1206';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (world) {
+    // Tiles
+    const startX = Math.max(0, Math.floor(cam.x / T) - 1);
+    const startY = Math.max(0, Math.floor(cam.y / T) - 1);
+    const endX = Math.min(world.mapW, startX + Math.ceil(canvas.width / T) + 2);
+    const endY = Math.min(world.mapH, startY + Math.ceil(canvas.height / T) + 2);
+    for (let y = startY; y < endY; y++)
+      for (let x = startX; x < endX; x++) {
+        const t = world.tiles[y]?.[x];
+        if (!t) continue;
+        // Fog of war: render undiscovered tiles without reading tile data
+        if (mapData && mapData.islands && !isIslandDiscovered(x, y)) {
+          drawTile(x, y, { type: 'undiscovered' });
+        } else {
+          drawTile(x, y, t);
+        }
+      }
+
+    // Energy nodes (behind everything)
+    if (netVisible.elec) elecNodes.forEach(drawElecNode);
+
+    // Fiber network: transit links between project zones
+    if (netVisible.fiber) transitLinks.forEach(drawTransitLink);
+
+    // Tram particles
+    if (netVisible.tram) tramParticles.forEach(drawTram);
+
+    // Boats on river
+    if (netVisible.river) boats.forEach(drawBoat);
+
+    // Pigeons
+    if (netVisible.pigeon) pigeons.forEach(drawPigeon);
+
+    // Particles
+    stepParticles();
+
+    // Agents
+    agents.forEach(drawAgent);
+
+    // Player
+    drawPlayer();
+
+    // Action prompt
+    drawActionPrompt();
+  }
+
+  // Toasts
+  drawToasts();
+
+  // HUD
+  if (tick % 60 === 0) { updateHUD(); renderMinimap(); }
+
+  // Day/night overlay
+  if (daylight < 1) {
+    ctx.fillStyle = `rgba(0,5,20,${(1-daylight)*0.55})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+function drawActionPrompt() {
+  if (dlgActive || caughtBoat || !world) return;
+  let action = null;
+
+  // Boat prompt
+  if (nearBoat) {
+    action = null; // drawn on boat itself
+  }
+
+  // Adjacent tiles
+  for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+    const t = world.tiles[player.y+dy]?.[player.x+dx];
+    if (!t) continue;
+    if (t.type === 'house') { action = '[A] Entrer'; break; }
+    if (t.type === 'mairie') { action = '[A] Mairie WikiChat'; break; }
+    if (t.type === 'fountain') { action = '[A] Fontaine'; break; }
+    if (t.type === 'sign') { action = '[A] Lire'; break; }
+  }
+
+  // Adjacent agents
+  if (!action) {
+    for (const ag of agents) {
+      if (Math.abs(ag.x-player.x) <= 1 && Math.abs(ag.y-player.y) <= 1) {
+        action = '[A] Parler'; break;
+      }
+    }
+  }
+
+  if (!action) return;
+  const sx = Math.round(player.x * T - cam.x) + T/2;
+  const sy = Math.round(player.y * T - cam.y) - 4;
+  const lw = action.length * 5 + 10;
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(sx - lw/2, sy - 14, lw, 12);
+  ctx.fillStyle = '#8bac0f';
+  ctx.font = '7px "Silkscreen"';
+  ctx.textAlign = 'center';
+  ctx.fillText(action, sx, sy - 4);
+  ctx.textAlign = 'left';
+}
+
+// ═══════════════════════════════════════════════════════════
+// DATA LOADING
+// ═══════════════════════════════════════════════════════════
+let sseSource = null;
+let prevMsgCount = 0, prevAgentCount = 0;
+
+async function loadData() {
+  try {
+    const r = await fetch('/status');
+    const d = await r.json();
+    gd = {
+      sessions: d.sessions || [],
+      channels: Object.keys(d.channels || {}),
+      recentMessages: d.messages?.slice(-30) || [],
+      stats: d.stats || {}
+    };
+    prevMsgCount = gd.recentMessages.length;
+    prevAgentCount = gd.sessions.filter(s=>s.registered).length;
+    renderSidePanel();
+  } catch(e) { console.warn('status:', e); }
+
+  // Load projects from registry
+  try {
+    const r2 = await fetch('/api/registry');
+    const rd = await r2.json();
+    registryProjects = rd.projects || rd || [];
+  } catch(e) {
+    try {
+      const r3 = await fetch('/api/projects');
+      const pd = await r3.json();
+      registryProjects = pd.projects || pd || [];
+    } catch(e2) { registryProjects = gd.sessions.filter(s=>s.current_project).map(s=>({ name:s.current_project, slug:s.current_project, stack:[] })); }
+  }
+
+  // Try maturity index
+  try {
+    const rm = await fetch('/api/wikichat/artifacts/PROJECTS_INDEX.json');
+    if (rm.ok) { const md = await rm.json(); maturityIndex = md; }
+  } catch(e) {}
+
+  // Load island map
+  try {
+    const rm2 = await fetch('/api/map/generate');
+    if (rm2.ok) { mapData = await rm2.json(); }
+  } catch(e) { console.warn('map/generate:', e); }
+
+  // Build world
+  buildWorld(registryProjects);
+  spawnAgents();
+  updateTransitLinks();
+  computeSemanticLayers();
+
+  // SSE for live boats
+  setupSSE();
+
+  // Initial boats from recent messages
+  const msgs = gd.recentMessages || [];
+  for (const m of msgs.slice(-8)) {
+    const type = m.type === 'artifact' ? 'artifact' :
+                 m.type === 'direct_message' ? 'dm' :
+                 m.type === 'broadcast' ? 'kb' : 'msg';
+    addBoat(type, m);
+  }
+
+  // Refresh every 30s
+  setInterval(async () => {
+    try {
+      const r = await fetch('/status');
+      const d = await r.json();
+      const newMsgs = d.messages || [];
+      const newAgents = (d.sessions||[]).filter(s=>s.registered).length;
+
+      if (newMsgs.length > prevMsgCount) {
+        const fresh = newMsgs.slice(prevMsgCount);
+        for (const m of fresh) {
+          const type = m.type === 'artifact' ? 'artifact' :
+                       m.type === 'direct_message' ? 'dm' :
+                       m.type === 'broadcast' ? 'kb' : 'msg';
+          addBoat(type, m);
+          addToast((m.session_name||'?') + ': ' + (m.content||'').slice(0,30), type === 'artifact' ? '#45b8b0' : '#58a6ff');
+        }
+        prevMsgCount = newMsgs.length;
+      }
+
+      if (newAgents !== prevAgentCount) {
+        gd.sessions = d.sessions || [];
+        spawnAgents();
+        prevAgentCount = newAgents;
+        renderSidePanel();
+        addToast(newAgents + ' agents actifs', '#3fb950');
+      }
+    } catch(e) {}
+  }, 30000);
+}
+
+function setupSSE() {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource('/sse');
+  sseSource.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (!d || !d.type) return;
+      let btype = 'msg';
+      if (d.type === 'artifact' || d.content?.includes('artifact')) btype = 'artifact';
+      else if (d.type === 'direct_message') btype = 'dm';
+      else if (d.type === 'broadcast' || d.type === 'knowledge') btype = 'kb';
+      else if (d.type === 'error' || d.type === 'system') return; // skip system events
+      addBoat(btype, { content: d.content, text: d.content, author: d.session_name, channel: d.channel, ts: Date.now() });
+    } catch(e) {}
+  };
+  sseSource.onerror = () => { setTimeout(setupSSE, 5000); };
+}
+
+// ═══════════════════════════════════════════════════════════
+// MINIMAP CLICK → fast travel
+// ═══════════════════════════════════════════════════════════
+miniCanvas.addEventListener('click', e => {
+  if (!world) return;
+  const rect = miniCanvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / rect.width * world.mapW | 0;
+  const my = (e.clientY - rect.top) / rect.height * world.mapH | 0;
+  const tile = world.tiles[my]?.[mx];
+  if (tile && !tile.solid) {
+    player.x = mx; player.y = my;
+    addToast('Voyage rapide', '#f0c040');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+daylight = computeDaylight();
+loadData();
+loop();
+</script>
+</body>
+</html>

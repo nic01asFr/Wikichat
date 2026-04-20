@@ -1,0 +1,28 @@
+# Runtime data
+spawn_registry.json
+crons.json
+sessions/
+agents/
+projects/
+.wikichat/
+UUID
+
+# Backups & temp
+*.bak
+*.tmp
+*.log
+
+# Dependencies
+node_modules/
+
+# Claude Code local config
+.claude/
+
+# Personal scripts (not part of the public project)
+scripts/personal/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WikiChat — Hybrides A×B</title>
+<style>
+:root {
+  --bg:      #0D1117;
+  --bg2:     #161B22;
+  --bg3:     #1C2128;
+  --bg4:     #21262D;
+  --border:  #30363D;
+  --teal:    #45B8B0;
+  --teal2:   #2d7a75;
+  --teal3:   rgba(69,184,176,.08);
+  --text:    #E6EDF3;
+  --dim:     #8B949E;
+  --green:   #3FB950;
+  --red:     #F85149;
+  --yellow:  #D29922;
+  --purple:  #A371F7;
+  --orange:  #E3832D;
+  --blue:    #58A6FF;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.6;}
+
+/* ── Header ── */
+header{background:var(--bg2);border-bottom:1px solid var(--border);padding:18px 28px;display:flex;align-items:center;gap:12px;}
+.badge{background:var(--teal2);color:var(--teal);padding:2px 8px;border-radius:2px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;}
+header h1{font-size:17px;font-weight:600;color:var(--teal);}
+header p{color:var(--dim);font-size:12px;margin-left:auto;}
+.origin-badge{background:rgba(163,113,247,.15);color:var(--purple);padding:2px 8px;border-radius:2px;font-size:11px;font-weight:600;}
+
+/* ── Nav ── */
+nav{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 28px;display:flex;gap:0;overflow-x:auto;}
+nav button{background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);cursor:pointer;font-size:13px;padding:11px 14px;white-space:nowrap;transition:color .15s,border-color .15s;}
+nav button:hover{color:var(--text);}
+nav button.active{color:var(--teal);border-bottom-color:var(--teal);}
+
+/* ── Grille aperçu ── */
+.overview{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;padding:22px 28px;}
+
+.hcard{background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden;cursor:pointer;transition:border-color .15s,transform .1s;}
+.hcard:hover{border-color:var(--teal);transform:translateY(-2px);}
+.hcard.active{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal2);}
+
+.hcard-hero{height:110px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+.hcard-icon{font-size:48px;position:relative;z-index:1;}
+/* Animated bg per card */
+.bg-zoom   {background:linear-gradient(135deg,#1A1A2E 0%,#16213E 50%,#0F3460 100%);}
+.bg-dist   {background:linear-gradient(135deg,#1a2a1a 0%,#1e3a2e 50%,#1a2e1a 100%);}
+.bg-aura   {background:linear-gradient(135deg,#1a1030 0%,#0d1a2e 50%,#0a2020 100%);}
+.bg-river  {background:linear-gradient(135deg,#0d1f2d 0%,#0a2535 50%,#07303d 100%);}
+
+.hcard-body{padding:14px 16px;}
+.hcard-title{font-size:14px;font-weight:600;margin-bottom:3px;}
+.hcard-sub{font-size:11px;color:var(--dim);margin-bottom:10px;}
+.hcard-mots{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px;}
+.tag{display:inline-block;padding:1px 7px;border-radius:2px;font-size:11px;font-weight:600;}
+.tg  {background:rgba(69,184,176,.15);color:var(--teal);}
+.tg  {background:rgba(69,184,176,.15);color:var(--teal);}
+.gg  {background:rgba(63,185,80,.15);color:var(--green);}
+.rr  {background:rgba(248,81,73,.15);color:var(--red);}
+.yy  {background:rgba(210,153,34,.15);color:var(--yellow);}
+.pp  {background:rgba(163,113,247,.15);color:var(--purple);}
+.oo  {background:rgba(227,131,45,.15);color:var(--orange);}
+.bb  {background:rgba(88,166,255,.15);color:var(--blue);}
+.hcard-desc{font-size:12px;color:var(--dim);line-height:1.55;}
+
+/* ── Tableau comparatif ── */
+.comparison{padding:22px 28px;overflow-x:auto;}
+table{width:100%;border-collapse:collapse;min-width:820px;}
+th{background:var(--bg2);border:1px solid var(--border);padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;}
+th.ch{color:var(--text);font-size:12px;text-transform:none;letter-spacing:0;}
+td{border:1px solid var(--border);padding:9px 13px;vertical-align:top;font-size:12px;background:var(--bg);}
+tr:hover td{background:var(--bg2);}
+td.lb{background:var(--bg2);color:var(--dim);font-weight:500;white-space:nowrap;}
+.win{color:var(--green);font-weight:600;}
+.mid{color:var(--yellow);}
+.low{color:var(--red);}
+
+/* ── Détail ── */
+.detail{display:none;padding:22px 28px;max-width:900px;}
+.detail.active{display:block;}
+.detail h2{font-size:20px;font-weight:600;margin-bottom:4px;}
+.detail-sub{color:var(--dim);font-size:12px;margin-bottom:16px;}
+.detail-mots{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;}
+
+.section-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--teal);margin:20px 0 8px;}
+.detail p{color:var(--dim);margin-bottom:10px;line-height:1.65;}
+.detail ul{color:var(--dim);margin-left:18px;margin-bottom:10px;}
+.detail li{margin-bottom:5px;line-height:1.55;}
+.detail strong{color:var(--text);}
+pre{background:var(--bg3);border:1px solid var(--border);border-radius:2px;padding:12px 14px;overflow-x:auto;font-size:11px;color:var(--teal);font-family:'Cascadia Code','JetBrains Mono',monospace;margin-bottom:10px;line-height:1.5;}
+
+/* Screenshots imaginaires — mise en scène */
+.screen-box{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:14px 16px;margin-bottom:14px;position:relative;}
+.screen-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin-bottom:8px;}
+.screen-box p{color:var(--text);font-size:13px;line-height:1.65;font-style:italic;}
+
+/* Moments forts */
+.moments{display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:14px;}
+.moment{background:var(--bg3);border-left:3px solid var(--teal);padding:10px 14px;border-radius:0 2px 2px 0;}
+.moment-num{color:var(--teal);font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px;}
+.moment strong{color:var(--text);font-size:13px;}
+.moment p{font-size:12px;color:var(--dim);margin:2px 0 0;}
+
+/* Tableau mieux/moins */
+.compare-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;}
+.compare-table th{background:var(--bg3);border:1px solid var(--border);padding:8px 12px;text-align:left;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em;}
+.compare-table td{border:1px solid var(--border);padding:8px 12px;vertical-align:top;}
+.compare-table td:first-child{color:var(--dim);font-weight:600;white-space:nowrap;}
+
+/* Mécas */
+.mecas{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}
+.meca{background:var(--bg3);border-radius:2px;padding:10px 12px;}
+.meca-num{color:var(--teal);font-size:10px;font-weight:700;margin-bottom:3px;}
+.meca strong{color:var(--text);font-size:12px;}
+.meca p{font-size:11px;color:var(--dim);margin-top:2px;}
+
+/* Limites */
+.limits{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}
+.limit{background:rgba(248,81,73,.04);border:1px solid rgba(248,81,73,.15);border-radius:2px;padding:9px 12px;}
+.limit strong{color:var(--red);font-size:12px;}
+.limit p{font-size:11px;color:var(--dim);margin-top:3px;}
+
+/* Proto */
+.proto-box{background:rgba(63,185,80,.04);border:1px solid rgba(63,185,80,.2);border-radius:4px;padding:14px 16px;margin-bottom:14px;}
+.proto-box .proto-label{color:var(--green);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+.proto-box p{color:var(--dim);font-size:12px;line-height:1.6;}
+.proto-box strong{color:var(--text);}
+
+/* Vote bar */
+.vote-bar{background:var(--bg2);border-top:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:10px;position:sticky;bottom:0;flex-wrap:wrap;}
+.vote-bar span{color:var(--dim);font-size:12px;}
+.vbtn{background:var(--bg3);border:1px solid var(--border);border-radius:2px;color:var(--text);cursor:pointer;font-size:12px;padding:5px 14px;transition:background .15s,border-color .15s;}
+.vbtn:hover{border-color:var(--teal);color:var(--teal);}
+.vbtn.voted{background:var(--teal2);border-color:var(--teal);color:var(--teal);}
+#vresult{color:var(--dim);font-size:12px;margin-left:auto;}
+
+.hidden{display:none!important;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badge">WikiChat</div>
+  <h1>Hybrides A × B — Village Vivant × Cité des Flux</h1>
+  <span class="origin-badge">4 propositions</span>
+  <p>Choisir la direction pour le prototype</p>
+</header>
+
+<nav id="nav">
+  <button class="active" onclick="show('overview')">Vue d'ensemble</button>
+  <button onclick="show('compare')">Comparatif</button>
+  <button onclick="show('h0')">🔭 Double Zoom</button>
+  <button onclick="show('h1')">🚋 Quartiers</button>
+  <button onclick="show('h2')">✨ Auras Vivantes</button>
+  <button onclick="show('h3')">⛵ Rivière</button>
+</nav>
+
+<!-- ══════════════ OVERVIEW ══════════════ -->
+<div id="view-overview" class="overview">
+
+  <div class="hcard" onclick="show('h0')">
+    <div class="hcard-hero bg-zoom"><div class="hcard-icon">🔭</div></div>
+    <div class="hcard-body">
+      <div class="hcard-title">H1 — Le Double Zoom</div>
+      <div class="hcard-sub">Google Earth · Zelda BotW · SimCity</div>
+      <div class="hcard-mots">
+        <span class="tag tg">Fluide</span>
+        <span class="tag bb">Bicouche</span>
+        <span class="tag pp">Immersif</span>
+      </div>
+      <div class="hcard-desc">Une seule interface avec deux niveaux de zoom continus. Zoom out = vue macro isométrique avec flux animés. Zoom in = village chaleureux avec villageois nommés. La transition est fluide et animée, jamais brusque — les convoyeurs se morphent en chemins de terre.</div>
+    </div>
+  </div>
+
+  <div class="hcard" onclick="show('h1')">
+    <div class="hcard-hero bg-dist"><div class="hcard-icon">🚋</div></div>
+    <div class="hcard-body">
+      <div class="hcard-title">H2 — La Ville par Quartiers</div>
+      <div class="hcard-sub">Pokémon · Night in the Woods · Mini Metro</div>
+      <div class="hcard-mots">
+        <span class="tag gg">Quartiers</span>
+        <span class="tag tg">Tramways</span>
+        <span class="tag yy">Voisinage</span>
+      </div>
+      <div class="hcard-desc">La ville est divisée en quartiers thématiques (Dev, Data, Ops, Design…). Dans chaque quartier : un micro-village avec des maisons et des villageois. Entre les quartiers : des boulevards avec tramways, pigeons messagers et pneumatiques qui transportent les flux en temps réel.</div>
+    </div>
+  </div>
+
+  <div class="hcard" onclick="show('h2')">
+    <div class="hcard-hero bg-aura"><div class="hcard-icon">✨</div></div>
+    <div class="hcard-body">
+      <div class="hcard-title">H3 — Les Auras Vivantes</div>
+      <div class="hcard-sub">Top-down chaleureux + overlay data sur demande</div>
+      <div class="hcard-mots">
+        <span class="tag tg">Lumineux</span>
+        <span class="tag gg">Organique</span>
+        <span class="tag bb">Lisible</span>
+      </div>
+      <div class="hcard-desc">Le village reste la base (style A pur). Les flux deviennent des halos colorés sur les maisons et des fils lumineux entre elles. Maintenir [L] superpose un overlay data (métriques, débit) sans changer de perspective. La nuit, les auras sont la seule lumière — vue bioluminescente.</div>
+    </div>
+  </div>
+
+  <div class="hcard" onclick="show('h3')">
+    <div class="hcard-hero bg-river"><div class="hcard-icon">⛵</div></div>
+    <div class="hcard-body">
+      <div class="hcard-title">H4 — Le Village sur la Rivière</div>
+      <div class="hcard-sub">Animal Crossing · Spiritfarer · Mini Motorways</div>
+      <div class="hcard-mots">
+        <span class="tag tg">Fluvial</span>
+        <span class="tag gg">Vivant</span>
+        <span class="tag bb">Lisible</span>
+      </div>
+      <div class="hcard-desc">Une grande rivière teal traverse le village — c'est le flux WikiChat incarné. Les artifacts et messages sont des bateaux en papier colorés qui dérivent. Les dépendances inter-projets sont des affluents. Monter la colline = vue macro naturelle du réseau hydrographique.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════ COMPARATIF ══════════════ -->
+<div id="view-compare" class="comparison hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Critère</th>
+        <th class="ch">🔭 Double Zoom</th>
+        <th class="ch">🚋 Quartiers</th>
+        <th class="ch">✨ Auras</th>
+        <th class="ch">⛵ Rivière</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="lb">Rythme</td>
+        <td>Joueur choisit par le zoom</td>
+        <td>Variable (quartier vs ville)</td>
+        <td>Contemplatif + [L] analyse</td>
+        <td>Variable (berge vs colline)</td>
+      </tr>
+      <tr>
+        <td class="lb">Scalabilité 100+ projets</td>
+        <td class="win">✅ Macro gère la densité</td>
+        <td class="win">✅ Clustering par quartier</td>
+        <td class="mid">⚠️ LOD nécessaire (bruit visuel)</td>
+        <td class="win">✅ Rives extensibles à l'infini</td>
+      </tr>
+      <tr>
+        <td class="lb">Attachement agents</td>
+        <td class="win">Fort — villageois nommés en micro</td>
+        <td class="win">Fort — villageois + identité quartier</td>
+        <td class="win">Fort — village + auras personnalisées</td>
+        <td class="win">Fort — rivière elle-même est un personnage</td>
+      </tr>
+      <tr>
+        <td class="lb">Vue macro</td>
+        <td class="win">✅ Dézoomer = vue cité complète</td>
+        <td class="mid">⚠️ Partielle (vue ville + carte murale)</td>
+        <td class="mid">⚠️ Overlay [L] sans zoom</td>
+        <td class="win">✅ Monter la colline = réseau hydro</td>
+      </tr>
+      <tr>
+        <td class="lb">Flux cross-projets</td>
+        <td class="win">Convoyeurs macro → chemins micro</td>
+        <td class="win">Tramways, pigeons, pneumatiques</td>
+        <td class="win">Fils lumineux pulsants</td>
+        <td class="win">Affluents + bateaux en papier</td>
+      </tr>
+      <tr>
+        <td class="lb">Complexité technique</td>
+        <td class="low">🔴 Élevée (LOD 2 styles visuels)</td>
+        <td class="mid">🟡 Moyenne-haute (véhicules, layout)</td>
+        <td class="win">🟢 Faible (CSS/Canvas + overlay SVG)</td>
+        <td class="mid">🟡 Moyenne (eau animée, bateaux CSS)</td>
+      </tr>
+      <tr>
+        <td class="lb">Accessibilité</td>
+        <td class="win">Progressive (micro d'abord)</td>
+        <td class="win">Très intuitive (quartiers réels)</td>
+        <td class="win">Douce (auras avant métriques)</td>
+        <td class="win">Très intuitive (rivière universelle)</td>
+      </tr>
+      <tr>
+        <td class="lb">Prototype minimum</td>
+        <td>1 quartier + transition zoom</td>
+        <td>2 quartiers + 1 tramway</td>
+        <td>5 maisons + auras CSS + [L]</td>
+        <td>1 tronçon rivière + bateaux SSE</td>
+      </tr>
+      <tr>
+        <td class="lb">Moment signature</td>
+        <td>Le premier plongeon bloc → village</td>
+        <td>Tramway bondé → embouteillage</td>
+        <td>Nuit bioluminescente</td>
+        <td>Attraper son premier bateau</td>
+      </tr>
+      <tr>
+        <td class="lb">Ambiance</td>
+        <td>Bicouche froide/chaude</td>
+        <td>Urbaine organique</td>
+        <td>Mystique contemplatif</td>
+        <td>Cozy fluvial</td>
+      </tr>
+      <tr>
+        <td class="lb">Métaphore centrale</td>
+        <td>Échelle / altitude</td>
+        <td>Urbanisme / voisinage</td>
+        <td>Énergie / aura</td>
+        <td>Eau / flux naturels</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ══════════════ H1 DOUBLE ZOOM ══════════════ -->
+<div id="view-h0" class="detail">
+  <h2>🔭 H1 — Le Double Zoom</h2>
+  <div class="detail-sub">Fusion Village (A) + Cité des Flux (B) — zoom continu entre macro et micro</div>
+  <div class="detail-mots"><span class="tag tg">Fluide</span><span class="tag bb">Bicouche</span><span class="tag pp">Immersif</span></div>
+
+  <div class="section-label">Screenshots imaginaires</div>
+  <div class="screen-box">
+    <div class="screen-label">🏙️ Zoom OUT — La Cité</div>
+    <p>Vue isométrique sur fond anthracite. Métropole compacte de blocs colorés par domaine (teal = data, violet = dev, orange = ops). Convoyeurs animés entre bâtiments. HUD discret en haut : Workers actifs · Débit total · Erreurs. Les bâtiments actifs pulsent. Un en erreur clignote rouge, ses convoyeurs éteints. 93 projets lisibles d'un coup.</p>
+  </div>
+  <div class="screen-box">
+    <div class="screen-label">🌀 La Transition (~2 secondes)</div>
+    <p>La caméra descend. Les blocs grandissent, des fenêtres apparaissent, puis des toits colorés. Les convoyeurs <strong>se transforment en chemins de terre</strong>. Les cubes de données ralentissent et deviennent organiques — un cube teal devient un pigeon messager. Le fond anthracite s'éclaircit vers un ciel pixel-art. La musique électronique crossfade vers un thème acoustique chaleureux.</p>
+  </div>
+  <div class="screen-box">
+    <div class="screen-label">🏡 Zoom IN — Le Village</div>
+    <p>Vue top-down inclinée. Maisons chaleureuses avec personnalités fortes — panoramax3d a une lunette sur le toit, BigEndpoint est une forge fumante. Villageois nommés : KnowledgeBuilder lit sous un arbre, GitWatcher fait sa ronde. Chemins de terre usés par le passage. Sons de pas, oiseaux, forge.</p>
+  </div>
+
+  <div class="section-label">Boucle joueur</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">0–2 min</div><strong>Survol.</strong><p>Démarrage en vue macro. Lecture des flux actifs. Repérage d'un quartier animé et d'un autre éteint.</p></div>
+    <div class="moment"><div class="moment-num">2–5 min</div><strong>Plongée.</strong><p>Zoom sur le quartier animé. Transition fluide. Village vibrant. Entrée dans une maison, conversation avec le villageois.</p></div>
+    <div class="moment"><div class="moment-num">5–10 min</div><strong>Diagnostic.</strong><p>Re-zoom macro → quartier éteint → zoom dedans. Village fantôme. Panneau de mairie : aucune mission depuis 3 jours.</p></div>
+    <div class="moment"><div class="moment-num">10–15 min</div><strong>Action.</strong><p>Spawn d'un worker depuis le panneau. Villageois apparaît, cheminée s'allume. Re-zoom macro : un nouveau convoyeur vient de naître.</p></div>
+  </div>
+
+  <div class="section-label">5 Moments forts</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">01</div><strong>Le Premier Plongeon</strong><p>Les blocs froids se transforment en maisons chaleureuses. "Oh, il y a des gens là-dedans." Lien émotionnel immédiat.</p></div>
+    <div class="moment"><div class="moment-num">02</div><strong>L'Orage vu d'en haut</strong><p>Un quartier entier passe en rouge en macro. On zoome dedans → village sous orage violent. L'urgence systémique a une traduction émotionnelle.</p></div>
+    <div class="moment"><div class="moment-num">03</div><strong>Le Convoyeur qui devient Rivière</strong><p>À mi-zoom entre deux quartiers très liés, le convoyeur se transforme en ruisseau avec des bateaux en papier.</p></div>
+    <div class="moment"><div class="moment-num">04</div><strong>La Vue depuis la Tour</strong><p>Depuis le sommet de la Tour WikiChat : un entre-deux poétique entre les toits des quartiers et les convoyeurs lointains.</p></div>
+    <div class="moment"><div class="moment-num">05</div><strong>Le Nouveau Quartier émerge</strong><p>En macro : terrain vague → agent scout plante un drapeau → première maison construite en accéléré à chaque revisitation.</p></div>
+  </div>
+
+  <div class="section-label">Mécaniques core</div>
+  <div class="mecas">
+    <div class="meca"><div class="meca-num">01</div><strong>Zoom continu</strong><p>Molette ou pinch sans coupure. LOD progressif — 3 paliers snap : Cité / Quartier / Village.</p></div>
+    <div class="meca"><div class="meca-num">02</div><strong>Clic contextuel bicouche</strong><p>Macro → panel stats. Micro → entrer dans la maison. Même geste, résultat adapté.</p></div>
+    <div class="meca"><div class="meca-num">03</div><strong>Drag & drop workers</strong><p>Fonctionne depuis les deux niveaux. En micro : on voit le villageois arriver physiquement.</p></div>
+    <div class="meca"><div class="meca-num">04</div><strong>Mini-map inverse</strong><p>En micro : mini-map montre la vue macro du quartier. En macro : pas de mini-map (on y est).</p></div>
+    <div class="meca"><div class="meca-num">05</div><strong>Alertes multi-niveaux</strong><p>Macro = badge rouge. Micro = orage + villageois anxieux. Même info, deux registres.</p></div>
+    <div class="meca"><div class="meca-num">06</div><strong>Panneau de mairie (micro only)</strong><p>Force à "entrer" dans un quartier pour agir. Lecture du courrier .wikichat/.</p></div>
+  </div>
+
+  <div class="section-label">Limites</div>
+  <div class="limits">
+    <div class="limit"><strong>Double budget artistique</strong><p>Chaque élément existe en version bloc isométrique ET maison pixel-art.</p></div>
+    <div class="limit"><strong>LOD complexe</strong><p>Charger/décharger deux styles sans lag demande un pipeline graphique solide.</p></div>
+    <div class="limit"><strong>Zone intermédiaire floue</strong><p>Le zoom 40-60% peut sembler ni l'un ni l'autre. Nécessite un palier "quartier" convaincant.</p></div>
+    <div class="limit"><strong>Mémoire des états micro</strong><p>Garder les positions de villageois même en vue macro. Solution : figer et "réveiller".</p></div>
+  </div>
+
+  <div class="section-label">Transposition technique</div>
+  <pre># Macro
+Convoyeurs animés   → Canvas lignes + particules (rAF)
+Clic bâtiment       → GET /api/projects/:slug → panel stats
+Badge erreur        → SSE event project_error → sprite swap
+
+# Transition
+LOD progressif      → 3 spritesheets selon palier de zoom
+Morphing convoyeur  → Interpolation CSS/Canvas géométrique → organique
+Son crossfade       → Web Audio API, deux pistes avec gain croisé (~2s)
+
+# Micro
+Villageois A*       → Pathfinding simple sur grille
+Entrer maison       → GET /api/projects/:slug/wikichat/artifacts
+Orage               → Particle system déclenché par SSE event erreur
+Panneau mairie      → POST /api/spawn/headless {project, prompt}</pre>
+
+  <div class="proto-box">
+    <div class="proto-label">🟢 Prototype minimum</div>
+    <p>3-5 bâtiments en macro + scroll zoom → maisons en micro. Un convoyeur qui devient chemin de terre. En micro : 3 maisons, 1 villageois chacune, clic = 2-3 artifacts réels. Deux pistes audio crossfade selon zoom.<br><br><strong>Validation :</strong> Si le joueur zoome naturellement d'avant en arrière sans que la transition le sorte de l'immersion, ça fonctionne.</p>
+  </div>
+</div>
+
+<!-- ══════════════ H2 QUARTIERS ══════════════ -->
+<div id="view-h1" class="detail">
+  <h2>🚋 H2 — La Ville par Quartiers</h2>
+  <div class="detail-sub">Pokémon · Night in the Woods · Mini Metro — clustering thématique avec transports inter-quartiers</div>
+  <div class="detail-mots"><span class="tag gg">Quartiers</span><span class="tag tg">Tramways</span><span class="tag yy">Voisinage</span></div>
+
+  <div class="section-label">Screenshots imaginaires</div>
+  <div class="screen-box">
+    <div class="screen-label">🏘️ Vue Quartier (par défaut)</div>
+    <p>Vue top-down 2.5D légèrement isométrique, palette GBA chaude. Quartier Dev : 6 maisons sur une rue pavée. panoramax3d = atelier en brique rouge avec maquette 3D sur le toit. BigEndpoint = hangar industriel reconverti, lumière orange à l'intérieur. En haut : "📍 Quartier Dev — 12 projets · 4 agents actifs". Au bout de la rue : un boulevard avec un tramway teal chargé de colis colorés.</p>
+  </div>
+  <div class="screen-box">
+    <div class="screen-label">🗺️ Vue Ville (dézoom molette)</div>
+    <p>5 quartiers visibles comme des îlots colorés : Dev (bleu-gris, nord), Data (violet, est), Ops (orange, sud), Design (rose, ouest), Place WikiChat (teal, centre). Entre eux : boulevards avec tramways en boucle (3 tramways = boulevard actif, 1 toutes les 30s = boulevard calme). Des <strong>pigeons messagers</strong> traversent le ciel entre quartiers éloignés. Un <strong>pneumatique</strong> transparent relie deux quartiers adjacents — les capsules filent dedans.</p>
+  </div>
+
+  <div class="section-label">Boucle joueur</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">0–5 min</div><strong>Place WikiChat.</strong><p>Réveil. Mairie avec panneau : "Dev — 3 artifacts ce matin", "Data — KB terminée". Choix : marcher ou prendre le tramway vers le Quartier Dev.</p></div>
+    <div class="moment"><div class="moment-num">5–15 min</div><strong>Exploration de quartier.</strong><p>Entrer dans une maison, voir les étagères, parler au villageois Architect qui demande une analyse. Aller au panneau du quartier → créer une mission → agent headless apparaît à la gare locale.</p></div>
+    <div class="moment"><div class="moment-num">15–30 min</div><strong>Vue ville.</strong><p>Boulevard Dev↔Data saturé (5 tramways). Clique sur boulevard → "ajouter ligne express". Quartier Design sans tramway → aller à pied investiguer.</p></div>
+    <div class="moment"><div class="moment-num">30 min+</div><strong>Urbanisme.</strong><p>Déplacer un projet entre quartiers, créer un nouveau quartier pour un domaine émergent, tracer une nouvelle ligne directe entre deux projets très liés.</p></div>
+  </div>
+
+  <div class="section-label">5 Moments forts</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">01</div><strong>Inauguration d'un quartier</strong><p>Assez de projets d'un même domaine → cérémonie de fondation, défilé de villageois, ruban coupé, premiers tramways.</p></div>
+    <div class="moment"><div class="moment-num">02</div><strong>Embouteillage sur le boulevard</strong><p>Trop d'artifacts en transit, tramways bondés, file d'attente. Le joueur doit créer une ligne express ou scinder un quartier.</p></div>
+    <div class="moment"><div class="moment-num">03</div><strong>Le quartier fantôme</strong><p>Maisons poussiéreuses, volets fermés, tramway à vide. Ambiance mélancolique. Relancer un projet → lumières qui se rallument une à une.</p></div>
+    <div class="moment"><div class="moment-num">04</div><strong>Visite inter-quartier</strong><p>Un villageois de Data marche seul dans les rues de Dev avec un gros colis. Sonne. Les deux se serrent la main. Nouveau lien sur la carte.</p></div>
+    <div class="moment"><div class="moment-num">05</div><strong>Le marché du samedi</strong><p>Événement périodique : représentants de tous les quartiers sur la Place WikiChat avec des stands d'artifacts. Découverte cross-domaines.</p></div>
+  </div>
+
+  <div class="section-label">Mécaniques core</div>
+  <div class="mecas">
+    <div class="meca"><div class="meca-num">01</div><strong>Marche + tramways</strong><p>ZQSD libre. Monter dans un tramway = fast-travel vers un autre quartier.</p></div>
+    <div class="meca"><div class="meca-num">02</div><strong>Panneau de quartier</strong><p>Chaque quartier a son panneau de missions local. La Place WikiChat = missions inter-quartiers.</p></div>
+    <div class="meca"><div class="meca-num">03</div><strong>Gestion des boulevards</strong><p>Tracer, renforcer, couper des lignes. Les véhicules (tramway/pigeon/pneumatique) selon le type de donnée.</p></div>
+    <div class="meca"><div class="meca-num">04</div><strong>Requalification</strong><p>Glisser une maison d'un quartier à l'autre. Animation de déménagement avec camion.</p></div>
+    <div class="meca"><div class="meca-num">05</div><strong>Fondation de quartier</strong><p>3+ projets orphelins de même domaine → créer un nouveau quartier, choisir son style et sa couleur.</p></div>
+    <div class="meca"><div class="meca-num">06</div><strong>Carte murale</strong><p>Dans la mairie : grande carte avec flux en temps réel. Mode surveillance depuis le monde du jeu.</p></div>
+  </div>
+
+  <div class="section-label">Limites</div>
+  <div class="limits">
+    <div class="limit"><strong>Projets hybrides</strong><p>Un projet Data+Dev est difficile à placer dans un seul quartier. Mitigation : "ambassade" dans un quartier secondaire.</p></div>
+    <div class="limit"><strong>Gestion spatiale</strong><p>Le joueur doit gérer le layout physique. Peut être perçu comme du travail supplémentaire.</p></div>
+    <div class="limit"><strong>Temps de trajet</strong><p>Se déplacer entre quartiers prend du temps même avec les tramways. Frustrant en cas d'urgence.</p></div>
+    <div class="limit"><strong>Quartiers vides</strong><p>1-2 projets ne justifient pas un quartier → "Quartier Divers" fourre-tout qui perd l'identité.</p></div>
+  </div>
+
+  <div class="section-label">Transposition technique</div>
+  <pre>Entrer dans maison      → GET /api/projects/:slug/wikichat/artifacts
+Panneau de quartier     → GET /api/projects?domain=:quartier
+Créer mission           → POST /api/spawn/headless {project, prompt}
+Tramway transporte      → SSE event artifact partagé entre projets
+Boulevard saturé        → count(messages inter-quartier) / timeWindow > seuil
+Carte murale            → GET /status + SSE live updates
+Pigeon messager         → SSE event: direct_message entre quartiers différents
+Fondation quartier      → POST /api/quartiers {name, domain, projects[]}
+Marché du samedi        → CRON + broadcast "market" + GET /api/artifacts/recent?cross=true</pre>
+
+  <div class="proto-box">
+    <div class="proto-label">🟢 Prototype minimum</div>
+    <p>Deux quartiers (3 maisons chacun) reliés par un boulevard avec un tramway. Marche libre, entrée dans les maisons, prise du tramway inter-quartier. Quand un artifact est partagé, on voit un colis se charger dans le tramway et traverser le boulevard.<br><br><strong>Validation :</strong> Si le joueur veut spontanément créer un troisième quartier et tracer un nouveau boulevard, ça fonctionne.</p>
+  </div>
+</div>
+
+<!-- ══════════════ H3 AURAS ══════════════ -->
+<div id="view-h2" class="detail">
+  <h2>✨ H3 — Les Auras Vivantes</h2>
+  <div class="detail-sub">Village chaleureux + flux comme halos colorés + overlay data sur demande [L]</div>
+  <div class="detail-mots"><span class="tag tg">Lumineux</span><span class="tag gg">Organique</span><span class="tag bb">Lisible</span></div>
+
+  <div class="section-label">Screenshots imaginaires</div>
+  <div class="screen-box">
+    <div class="screen-label">🌆 Vue Village (crépuscule, mode par défaut)</div>
+    <p>Village top-down chaleureux, palette terre/vert/teal. Chaque maison émet un halo coloré qui pulse : panoramax3d = halo <strong>teal vif</strong> qui s'étend sur 3 tuiles. BigEndpoint = halo <strong>violet profond</strong> avec particules qui convergent vers sa porte. Une maison en retrait = halo <strong>rouge clignotant</strong>, les villageois voisins la regardent avec inquiétude. Entre les maisons : des fils lumineux reliant les projets connectés — épais = débit fort, éteint (gris) = connexion dormante.</p>
+  </div>
+  <div class="screen-box">
+    <div class="screen-label">🔬 Vue Lunette d'Architecte [L] maintenu</div>
+    <p>Même perspective, pas de changement d'échelle. Un overlay semi-transparent se superpose : les maisons deviennent des silhouettes, les auras s'intensifient ×3 et révèlent leur débit ("12 msg/min", "3 artifacts/h"). Les fils s'épaississent comme des artères. Les villageois disparaissent → remplacés par des icônes de rôle (engrenage=worker, loupe=analyst, livre=KB). Mini-graphe de dépendances en bas à droite. On relâche [L] → fondu 0.3s, retour au village chaud.</p>
+  </div>
+
+  <div class="section-label">Boucle joueur</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">0–5 min</div><strong>Réveil, lecture des auras.</strong><p>En sortant, on voit les halos du voisinage. Une aura rouge attire l'œil → on marche vers la maison, on entre, l'agent explique le problème.</p></div>
+    <div class="moment"><div class="moment-num">5–15 min</div><strong>Exploration par les fils.</strong><p>Un fil très actif entre deux maisons distantes → on le suit à pied. On croise des villageois porteurs d'artifacts (halo doré). On découvre un nouveau projet.</p></div>
+    <div class="moment"><div class="moment-num">15–30 min</div><strong>Diagnostic via [L].</strong><p>Activer la lunette pour repérer un goulot (maison beaucoup d'entrées, peu de sorties). Accepter une mission, spawner un helper qui naît avec un halo vert.</p></div>
+  </div>
+
+  <div class="section-label">5 Moments forts</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">01</div><strong>L'Éveil des Auras</strong><p>Premier lancement. Maisons grises. Le joueur lance son premier agent : une aura teal naît, puis un fil s'allume vers la cible. Le village s'éveille maison par maison.</p></div>
+    <div class="moment"><div class="moment-num">02</div><strong>La Cascade Dorée</strong><p>Un artifact important partagé cross-projet. Un villageois marche avec halo doré intense. Il livre → double flash doré, carillon, fil qui brille 10s.</p></div>
+    <div class="moment"><div class="moment-num">03</div><strong>L'Orage d'Auras</strong><p>5+ maisons en erreur simultanées. Halos rouges synchronisés comme un battement de cœur. Sous [L] : la propagation en cascade est visible. Tout le village vire sombre.</p></div>
+    <div class="moment"><div class="moment-num">04</div><strong>La Nuit Bioluminescente</strong><p>La nuit, les auras et fils sont la seule lumière. Le village endormi ressemble à un réseau neuronal lumineux vu du dessus. Moment visuellement unique.</p></div>
+    <div class="moment"><div class="moment-num">05</div><strong>Le Fil Mort qui Renaît</strong><p>Un fil gris éteint se rallume soudain. Une onde teal se propage d'un bout à l'autre. Les deux maisons émettent un "ding", leurs auras s'enrichissent d'une teinte.</p></div>
+  </div>
+
+  <div class="section-label">Mécaniques core</div>
+  <div class="mecas">
+    <div class="meca"><div class="meca-num">01</div><strong>Auras dynamiques</strong><p>Teal=production, violet=messages entrants, doré=cross-projet, rouge=erreur, bleu=repos. Les auras se combinent.</p></div>
+    <div class="meca"><div class="meca-num">02</div><strong>Fils de connexion</strong><p>Épaisseur=débit, couleur=type de flux, pulsation=fréquence. Fil éteint = connexion dormante. On peut le suivre physiquement.</p></div>
+    <div class="meca"><div class="meca-num">03</div><strong>Lunette d'Architecte [L]</strong><p>Toggle maintenu. Overlay data sans changer de perspective. Métriques + graphe de dépendances.</p></div>
+    <div class="meca"><div class="meca-num">04</div><strong>Villageois-porteurs</strong><p>Les agents transportant des artifacts marchent avec un halo doré. Le joueur peut les intercepter et voir ce qu'ils portent.</p></div>
+    <div class="meca"><div class="meca-num">05</div><strong>Cycle bioluminescent</strong><p>Jour : auras subtiles. Nuit : auras = seule lumière. Agents nocturnes (cron jobs) n'apparaissent que la nuit.</p></div>
+    <div class="meca"><div class="meca-num">06</div><strong>Propagation d'état</strong><p>Une erreur fait trembler les fils vers les dépendants. Un succès émet une onde positive. La santé du système est lisible autour de soi.</p></div>
+  </div>
+
+  <div class="section-label">Limites</div>
+  <div class="limits">
+    <div class="limit"><strong>Surcharge visuelle</strong><p>50+ maisons actives = bruit visuel. LOD nécessaire + regroupement des fils en faisceaux à distance.</p></div>
+    <div class="limit"><strong>Daltonisme</strong><p>Système repose sur les couleurs. Mode accessibilité requis : formes/motifs en alternative.</p></div>
+    <div class="limit"><strong>Auras mixtes</strong><p>Teal + violet + doré simultané = trop de couleurs. Aura dominante + indicateurs secondaires en orbite.</p></div>
+    <div class="limit"><strong>Fatigue [L]</strong><p>Si le joueur reste en Lunette en permanence, il retombe dans un dashboard froid. Mitigation : flou progressif après 30s.</p></div>
+  </div>
+
+  <div class="section-label">Transposition technique</div>
+  <pre>Aura teal (production)  → Compteur share_artifact par unité de temps
+Aura violet (messages)  → Compteur send_message reçus
+Aura doré (cross-projet)→ Artifacts partagés cross-channel
+Aura rouge (erreur)     → set_status "error" ou "blocked"
+Fil lumineux            → Paire de sessions ayant échangé ≥1 msg/artifact
+Épaisseur fil           → Nombre de msgs/artifacts sur les 10 dernières minutes
+Lunette [L]             → Appel /status + overlay Canvas/SVG
+Cycle jour/nuit         → Horloge réelle (ou accélérée ×60)
+Agents nocturnes        → Cron tasks via register_cron</pre>
+
+  <div class="proto-box">
+    <div class="proto-label">🟢 Prototype minimum (4 semaines)</div>
+    <p><strong>S1</strong> — 5 maisons avec auras CSS (radial gradients), polling /status toutes les 5s.<br><strong>S2</strong> — Fils Bézier animés entre maisons, épaisseur proportionnelle aux messages récents.<br><strong>S3</strong> — Overlay SVG [L] avec métriques numériques et fondu 0.3s.<br><strong>S4</strong> — Sprites villageois 16×16, halo doré sur les porteurs, cycle jour/nuit.<br><br><strong>Validation :</strong> Si la nuit bioluminescente est un moment visuellement mémorable, la vision fonctionne.</p>
+  </div>
+</div>
+
+<!-- ══════════════ H4 RIVIÈRE ══════════════ -->
+<div id="view-h3" class="detail">
+  <h2>⛵ H4 — Le Village sur la Rivière</h2>
+  <div class="detail-sub">Animal Crossing · Spiritfarer · Mini Motorways — les flux deviennent une rivière traversant le village</div>
+  <div class="detail-mots"><span class="tag tg">Fluvial</span><span class="tag gg">Vivant</span><span class="tag bb">Lisible</span></div>
+
+  <div class="section-label">Screenshots imaginaires</div>
+  <div class="screen-box">
+    <div class="screen-label">🌊 Vue Village (bord de l'eau)</div>
+    <p>Le joueur sur un pont en bois au centre. En contrebas : la <strong>Grande Rivière</strong> teal lumineux (`#00B4D8`), animée, semi-transparente, galets visibles au fond. Le long des rives : maisons sur pilotis ou construites au bord. panoramax3d = ponton avec longue-vue pointée vers l'amont. BigEndpoint = forge avec roue à aubes qui tourne. Plus une maison est active, plus elle est proche de la rive — les projets dormants sont dans les collines avec un chemin envahi d'herbe. Sur l'eau : <strong>bateaux en papier colorés</strong> — teal=artifact, bleu=message, violet=KB. Un agent Curator attrape un bateau avec une épuisette.</p>
+  </div>
+  <div class="screen-box">
+    <div class="screen-label">🏔️ Vue Colline (zoom out naturel)</div>
+    <p>Depuis la colline : vue panoramique du réseau hydrographique entier. Maisons = petits toits colorés. Bateaux = points qui dérivent. Zones actives = eaux vives, rapides, mousse blanche. Zones calmes = méandres, eaux lentes. <strong>Affluents</strong> visibles depuis les collines — actif = large et clair, tari = lit de cailloux secs qui clignote. C'est la vue macro, mais incarnée dans le paysage.</p>
+  </div>
+
+  <div class="section-label">Boucle joueur</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">0–5 min</div><strong>Réveil au bord de l'eau.</strong><p>On sort, on entend l'eau couler. On descend au ponton. Un bateau teal passe — [A] pour l'attraper → artifact récent de panoramax3d.</p></div>
+    <div class="moment"><div class="moment-num">5–15 min</div><strong>Exploration des rives.</strong><p>Entrer dans BigEndpoint (étagères, agent à la fenêtre). Monter à la mairie sur la colline → panneau indique un affluent tari depuis 3 jours. Accepter la mission.</p></div>
+    <div class="moment"><div class="moment-num">15–30 min</div><strong>Rétablissement.</strong><p>Spawner un KnowledgeBuilder sur le ponton de panoramax3d. Il fabrique un bateau → il dérive vers l'affluent → l'eau revient, les poissons réapparaissent.</p></div>
+    <div class="moment"><div class="moment-num">30 min+</div><strong>Supervision depuis la colline.</strong><p>Méandre engorgé (barrage de castors). On redescend pour débloquer. Le cycle exploration locale / supervision globale s'installe.</p></div>
+  </div>
+
+  <div class="section-label">5 Moments forts</div>
+  <div class="moments">
+    <div class="moment"><div class="moment-num">01</div><strong>Le premier bateau attrapé</strong><p>Un bateau teal dérive vers le joueur. Il l'attrape, le papier se déplie en plein écran et révèle un artifact. On comprend que la rivière EST le réseau.</p></div>
+    <div class="moment"><div class="moment-num">02</div><strong>La crue</strong><p>Un projet génère un pic massif. La rivière monte, déborde sur les berges, les villageois sortent avec des seaux. Après la crue : des cadeaux laissés sur les berges.</p></div>
+    <div class="moment"><div class="moment-num">03</div><strong>L'affluent qui renaît</strong><p>Après une mission cross-projet : l'eau revient lentement, l'herbe reverdit, des lucioles apparaissent. Les deux maisons reliées s'illuminent simultanément.</p></div>
+    <div class="moment"><div class="moment-num">04</div><strong>Vue depuis le sommet au crépuscule</strong><p>Toute la rivière et ses affluents dans la lumière dorée. Les actifs brillent, les taris sont dans l'ombre. Carte système émotionnellement lisible.</p></div>
+    <div class="moment"><div class="moment-num">05</div><strong>Le bateau-message surprise</strong><p>Un bateau doré (DM) arrive d'amont. Le joueur l'attrape : message personnel d'un agent. L'expéditeur est visible au loin sur son ponton, il fait signe.</p></div>
+  </div>
+
+  <div class="section-label">Mécaniques core</div>
+  <div class="mecas">
+    <div class="meca"><div class="meca-num">01</div><strong>La Rivière vivante</strong><p>Débit, couleur et agitation reflètent l'activité globale du réseau en temps réel.</p></div>
+    <div class="meca"><div class="meca-num">02</div><strong>Bateaux en papier</strong><p>Teal=artifact, bleu=message, violet=KB, doré=DM. [A] pour attraper et lire. Plier un bateau = envoyer.</p></div>
+    <div class="meca"><div class="meca-num">03</div><strong>Affluents</strong><p>Dépendances inter-projets. Suivable à pied. État visuel = santé de la connexion.</p></div>
+    <div class="meca"><div class="meca-num">04</div><strong>Vue colline</strong><p>Monter physiquement = zoom out naturel. Pas de bouton — c'est le déplacement qui contrôle l'échelle.</p></div>
+    <div class="meca"><div class="meca-num">05</div><strong>Barrage de castors</strong><p>Saturation d'une file → castors construisent un barrage visible. Doit être débloqué par le joueur.</p></div>
+    <div class="meca"><div class="meca-num">06</div><strong>Pontons</strong><p>Chaque projet a son ponton. Ponton actif = agent présent. Le joueur peut s'y asseoir pour observer les bateaux passer.</p></div>
+  </div>
+
+  <div class="section-label">Limites</div>
+  <div class="limits">
+    <div class="limit"><strong>Flux unidirectionnel</strong><p>La rivière coule dans un sens. Les flux WikiChat sont bidirectionnels. Solution partielle : bateaux qui remontent tirés par des poissons.</p></div>
+    <div class="limit"><strong>Delta illisible à 93 projets</strong><p>Réseau hydrographique peut devenir un delta enchevêtré. Mitigation : clustering en "bassins versants" avec un affluent principal chacun.</p></div>
+    <div class="limit"><strong>Coût d'animation</strong><p>Eau animée, bateaux, affluents dynamiques = plus de ressources GPU qu'un village statique.</p></div>
+    <div class="limit"><strong>Onboarding</strong><p>"Attraper un bateau = lire un artifact" n'est pas immédiat. Besoin d'un premier bateau doré tutoriel.</p></div>
+  </div>
+
+  <div class="section-label">Transposition technique</div>
+  <pre>Rivière qui coule       → SSE stream global (tous les events WikiChat)
+Bateau en papier        → SSE event: message | artifact | kb_chunk
+Joueur attrape          → GET /api/messages/:id ou GET /api/artifacts/:id
+Joueur plie un bateau   → POST /api/send_message ou POST /api/share_artifact
+Affluent actif          → GET /api/projects/:slug/dependencies → status: active
+Affluent tari           → dependency.last_activity > 72h
+Vue colline             → GET /status (full state dump) → render hydro map
+Barrage de castors      → queue.length > threshold sur un channel
+Crue                    → burst detection: messages/min > N
+Plier un bateau         → POST /api/spawn/headless pour créer l'artifact</pre>
+
+  <div class="proto-box">
+    <div class="proto-label">🟢 Prototype minimum</div>
+    <p>Un tronçon de rivière CSS/Canvas (dégradé teal animé). Deux maisons sur les rives avec pontons. ZQSD le long de la rive. Bateaux en papier générés depuis les SSE events — des <code>&lt;div&gt;</code> qui dérivent en CSS translateX. [A] près d'un bateau → dépliage en plein écran avec le contenu. Bouton ponton pour plier et envoyer un bateau.<br><br><strong>Validation :</strong> Si le joueur reste au bord de l'eau juste pour regarder les bateaux passer, la vision fonctionne.</p>
+  </div>
+</div>
+
+<!-- ══════════════ VOTE BAR ══════════════ -->
+<div class="vote-bar">
+  <span>Direction choisie :</span>
+  <button class="vbtn" onclick="vote('H1')">🔭 H1 — Double Zoom</button>
+  <button class="vbtn" onclick="vote('H2')">🚋 H2 — Quartiers</button>
+  <button class="vbtn" onclick="vote('H3')">✨ H3 — Auras</button>
+  <button class="vbtn" onclick="vote('H4')">⛵ H4 — Rivière</button>
+  <div id="vresult"></div>
+</div>
+
+<script>
+const navBtns = document.querySelectorAll('#nav button');
+const viewIds = ['overview','compare','h0','h1','h2','h3'];
+
+function hideAll() {
+  document.getElementById('view-overview').classList.add('hidden');
+  document.getElementById('view-compare').classList.add('hidden');
+  document.querySelectorAll('.detail').forEach(d => d.classList.remove('active'));
+  navBtns.forEach(b => b.classList.remove('active'));
+}
+
+function show(id) {
+  hideAll();
+  const el = document.getElementById('view-' + id);
+  if (!el) return;
+  if (el.classList.contains('detail')) el.classList.add('active');
+  else el.classList.remove('hidden');
+  const idx = viewIds.indexOf(id);
+  if (idx >= 0 && navBtns[idx]) navBtns[idx].classList.add('active');
+}
+
+function vote(v) {
+  document.querySelectorAll('.vbtn').forEach(b => b.classList.remove('voted'));
+  event.target.classList.add('voted');
+  const names = { H1:'Double Zoom', H2:'Quartiers', H3:'Auras Vivantes', H4:'Rivière' };
+  document.getElementById('vresult').textContent = `→ Prototype : ${v} — ${names[v]}`;
+  localStorage.setItem('wikichat-hybrid-vote', v);
+}
+
+const saved = localStorage.getItem('wikichat-hybrid-vote');
+if (saved) {
+  const btn = [...document.querySelectorAll('.vbtn')].find(b => b.textContent.includes(saved));
+  if (btn) { btn.classList.add('voted'); }
+  const names = { H1:'Double Zoom', H2:'Quartiers', H3:'Auras Vivantes', H4:'Rivière' };
+  if (names[saved]) document.getElementById('vresult').textContent = `→ Prototype : ${saved} — ${names[saved]}`;
+}
+
+show('overview');
+</script>
+</body>
+</html>
