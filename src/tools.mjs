@@ -901,7 +901,16 @@ export function registerTools(server, sessionId) {
 
       // ── DAEMON MODE (persistent background agent) ────────────────────────
       if (mode === "daemon") {
-        sysMsg("coordination", `🚀 ${launcherName} lance "${name}" en mode daemon dans ${repoName}${role ? ` (${role})` : ""}`);
+        const ticketId = randomUUID().slice(0, 8);
+        const ticket = {
+          id: ticketId, name, mode, repo: repoName,
+          spawnedBy: launcherName, spawnerId: sessionId,
+          status: "starting", createdAt: new Date(),
+          completedAt: null, result: null,
+        };
+        state.spawnTickets.set(ticketId, ticket);
+
+        sysMsg("coordination", `🚀 ${launcherName} lance "${name}" en mode daemon dans ${repoName}${role ? ` (${role})` : ""} [ticket:${ticketId}]`);
         notify("coordination", sessionId);
 
         const result = spawnDaemon(repo_path, {
@@ -911,13 +920,19 @@ export function registerTools(server, sessionId) {
         });
 
         if (result.success) {
+          ticket.status = "running";
+          ticket.result = { pid: result.pid };
           return txt(
             `🟢 "${name}" lancé en mode daemon (PID ${result.pid}) dans ${repoName}.\n\n` +
+            `🎫 Ticket: ${ticketId}\n` +
             `📡 Il va register() et boucler sur poll_messages.\n` +
             `💬 Envoie-lui des messages via send_message ou depuis le cockpit.\n` +
             `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
           );
         } else {
+          ticket.status = "failed";
+          ticket.completedAt = new Date();
+          ticket.result = { success: false, error: result.error };
           return txt(`❌ Échec daemon "${name}": ${result.error}`);
         }
       }
@@ -1047,6 +1062,64 @@ export function registerTools(server, sessionId) {
     });
     return txt(`Sessions spawnées par **${callerName}** (${mine.length}):\n\n${lines.join("\n")}`);
   });
+
+  // ── poll_ticket ──────────────────────────────────────────────────────────────
+
+  server.tool(
+    "poll_ticket",
+    "Suivre un spawn ticket. Attend que l'agent spawnée change de status (completed/failed). Retourne immédiatement si déjà terminé.",
+    {
+      ticket_id: z.string().describe("ID du ticket retourné par spawn_session"),
+      timeout_seconds: z.number().default(30).describe("Timeout en secondes (max: 120)"),
+    },
+    async ({ ticket_id, timeout_seconds }) => {
+      const ticket = state.spawnTickets.get(ticket_id);
+      if (!ticket) {
+        // List available tickets for this spawner
+        const mine = [...state.spawnTickets.values()].filter(t => t.spawnerId === sessionId);
+        const hint = mine.length > 0
+          ? `\nVos tickets: ${mine.map(t => `${t.id} (${t.name}: ${t.status})`).join(", ")}`
+          : "";
+        return txt(`❌ Ticket "${ticket_id}" introuvable.${hint}`);
+      }
+
+      // Already done
+      if (ticket.status === "completed" || ticket.status === "failed") {
+        const duration = ticket.completedAt
+          ? `${Math.round((new Date(ticket.completedAt) - new Date(ticket.createdAt)) / 1000)}s`
+          : "?";
+        return txt(
+          `🎫 Ticket ${ticket_id} — ${ticket.status === "completed" ? "✅" : "❌"} ${ticket.status}\n` +
+          `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
+          `  Durée: ${duration}\n` +
+          `  Résultat: ${JSON.stringify(ticket.result)}`
+        );
+      }
+
+      // Wait for completion via long-poll on __tickets__ channel
+      const timeout = Math.min(timeout_seconds, 120) * 1000;
+      await registerWaiter(sessionId, "__tickets__", timeout);
+
+      // Re-check after wakeup
+      if (ticket.status === "completed" || ticket.status === "failed") {
+        const duration = ticket.completedAt
+          ? `${Math.round((new Date(ticket.completedAt) - new Date(ticket.createdAt)) / 1000)}s`
+          : "?";
+        return txt(
+          `🎫 Ticket ${ticket_id} — ${ticket.status === "completed" ? "✅" : "❌"} ${ticket.status}\n` +
+          `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
+          `  Durée: ${duration}\n` +
+          `  Résultat: ${JSON.stringify(ticket.result)}`
+        );
+      }
+
+      return txt(
+        `⏰ Timeout ${timeout_seconds}s — ticket ${ticket_id} toujours ${ticket.status}\n` +
+        `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
+        `  Relancez poll_ticket("${ticket_id}") pour continuer à attendre.`
+      );
+    }
+  );
 
   // ══ PROJECT DISCOVERY ═══════════════════════════════════════════════════════
 
