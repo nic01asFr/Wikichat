@@ -30,7 +30,7 @@ import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from 
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
-import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent } from "./src/sampler.mjs";
+import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad } from "./src/sampler.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 
@@ -758,6 +758,7 @@ app.get("/api/health", (_req, res) => {
     readReceipts: state.reads.size,
     waiters: state.waiters.size,
     spawnRegistry: loadSpawnRegistry().length,
+    budget: { current: currentLoad(), max: parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10") },
   });
 });
 

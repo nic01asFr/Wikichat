@@ -26,10 +26,39 @@ import os from "os";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { upsertSpawnRegistry } from "./persistence.mjs";
 import { randomUUID } from "crypto";
+import { state } from "./state.mjs";
 
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
 const MAX_CONCURRENT_RESPAWNS = 3;
+
+// ── Resource budget — global ceiling on live + spawning sessions ──────────────
+const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10");
+let _pendingSpawns = 0; // processes spawned but not yet MCP-connected
+
+/** Count current load: connected MCP sessions + processes still booting */
+export function currentLoad() {
+  return state.sessions.size + _pendingSpawns;
+}
+
+/**
+ * Check if a new spawn fits the budget.
+ * Returns null if OK, or an error object {error, current, max} if over.
+ */
+export function checkBudget() {
+  const current = currentLoad();
+  if (current >= MAX_SESSIONS) {
+    return {
+      error: `Budget atteint: ${current}/${MAX_SESSIONS} sessions actives. Augmentez WIKICHAT_MAX_SESSIONS ou attendez qu'une session se libère.`,
+      current,
+      max: MAX_SESSIONS,
+    };
+  }
+  return null;
+}
+
+function _claimSlot() { _pendingSpawns++; }
+function _releaseSlot() { if (_pendingSpawns > 0) _pendingSpawns--; }
 
 // ── Claude CLI location ────────────────────────────────────────────────────────
 
@@ -168,6 +197,13 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     return { success: false, stdout: "", stderr: `Project path not found: ${projectPath}`, exitCode: -1 };
   }
 
+  // Resource budget check
+  const budget = checkBudget();
+  if (budget) {
+    return { success: false, stdout: "", stderr: budget.error, exitCode: -2 };
+  }
+  _claimSlot();
+
   // Inject .mcp.json if needed (safe — never overwrites)
   ensureMcpJson(projectPath, port);
 
@@ -235,6 +271,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       try { upsertSpawnRegistry({ ...spawnEntry, status: "timeout", ended_at: new Date().toISOString() }); } catch { /* */ }
+      _releaseSlot();
       resolve({ success: false, stdout, stderr: stderr + "\n[timeout]", exitCode: -1 });
     }, timeoutMs);
 
@@ -249,12 +286,14 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
           ended_at: new Date().toISOString(),
         });
       } catch { /* */ }
+      _releaseSlot();
       resolve({ success, stdout, stderr, exitCode: code ?? -1 });
     });
 
     child.on("error", (err) => {
       clearTimeout(timer);
       try { upsertSpawnRegistry({ ...spawnEntry, status: "error", error: err.message, ended_at: new Date().toISOString() }); } catch { /* */ }
+      _releaseSlot();
       resolve({ success: false, stdout, stderr: err.message, exitCode: -1 });
     });
   });
@@ -294,6 +333,13 @@ export function spawnDaemon(projectPath, options = {}) {
   if (!fs.existsSync(projectPath)) {
     return { success: false, pid: null, error: `Project path not found: ${projectPath}` };
   }
+
+  // Resource budget check
+  const budget = checkBudget();
+  if (budget) {
+    return { success: false, pid: null, error: budget.error };
+  }
+  _claimSlot();
 
   // Ensure .mcp.json
   ensureMcpJson(projectPath, port);
@@ -410,9 +456,14 @@ export function spawnDaemon(projectPath, options = {}) {
     child.unref();
     upsertSpawnRegistry({ ...spawnEntry, pid: child.pid });
 
+    // Release the pending slot once the daemon's MCP connection should have happened.
+    // After this window the live session is counted via state.sessions instead.
+    setTimeout(_releaseSlot, 60000);
+
     return { success: true, pid: child.pid, name };
   } catch (err) {
     upsertSpawnRegistry({ ...spawnEntry, status: "error", error: err.message });
+    _releaseSlot();
     return { success: false, pid: null, error: err.message };
   }
 }

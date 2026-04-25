@@ -20,6 +20,8 @@ export const state = {
   reads: new Map(),
   /** Map<projectName, ProjectObject> */
   projects: new Map(),
+  /** Map<ticketId, SpawnTicket> — tracks spawned agent lifecycle */
+  spawnTickets: new Map(),
 };
 
 // Default channels

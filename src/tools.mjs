@@ -855,7 +855,17 @@ export function registerTools(server, sessionId) {
           ? PROMPT_TEMPLATES.task(name, initial_task)
           : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, et attendre des instructions via poll_messages.`);
 
-        sysMsg("coordination", `🚀 ${launcherName} lance "${name}" en mode headless dans ${repoName}${role ? ` (${role})` : ""}`);
+        // Create spawn ticket
+        const ticketId = randomUUID().slice(0, 8);
+        const ticket = {
+          id: ticketId, name, mode, repo: repoName,
+          spawnedBy: launcherName, spawnerId: sessionId,
+          status: "running", createdAt: new Date(),
+          completedAt: null, result: null,
+        };
+        state.spawnTickets.set(ticketId, ticket);
+
+        sysMsg("coordination", `🚀 ${launcherName} lance "${name}" en mode headless dans ${repoName}${role ? ` (${role})` : ""} [ticket:${ticketId}]`);
         notify("coordination", sessionId);
 
         // Fire-and-forget: result goes to .wikichat/artifacts/
@@ -865,12 +875,24 @@ export function registerTools(server, sessionId) {
           spawnedBy: launcherName,
         }).then(result => {
           const status = result.success ? "✅ terminé" : `❌ échec (exit ${result.exitCode})`;
-          sysMsg("coordination", `${status} — headless "${name}" dans ${repoName}`);
+          // Update ticket
+          ticket.status = result.success ? "completed" : "failed";
+          ticket.completedAt = new Date();
+          ticket.result = { success: result.success, exitCode: result.exitCode };
+          sysMsg("coordination", `${status} — headless "${name}" dans ${repoName} [ticket:${ticketId}]`);
+          // Notify spawner via waiters
+          notifyWaiters("__tickets__", null);
           pushDashboardUpdate();
-        }).catch(() => {});
+        }).catch(() => {
+          ticket.status = "failed";
+          ticket.completedAt = new Date();
+          ticket.result = { success: false, error: "spawn crashed" };
+          notifyWaiters("__tickets__", null);
+        });
 
         return txt(
           `🚀 "${name}" lancé en mode headless dans ${repoName}.\n\n` +
+          `🎫 Ticket: ${ticketId} — poll_ticket("${ticketId}") pour suivre\n` +
           `📄 Résultat → .wikichat/artifacts/ (récupéré automatiquement dans 2min)\n` +
           `📡 Progression visible sur #coordination\n` +
           `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
