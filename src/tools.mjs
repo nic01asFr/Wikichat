@@ -213,9 +213,10 @@ export function registerTools(server, sessionId) {
     {
       name: z.string().describe("Nom d'affichage unique (ex: 'Alice', 'Backend-Dev', 'Reviewer')"),
       role: z.string().optional().describe("Rôle (ex: 'développeur', 'reviewer', 'architecte')"),
+      agent_type: z.enum(["interactive", "daemon", "headless"]).default("interactive").describe("Type d'agent: interactive (turn-based, poll quand demandé), daemon (boucle poll permanente), headless (one-shot, exécute et sort)"),
       claude_session_id: z.string().optional().describe("ID de session Claude Code, persisté pour permettre --resume aux prochains spawns daemon."),
     },
-    async ({ name, role, claude_session_id }) => {
+    async ({ name, role, agent_type, claude_session_id }) => {
       const conflict = getSessionByName(name);
       if (conflict && conflict.id !== sessionId) {
         return txt(`❌ Le nom "${name}" est déjà pris.`);
@@ -227,6 +228,7 @@ export function registerTools(server, sessionId) {
       const oldName = session.name;
       session.name = name;
       session.role = role ?? null;
+      session.agent_type = agent_type;
       session.lastSeen = new Date();
 
       // Resolve storage path
@@ -272,9 +274,14 @@ export function registerTools(server, sessionId) {
         : "";
 
       const isCurator = role && /curator|curateur|meta|méta/i.test(role);
+      const workflowByType = {
+        interactive: `💡 Mode interactif: get_briefing() pour le contexte → send_message → poll quand demandé\n   Pas de boucle poll — vous êtes turn-based.`,
+        daemon: `💡 Mode daemon: poll_messages(since_id, timeout=120) en boucle permanente\n   Ne terminez jamais — relancez poll après chaque timeout.`,
+        headless: `💡 Mode headless: exécutez votre mission → share_artifact → exit\n   Pas de poll, pas de boucle. One-shot.`,
+      };
       const workflow = isCurator
-        ? `🔍 Mode Méta-Curateur: get_context → list_projects → read_agent_history → analyser → share_artifact\n⚠️  Pas besoin de poll_messages.`
-        : `💡 Workflow: declare_capabilities → send_message → poll_messages(since_id) — boucle\n   Partage structuré: share_artifact | Urgence: broadcast()`;
+        ? `🔍 Mode Méta-Curateur: get_briefing → list_projects → read_agent_history → analyser → share_artifact\n⚠️  Pas besoin de poll_messages.`
+        : workflowByType[agent_type] || workflowByType.interactive;
 
       return txt(
         `✅ Enregistré: "${name}"${role ? ` (${role})` : ""}\n\n` +
