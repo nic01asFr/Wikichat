@@ -958,21 +958,16 @@ export function registerTools(server, sessionId) {
         storage_path: wikichatDir, registered_at: new Date().toISOString(),
       }, null, 2));
 
-      // settings.local.json
+      // settings.local.json — whitelist filesystem reads/wikichat writes + all wikichat MCP tools
       writeAgentFile(claudeDir, "", "settings.local.json", JSON.stringify({
         permissions: {
           allow: [
             "Read(**)", "Glob(**)", "Grep(**)", "LS(**)",
             "Write(.wikichat/**)", "Edit(.wikichat/**)",
-            "mcp__wikichat__register", "mcp__wikichat__declare_capabilities",
-            "mcp__wikichat__send_message", "mcp__wikichat__read_messages",
-            "mcp__wikichat__poll_messages", "mcp__wikichat__list_sessions",
-            "mcp__wikichat__list_channels", "mcp__wikichat__get_context",
-            "mcp__wikichat__set_status", "mcp__wikichat__share_artifact",
-            "mcp__wikichat__ack_message", "mcp__wikichat__declare_delay",
-            "mcp__wikichat__broadcast", "mcp__wikichat__create_channel",
+            "mcp__wikichat__*",
           ]
-        }
+        },
+        enabledMcpjsonServers: ["wikichat"],
       }, null, 2));
 
       // CLAUDE.md
