@@ -52,6 +52,137 @@ function formatMsgList(msgs) {
   return txt(`🔔 ${msgs.length} nouveau(x) message(s):\n\n${lines.join("\n\n")}\n\n🔖 Dernier: ${lastId.slice(0, 8)}`);
 }
 
+/**
+ * buildBriefing — intelligent context for an agent session.
+ * Filters by time (since), detects @mentions, and optionally filters by mission keywords.
+ */
+function buildBriefing(sessionId, { since, mission } = {}) {
+  const session = state.sessions.get(sessionId);
+  const myName = getSessionName(sessionId);
+
+  // Resolve the "since" cutoff
+  let sinceDate = null;
+  if (since) {
+    // Try as ISO date first, then as message ID
+    const parsed = new Date(since);
+    if (!isNaN(parsed)) {
+      sinceDate = parsed;
+    } else {
+      const refMsg = state.messages.find(m => m.id.startsWith(since));
+      if (refMsg) sinceDate = new Date(refMsg.timestamp);
+    }
+  }
+  if (!sinceDate && session?.lastSeen) {
+    sinceDate = new Date(session.lastSeen);
+  }
+
+  // Sessions list
+  const sl = [...state.sessions.entries()]
+    .map(([id, s]) => {
+      const me = id === sessionId ? " ← vous" : "";
+      const proj = s.current_project ? ` [${s.current_project}]` : "";
+      const task = s.current_task ? ` 📋 ${s.current_task}` : "";
+      return `  ${s.name}${s.role ? ` (${s.role})` : ""}${proj}${task}${me}`;
+    })
+    .join("\n");
+
+  // Channels
+  const cl = [...state.channels.entries()].filter(([n]) => !n.startsWith("dm:"))
+    .map(([n, info]) => `  #${n}: ${getChannelCount(n)} msg — ${info.description}`)
+    .join("\n");
+
+  // Projects
+  const pl = [...state.projects.values()].map(p => {
+    const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
+    const tasks = [...p.tasks.values()].filter(t => t.status === "active").length;
+    return `  📁 ${p.name}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${tasks ? ` | 📋 ${tasks} tâche(s)` : ""}`;
+  }).join("\n");
+
+  // Filter messages visible to this session
+  let msgs = state.messages.filter(m =>
+    !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(sessionId)
+  );
+
+  // Apply time filter
+  if (sinceDate) {
+    msgs = msgs.filter(m => new Date(m.timestamp) > sinceDate);
+  }
+
+  // Detect @mentions — messages that reference this agent by name
+  const mentionPattern = new RegExp(`@${myName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+  const mentions = msgs.filter(m => m.from !== sessionId && mentionPattern.test(m.content));
+
+  // If mission is specified, find messages with keyword overlap
+  let missionMsgs = [];
+  if (mission) {
+    const keywords = mission.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+    missionMsgs = msgs.filter(m => {
+      const content = m.content.toLowerCase();
+      return keywords.some(k => content.includes(k));
+    });
+  }
+
+  // Recent messages (last 10 if no time filter, or all since cutoff capped at 25)
+  const recentMsgs = sinceDate ? msgs.slice(-25) : msgs.slice(-10);
+
+  // Format helpers
+  const fmtMsg = m => {
+    const t = new Date(m.timestamp).toLocaleTimeString("fr-FR");
+    const ch = m.isDM ? "📩DM" : `#${m.channel}`;
+    return `  [${t}] [${ch}] ${m.fromName}: ${m.content.slice(0, 200)}${m.content.length > 200 ? "…" : ""}`;
+  };
+
+  // Build output
+  const sections = [];
+  sections.push(
+    `╔══════════════════════════════════════╗\n║     MCP WikiChat — Briefing v3       ║\n╚══════════════════════════════════════╝`
+  );
+
+  // Time context
+  if (sinceDate) {
+    sections.push(`⏰ Depuis: ${sinceDate.toLocaleTimeString("fr-FR")} (${timeSince(sinceDate)}) — ${msgs.length} message(s) total`);
+  }
+
+  // Priority: @mentions first
+  if (mentions.length > 0) {
+    sections.push(`🔔 MENTIONS (${mentions.length}):\n${mentions.map(fmtMsg).join("\n")}`);
+  }
+
+  // Mission-relevant messages
+  if (missionMsgs.length > 0) {
+    const unique = missionMsgs.filter(m => !mentions.includes(m));
+    if (unique.length > 0) {
+      sections.push(`🎯 Pertinent pour "${mission}" (${unique.length}):\n${unique.slice(-10).map(fmtMsg).join("\n")}`);
+    }
+  }
+
+  // Active topics (agents with current_task)
+  const activeTopics = [...state.sessions.values()]
+    .filter(s => s.current_task && s.sessionId !== sessionId)
+    .map(s => `  📋 ${s.name}: ${s.current_task}`);
+  if (activeTopics.length > 0) {
+    sections.push(`🔧 En cours (éviter doublons):\n${activeTopics.join("\n")}`);
+  }
+
+  // Sessions, projects, channels
+  sections.push(`👥 Sessions (${state.sessions.size}):\n${sl || "  (aucune)"}`);
+  sections.push(`🗺️ Projets (${state.projects.size}):\n${pl || "  (aucun)"}`);
+  sections.push(`📺 Canaux:\n${cl || "  (aucun)"}`);
+
+  // Recent messages (lower priority than mentions)
+  const recentFormatted = recentMsgs.map(fmtMsg).join("\n");
+  sections.push(`📨 ${sinceDate ? "Nouveaux messages" : "Messages récents"}:\n${recentFormatted || "  (aucun)"}`);
+
+  // Workflow hint
+  sections.push(
+    `💡 send_message → poll_messages(since_id) — boucle\n` +
+    `   remember(key, value) / recall(key) — mémoire persistante\n` +
+    `   📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
+  );
+
+  return txt(sections.join("\n\n"));
+}
+
 /** Resolve or create a DM channel, return channel key */
 function resolveDMChannel(sessionId, targetName) {
   const target = getSessionByName(targetName);
@@ -78,12 +209,13 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "register",
-    "S'enregistrer avec un nom identifiable. Chaque session DOIT s'enregistrer en début de conversation.",
+    "S'enregistrer avec un nom identifiable. Chaque session DOIT s'enregistrer en début de conversation. Si tu connais ton claude_session_id (ex: $CLAUDE_SESSION_ID), passe-le pour permettre une reprise via --resume au prochain spawn daemon.",
     {
       name: z.string().describe("Nom d'affichage unique (ex: 'Alice', 'Backend-Dev', 'Reviewer')"),
       role: z.string().optional().describe("Rôle (ex: 'développeur', 'reviewer', 'architecte')"),
+      claude_session_id: z.string().optional().describe("ID de session Claude Code, persisté pour permettre --resume aux prochains spawns daemon."),
     },
-    async ({ name, role }) => {
+    async ({ name, role, claude_session_id }) => {
       const conflict = getSessionByName(name);
       if (conflict && conflict.id !== sessionId) {
         return txt(`❌ Le nom "${name}" est déjà pris.`);
@@ -123,6 +255,12 @@ export function registerTools(server, sessionId) {
         .filter(([id]) => id !== sessionId)
         .map(([, s]) => `  • ${s.name}${s.role ? ` (${s.role})` : ""}`)
         .join("\n");
+
+      // Persist claude_session_id (Solution C — enables --resume on respawn)
+      if (claude_session_id) {
+        remember(name, "__claude_session_id", claude_session_id);
+        session.claude_session_id = claude_session_id;
+      }
 
       // Auto-restore identity (skills, current_project, availability, memories)
       const identity = restoreIdentity(session, name);
@@ -214,41 +352,25 @@ export function registerTools(server, sessionId) {
     }
   );
 
-  // ── get_context ─────────────────────────────────────────────────────────────
+  // ── get_context (legacy — delegates to buildBriefing) ───────────────────────
 
   server.tool(
     "get_context",
-    "Résumé complet de l'état du réseau. Idéal en début de session. Les curateurs doivent utiliser cet outil + read_agent_history() + list_projects() au lieu de poll_messages.",
+    "Résumé complet de l'état du réseau. Idéal en début de session. Préférez get_briefing() pour un contexte filtré.",
     {},
-    async () => {
-      const sl = [...state.sessions.entries()]
-        .map(([id, s]) => `  ${s.name}${s.role ? ` (${s.role})` : ""}${id === sessionId ? " ← vous" : ""}`)
-        .join("\n");
-      const cl = [...state.channels.entries()].filter(([n]) => !n.startsWith("dm:"))
-        .map(([n, info]) => `  #${n}: ${getChannelCount(n)} msg — ${info.description}`)
-        .join("\n");
-      const ml = state.messages
-        .filter(m => !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(sessionId))
-        .slice(-10)
-        .map(m => `  [${new Date(m.timestamp).toLocaleTimeString("fr-FR")}] [${m.isDM ? "📩DM" : "#" + m.channel}] ${m.fromName}: ${m.content}`)
-        .join("\n");
-      const pl = [...state.projects.values()].map(p => {
-        const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
-        const tasks = [...p.tasks.values()].filter(t => t.status === "active").length;
-        return `  📁 ${p.name}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${tasks ? ` | 📋 ${tasks} tâche(s)` : ""}`;
-      }).join("\n");
+    async () => buildBriefing(sessionId, {})
+  );
 
-      return txt(
-        `╔══════════════════════════════════════╗\n║       MCP WikiChat — État v2         ║\n╚══════════════════════════════════════╝\n\n` +
-        `👥 Sessions (${state.sessions.size}):\n${sl || "  (aucune)"}\n\n` +
-        `🗺️ Projets (${state.projects.size}):\n${pl || "  (aucun — utilisez declare_project())"}\n\n` +
-        `📺 Canaux:\n${cl || "  (aucun)"}\n\n` +
-        `📨 Messages récents:\n${ml || "  (aucun)"}\n\n` +
-        `💡 declare_capabilities → claim_task → check_overlap → release_task\n` +
-        `   send_message → poll_messages(since_id) — boucle\n` +
-        `   📊 Dashboard local: http://localhost:${process.env.PORT || 3777}/dashboard`
-      );
-    }
+  // ── get_briefing ───────────────────────────────────────────────────────────
+
+  server.tool(
+    "get_briefing",
+    "Briefing intelligent filtré. Détecte vos @mentions, filtre par date/mission, sépare messages prioritaires du flux. Remplace get_context().",
+    {
+      since: z.string().optional().describe("ISO timestamp ou ID message. Défaut: votre lastSeen"),
+      mission: z.string().optional().describe("Votre mission pour filtrer le contexte (ex: 'review sampler.mjs')"),
+    },
+    async ({ since, mission }) => buildBriefing(sessionId, { since, mission })
   );
 
   // ══ MESSAGING ═══════════════════════════════════════════════════════════════

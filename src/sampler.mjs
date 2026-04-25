@@ -339,6 +339,9 @@ export function spawnDaemon(projectPath, options = {}) {
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
     }
+    if (options.sessionId) {
+      baseArgs.push("--resume", options.sessionId);
+    }
     baseArgs.push("--max-budget-usd", "5");
 
     const spawnArgs = needsShell
