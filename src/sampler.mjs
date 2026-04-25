@@ -127,8 +127,9 @@ function loadRole(projectPath, roleName) {
   const slug = roleName.toLowerCase().replace(/[^a-z0-9-]/g, "");
   // Try project-local roles first, then server roles
   for (const base of [
-    path.join(projectPath, ".wikichat", "roles"),
-    path.join(process.cwd(), ".wikichat", "roles"),
+    path.join(projectPath, ".wikichat", "roles"),    // project override
+    path.join(process.cwd(), ".wikichat", "roles"), // server local override
+    path.join(process.cwd(), "docs", "roles"),       // shipped templates
   ]) {
     const rolePath = path.join(base, `${slug}.md`);
     try {

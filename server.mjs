@@ -25,6 +25,7 @@ import { loadMemories, flushMemories } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
+import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
 // [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
@@ -270,6 +271,7 @@ app.get("/sse", async (req, res) => {
   });
 
   registerTools(mcpServer, sid);
+  registerResources(mcpServer, sid);
   await mcpServer.connect(transport);
 });
 
