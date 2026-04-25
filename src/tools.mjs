@@ -26,6 +26,7 @@ import {
 import { pushDashboardUpdate } from "./dashboard.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
+import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -123,9 +124,13 @@ export function registerTools(server, sessionId) {
         .map(([, s]) => `  • ${s.name}${s.role ? ` (${s.role})` : ""}`)
         .join("\n");
 
-      const snapshot = loadSnapshot(name);
-      const resumeHint = snapshot
-        ? `\n\n📦 Session précédente (${timeSince(snapshot.savedAt)}). Appelle resume_session() pour reprendre.`
+      // Auto-restore identity (skills, current_project, availability, memories)
+      const identity = restoreIdentity(session, name);
+      const resumeHint = identity.restored
+        ? `\n\n📦 Identité restaurée (${timeSince(identity.snapshotAge)}): ${identity.summary}.` +
+          (identity.lastInterlocutors.length
+            ? `\n   Derniers interlocuteurs: ${identity.lastInterlocutors.slice(0, 3).join(", ")}`
+            : "")
         : "";
 
       const isCurator = role && /curator|curateur|meta|méta/i.test(role);
@@ -154,6 +159,58 @@ export function registerTools(server, sessionId) {
       sysMsg("system", `${getSessionName(sessionId)} → statut: "${status}"`);
       notify("general", sessionId);
       return txt(`✅ Statut: "${status}"`);
+    }
+  );
+
+  // ── remember / recall ───────────────────────────────────────────────────────
+
+  server.tool(
+    "remember",
+    "Mémoriser une donnée persistante associée à ton identité (clé/valeur). Survit aux sessions et redémarrages.",
+    {
+      key: z.string().describe("Clé courte (ex: 'preferred_stack', 'current_pr')"),
+      value: z.string().describe("Valeur à mémoriser (texte libre)"),
+    },
+    async ({ key, value }) => {
+      const session = state.sessions.get(sessionId);
+      if (!session?.name || session.name.startsWith("session-")) {
+        return txt("❌ Tu dois être register() avec un nom stable avant de mémoriser.");
+      }
+      remember(session.name, key, value);
+      return txt(`🧠 Mémorisé: ${key} = "${value.slice(0, 80)}${value.length > 80 ? "…" : ""}"`);
+    }
+  );
+
+  server.tool(
+    "recall",
+    "Récupérer une mémoire persistante. Sans clé: retourne toutes les mémoires de l'agent.",
+    {
+      key: z.string().optional().describe("Clé (omettre pour tout lister)"),
+    },
+    async ({ key }) => {
+      const session = state.sessions.get(sessionId);
+      if (!session?.name || session.name.startsWith("session-")) {
+        return txt("❌ Tu dois être register() avec un nom stable avant de recall.");
+      }
+      const result = recall(session.name, key);
+      if (key) {
+        return txt(result === null ? `(rien sous "${key}")` : `🧠 ${key}: ${result}`);
+      }
+      const entries = Object.entries(result || {});
+      if (entries.length === 0) return txt("(aucune mémoire)");
+      return txt(`🧠 ${entries.length} mémoire(s):\n` + entries.map(([k, v]) => `  • ${k}: ${String(v).slice(0, 100)}`).join("\n"));
+    }
+  );
+
+  server.tool(
+    "forget",
+    "Oublier une mémoire spécifique.",
+    { key: z.string().describe("Clé à oublier") },
+    async ({ key }) => {
+      const session = state.sessions.get(sessionId);
+      if (!session?.name) return txt("❌ Pas de nom enregistré.");
+      const ok = forgetKey(session.name, key);
+      return txt(ok ? `🗑️  Oublié: ${key}` : `(rien sous "${key}")`);
     }
   );
 

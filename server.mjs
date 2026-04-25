@@ -21,6 +21,7 @@ import { homedir } from "os";
 
 import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, rebuildChannelCounts, getChannelCount } from "./src/state.mjs";
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
+import { loadMemories, flushMemories } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
@@ -40,6 +41,7 @@ loadMessages();   // Restore recent messages
 rebuildChannelCounts(); // Build O(1) channel count cache
 setOnMessagePush(saveMessagesDebounced); // Auto-persist on new messages
 loadProjects();
+loadMemories();   // Restore persistent agent memories (remember/recall)
 
 // Restore cron state into sessions on boot (best effort)
 const persistedCrons = loadCronRegistry();
@@ -81,6 +83,7 @@ function gracefulShutdown(signal) {
   try { saveChannels(); } catch { /* */ }
   try { saveMessagesDebounced.flush?.(); } catch { /* */ }
   try { flushSpawnRegistry(); } catch { /* */ }
+  try { flushMemories(); } catch { /* */ }
 
   console.log("[WikiChat] State saved. Exiting.");
   process.exit(0);
