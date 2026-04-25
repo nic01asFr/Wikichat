@@ -116,19 +116,44 @@ PROTOCOLE OBLIGATOIRE — MCP-FIRST:
    format: {"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>","data":{"title":"...","content":"..."}}
 `;
 
+// ── Role injection ───────────────────────────────────────────────────────────
+
+/**
+ * Load a role definition from .wikichat/roles/<roleName>.md if it exists.
+ * Falls back to the WikiChat server's own roles directory.
+ */
+function loadRole(projectPath, roleName) {
+  if (!roleName) return "";
+  const slug = roleName.toLowerCase().replace(/[^a-z0-9-]/g, "");
+  // Try project-local roles first, then server roles
+  for (const base of [
+    path.join(projectPath, ".wikichat", "roles"),
+    path.join(process.cwd(), ".wikichat", "roles"),
+  ]) {
+    const rolePath = path.join(base, `${slug}.md`);
+    try {
+      if (fs.existsSync(rolePath)) return "\n" + fs.readFileSync(rolePath, "utf8") + "\n";
+    } catch { /* ignore */ }
+  }
+  return "";
+}
+
 // ── Prompt templates ──────────────────────────────────────────────────────────
 
 export const PROMPT_TEMPLATES = {
   /**
    * Generic one-shot task. Agent reads context, does task, exits.
+   * If options.role matches a file in .wikichat/roles/, its content is injected.
    */
-  task: (name, task) =>
-    AGENT_PREAMBLE +
-    `Tu es ${name}, agent WikiChat. ` +
-    `Ta mission: ${task}. ` +
-    `register() puis effectue la mission. ` +
-    `Partage le résultat via share_artifact sur WikiChat. ` +
-    `Écris aussi dans .wikichat/artifacts/ comme backup. Termine.`,
+  task: (name, task, options = {}) => {
+    const roleContent = options.projectPath ? loadRole(options.projectPath, options.role) : "";
+    return AGENT_PREAMBLE +
+      (roleContent || `Tu es ${name}, agent WikiChat. `) +
+      `Ta mission: ${task}. ` +
+      `register() puis effectue la mission. ` +
+      `Partage le résultat via share_artifact sur WikiChat. ` +
+      `Écris aussi dans .wikichat/artifacts/ comme backup. Termine.`;
+  },
 
   /**
    * Project status audit.

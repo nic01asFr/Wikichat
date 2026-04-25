@@ -852,8 +852,8 @@ export function registerTools(server, sessionId) {
       // ── HEADLESS MODE (default) ───────────────────────────────────────────
       if (mode === "headless") {
         const prompt = initial_task
-          ? PROMPT_TEMPLATES.task(name, initial_task)
-          : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, et attendre des instructions via poll_messages.`);
+          ? PROMPT_TEMPLATES.task(name, initial_task, { projectPath: repo_path, role: role })
+          : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, et attendre des instructions via poll_messages.`, { projectPath: repo_path, role: role });
 
         // Create spawn ticket
         const ticketId = randomUUID().slice(0, 8);
