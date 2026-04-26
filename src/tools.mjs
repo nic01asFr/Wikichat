@@ -28,6 +28,8 @@ import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, delete
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
+import { runCartography } from "./jobs/cartography.mjs";
+import { runClustering } from "./jobs/clustering.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1193,6 +1195,54 @@ export function registerTools(server, sessionId) {
     async ({ id }) => {
       const ok = deleteTrigger(id);
       return txt(ok ? `🗑️  Supprimé: ${id}` : `❌ Trigger "${id}" introuvable.`);
+    }
+  );
+
+  // ══ CARTOGRAPHY ═════════════════════════════════════════════════════════════
+
+  server.tool(
+    "run_cartography",
+    "Run a full cartography cycle: scan projects, detect changes, generate island map",
+    {},
+    async () => {
+      try {
+        const result = await runCartography({
+          log: msg => console.log(msg),
+          share: async ({ title, content, channel }) => {
+            sysMsg(channel || "cartography", `📊 ${title}\n\n${content}`);
+          },
+        });
+        return txt(
+          `📊 Cartography terminée\n\n` +
+          `Scannés: ${result.scanned} | Changés: ${result.changed}\n` +
+          `Carte: ${result.mapPath}`
+        );
+      } catch (err) {
+        return txt(`❌ Cartography échouée: ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "run_clustering",
+    "Run inter-project similarity clustering based on deps, langs, and tags (pure JS, no LLM)",
+    {},
+    async () => {
+      try {
+        const result = await runClustering({
+          log: msg => console.log(msg),
+          share: async ({ title, content, channel }) => {
+            sysMsg(channel || "cartography", `🔗 ${title}\n\n${content}`);
+          },
+        });
+        return txt(
+          `🔗 Clustering terminé\n\n` +
+          `Projets: ${result.projects} | Liaisons: ${result.edges} | Clusters: ${result.clusters}\n` +
+          `Fichier: ${result.path}`
+        );
+      } catch (err) {
+        return txt(`❌ Clustering échoué: ${err.message}`);
+      }
     }
   );
 
