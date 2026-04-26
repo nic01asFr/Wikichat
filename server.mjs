@@ -33,6 +33,7 @@ import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/reg
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
+import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 
@@ -57,6 +58,10 @@ configureTriggers({
   budgetCheckFn: checkBudget,
 });
 loadTriggers();    // Restore persisted triggers
+const teamResult = bootstrapAutonomousTeam();
+if (teamResult.provisioned > 0) {
+  console.log(`[WikiChat] Autonomous team: ${teamResult.provisioned}/${teamResult.total} triggers provisioned`);
+}
 
 // Restore cron state into sessions on boot (best effort)
 const persistedCrons = loadCronRegistry();
