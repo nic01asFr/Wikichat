@@ -60,6 +60,93 @@ export function checkBudget() {
 function _claimSlot() { _pendingSpawns++; }
 function _releaseSlot() { if (_pendingSpawns > 0) _pendingSpawns--; }
 
+// ── Quotas par owner ──────────────────────────────────────────────────────────
+// Map<ownerName, { dailyCount, concurrent, dayStartedAt }>
+// Caps :
+//   - subagents/projets : 50/jour, 5 concurrent
+//   - principal/résidents : 200/jour, 15 concurrent
+//   - wikichat-service / trigger:*  : illimité
+const _quotas = new Map();
+const PRINCIPAL_NAMES = new Set();
+const RESIDENT_PREFIXES = ["trigger:", "wikichat-"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function _isService(owner) {
+  if (!owner) return false;
+  return RESIDENT_PREFIXES.some(p => owner.startsWith(p));
+}
+
+function _isPrincipalOrResident(owner) {
+  if (!owner) return false;
+  const principal = process.env.WIKICHAT_PRINCIPAL_AGENT || "Claude-Code";
+  if (owner === principal) return true;
+  PRINCIPAL_NAMES.add(principal);
+  // Résidents canoniques (Sentinel/Librarian/Orchestrator)
+  return ["Sentinel", "Librarian", "Orchestrator"].includes(owner);
+}
+
+function _capsFor(owner) {
+  if (_isService(owner)) return { daily: Infinity, concurrent: Infinity };
+  if (_isPrincipalOrResident(owner)) return { daily: 200, concurrent: 15 };
+  return { daily: 50, concurrent: 5 };
+}
+
+function _ownerEntry(owner) {
+  let e = _quotas.get(owner);
+  if (!e) { e = { dailyCount: 0, concurrent: 0, dayStartedAt: Date.now() }; _quotas.set(owner, e); }
+  // Rolling 24h window reset
+  if (Date.now() - e.dayStartedAt > DAY_MS) {
+    e.dailyCount = 0;
+    e.dayStartedAt = Date.now();
+  }
+  return e;
+}
+
+/**
+ * Check if an owner can spawn now. Returns null if OK, or {error, owner, daily, concurrent, caps}.
+ */
+export function checkOwnerQuota(owner) {
+  if (!owner) return null;
+  const caps = _capsFor(owner);
+  const e = _ownerEntry(owner);
+  if (e.dailyCount >= caps.daily) {
+    return { error: `Quota quotidien atteint pour ${owner}: ${e.dailyCount}/${caps.daily}`, owner, daily: e.dailyCount, caps };
+  }
+  if (e.concurrent >= caps.concurrent) {
+    return { error: `Quota concurrent atteint pour ${owner}: ${e.concurrent}/${caps.concurrent} actifs`, owner, concurrent: e.concurrent, caps };
+  }
+  return null;
+}
+
+function _claimQuota(owner) {
+  if (!owner) return;
+  const e = _ownerEntry(owner);
+  e.dailyCount++;
+  e.concurrent++;
+}
+function _releaseQuota(owner) {
+  if (!owner) return;
+  const e = _ownerEntry(owner);
+  if (e.concurrent > 0) e.concurrent--;
+}
+
+export function quotaSnapshot() {
+  return [..._quotas.entries()].map(([owner, e]) => ({
+    owner, daily: e.dailyCount, concurrent: e.concurrent, caps: _capsFor(owner),
+  }));
+}
+
+// ── Profondeur de spawn ──────────────────────────────────────────────────────
+const MAX_SPAWN_DEPTH = parseInt(process.env.WIKICHAT_MAX_SPAWN_DEPTH || "3");
+export function getMaxSpawnDepth() { return MAX_SPAWN_DEPTH; }
+export function checkDepth(parentDepth) {
+  const depth = (parentDepth ?? 0) + 1;
+  if (depth > MAX_SPAWN_DEPTH) {
+    return { error: `Profondeur de spawn maximum atteinte (${depth} > ${MAX_SPAWN_DEPTH}). Refactorer en plus plat ou augmenter WIKICHAT_MAX_SPAWN_DEPTH.`, depth };
+  }
+  return { depth };
+}
+
 // ── Claude CLI location ────────────────────────────────────────────────────────
 
 const CLAUDE_CANDIDATES = [
@@ -212,6 +299,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     timeoutMs = 5 * 60 * 1000,
     spawnedBy = "wikichat-service",
     resumeSessionId = null, // If set, resumes an existing Claude session
+    parentDepth = 0,
   } = options;
 
   const claudeBin = findClaudeBin();
@@ -223,12 +311,21 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     return { success: false, stdout: "", stderr: `Project path not found: ${projectPath}`, exitCode: -1 };
   }
 
-  // Resource budget check
+  // Pre-flight checks (depth → owner quota → global budget)
+  const depthCheck = checkDepth(parentDepth);
+  if (depthCheck.error) {
+    return { success: false, stdout: "", stderr: depthCheck.error, exitCode: -3 };
+  }
+  const quotaCheck = checkOwnerQuota(spawnedBy);
+  if (quotaCheck) {
+    return { success: false, stdout: "", stderr: quotaCheck.error, exitCode: -4 };
+  }
   const budget = checkBudget();
   if (budget) {
     return { success: false, stdout: "", stderr: budget.error, exitCode: -2 };
   }
   _claimSlot();
+  _claimQuota(spawnedBy);
 
   // Inject .mcp.json if needed (safe — never overwrites)
   ensureMcpJson(projectPath, port);
@@ -297,7 +394,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       try { upsertSpawnRegistry({ ...spawnEntry, status: "timeout", ended_at: new Date().toISOString() }); } catch { /* */ }
-      _releaseSlot();
+      _releaseSlot(); _releaseQuota(spawnedBy);
       resolve({ success: false, stdout, stderr: stderr + "\n[timeout]", exitCode: -1 });
     }, timeoutMs);
 
@@ -312,14 +409,14 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
           ended_at: new Date().toISOString(),
         });
       } catch { /* */ }
-      _releaseSlot();
+      _releaseSlot(); _releaseQuota(spawnedBy);
       resolve({ success, stdout, stderr, exitCode: code ?? -1 });
     });
 
     child.on("error", (err) => {
       clearTimeout(timer);
       try { upsertSpawnRegistry({ ...spawnEntry, status: "error", error: err.message, ended_at: new Date().toISOString() }); } catch { /* */ }
-      _releaseSlot();
+      _releaseSlot(); _releaseQuota(spawnedBy);
       resolve({ success: false, stdout, stderr: err.message, exitCode: -1 });
     });
   });
@@ -349,7 +446,21 @@ export function spawnDaemon(projectPath, options = {}) {
     task = null,
     port = parseInt(process.env.PORT || "3777"),
     spawnedBy = "wikichat-service",
+    parentDepth = 0,
   } = options;
+
+  // Daemon mode is only spawnable by service / residents / principal
+  // (not by random subagents — prevents fork-bomb cascades)
+  const principal = process.env.WIKICHAT_PRINCIPAL_AGENT || "Claude-Code";
+  const allowedDaemonSpawners = new Set([
+    "wikichat-service", principal, "Sentinel", "Librarian", "Orchestrator",
+  ]);
+  const isAllowedSpawner = allowedDaemonSpawners.has(spawnedBy)
+    || (spawnedBy && spawnedBy.startsWith("trigger:"))
+    || (spawnedBy && spawnedBy.startsWith("watchdog-"));
+  if (!isAllowedSpawner) {
+    return { success: false, pid: null, error: `Le spawn de daemons est réservé au service / résidents / principal. "${spawnedBy}" ne peut spawner que des headless.` };
+  }
 
   const claudeBin = findClaudeBin();
   if (!claudeBin) {
@@ -360,12 +471,16 @@ export function spawnDaemon(projectPath, options = {}) {
     return { success: false, pid: null, error: `Project path not found: ${projectPath}` };
   }
 
-  // Resource budget check
+
+  // Pre-flight: depth → owner quota → global budget
+  const depthCheck = checkDepth(parentDepth);
+  if (depthCheck.error) return { success: false, pid: null, error: depthCheck.error };
+  const quotaCheck = checkOwnerQuota(spawnedBy);
+  if (quotaCheck) return { success: false, pid: null, error: quotaCheck.error };
   const budget = checkBudget();
-  if (budget) {
-    return { success: false, pid: null, error: budget.error };
-  }
+  if (budget) return { success: false, pid: null, error: budget.error };
   _claimSlot();
+  _claimQuota(spawnedBy);
 
   // Ensure .mcp.json
   ensureMcpJson(projectPath, port);
@@ -488,12 +603,15 @@ export function spawnDaemon(projectPath, options = {}) {
 
     // Release the pending slot once the daemon's MCP connection should have happened.
     // After this window the live session is counted via state.sessions instead.
+    // Quota concurrent reste tenu tant que le daemon vit (release au exit).
     setTimeout(_releaseSlot, 60000);
+    child.on("exit", () => _releaseQuota(spawnedBy));
 
     return { success: true, pid: child.pid, name };
   } catch (err) {
     upsertSpawnRegistry({ ...spawnEntry, status: "error", error: err.message });
     _releaseSlot();
+    _releaseQuota(spawnedBy);
     return { success: false, pid: null, error: err.message };
   }
 }

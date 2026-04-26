@@ -31,7 +31,7 @@ import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from 
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
-import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget } from "./src/sampler.mjs";
+import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
@@ -784,6 +784,8 @@ app.get("/api/health", (_req, res) => {
     waiters: state.waiters.size,
     spawnRegistry: loadSpawnRegistry().length,
     budget: { current: currentLoad(), max: parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10") },
+    spawn_depth_max: getMaxSpawnDepth(),
+    quotas: quotaSnapshot(),
   });
 });
 
