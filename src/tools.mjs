@@ -27,6 +27,7 @@ import { pushDashboardUpdate } from "./dashboard.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
+import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1113,6 +1114,85 @@ export function registerTools(server, sessionId) {
         `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
         `  Relancez poll_ticket("${ticket_id}") pour continuer à attendre.`
       );
+    }
+  );
+
+  // ══ TRIGGERS (Phase 5) ══════════════════════════════════════════════════════
+
+  server.tool(
+    "register_trigger",
+    "Enregistre un trigger (cron, lifecycle, …) qui exécutera une action quand son événement survient. Persisté dans ~/.wikichat/triggers.json.",
+    {
+      id: z.string().optional().describe("ID stable (sinon UUID auto)"),
+      type: z.enum(["cron", "lifecycle"]).describe("Type d'événement"),
+      config: z.any().optional().describe("Config spécifique au type (ex: {schedule: '0 22 * * *'})"),
+      action_type: z.enum(["spawn_session", "broadcast"]).describe("Type d'action à exécuter"),
+      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast)"),
+      cooldown_s: z.number().optional().describe("Délai minimum entre 2 fires (défaut 30s)"),
+      max_per_day: z.number().optional().describe("Cap quotidien (défaut 100)"),
+      description: z.string().optional(),
+    },
+    async ({ action_type, action_params, ...rest }) => {
+      try {
+        const spec = { ...rest, action: { type: action_type, params: action_params || {} } };
+        const t = registerTrigger(spec);
+        return txt(`✅ Trigger "${t.id}" enregistré (${t.type}, ${t.enabled ? "actif" : "inactif"}).`);
+      } catch (err) {
+        return txt(`❌ Échec: ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "list_triggers",
+    "Lister tous les triggers enregistrés et leur état (last_fired, fire_count, enabled).",
+    {},
+    async () => {
+      const ts = listTriggers();
+      if (ts.length === 0) return txt("(aucun trigger enregistré)");
+      const lines = ts.map(t =>
+        `${t.enabled ? "🟢" : "⚫"} ${t.id} [${t.type}] — ${t.description || "(no desc)"}\n` +
+        `   action: ${t.action?.type}(${t.action?.params?.name || "?"}) | ` +
+        `fired ${t.fire_count}× | last: ${t.last_fired || "never"}`
+      );
+      return txt(`📋 ${ts.length} trigger(s):\n\n${lines.join("\n\n")}`);
+    }
+  );
+
+  server.tool(
+    "fire_trigger",
+    "Déclencher manuellement un trigger (utile pour tester). Respecte cooldown sauf si force=true.",
+    {
+      id: z.string().describe("ID du trigger"),
+      force: z.boolean().optional().describe("Bypass cooldown/quota (défaut false)"),
+    },
+    async ({ id, force }) => {
+      const result = await fireTrigger(id, { force: !!force, source: "manual" });
+      if (result.ok) return txt(`✅ Trigger "${id}" exécuté.`);
+      return txt(`❌ Refusé: ${result.reason}${result.detail ? ` — ${typeof result.detail === "string" ? result.detail : JSON.stringify(result.detail)}` : ""}`);
+    }
+  );
+
+  server.tool(
+    "set_trigger_enabled",
+    "Activer ou désactiver un trigger sans le supprimer.",
+    {
+      id: z.string(),
+      enabled: z.boolean(),
+    },
+    async ({ id, enabled }) => {
+      const ok = setEnabled(id, enabled);
+      return txt(ok ? `${enabled ? "🟢 Activé" : "⚫ Désactivé"}: ${id}` : `❌ Trigger "${id}" introuvable.`);
+    }
+  );
+
+  server.tool(
+    "delete_trigger",
+    "Supprimer un trigger définitivement.",
+    { id: z.string() },
+    async ({ id }) => {
+      const ok = deleteTrigger(id);
+      return txt(ok ? `🗑️  Supprimé: ${id}` : `❌ Trigger "${id}" introuvable.`);
     }
   );
 

@@ -31,7 +31,8 @@ import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from 
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
-import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad } from "./src/sampler.mjs";
+import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget } from "./src/sampler.mjs";
+import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 
@@ -43,6 +44,19 @@ rebuildChannelCounts(); // Build O(1) channel count cache
 setOnMessagePush(saveMessagesDebounced); // Auto-persist on new messages
 loadProjects();
 loadMemories();   // Restore persistent agent memories (remember/recall)
+
+// Configure trigger engine (Phase 5) — wire spawn handler + budget guard
+configureTriggers({
+  spawnFn: async (params) => {
+    const repo = params.repo_path || process.cwd();
+    if (params.mode === "daemon") {
+      return spawnDaemon(repo, params);
+    }
+    return spawnHeadless(repo, params.prompt || "register puis attends des instructions.", params);
+  },
+  budgetCheckFn: checkBudget,
+});
+loadTriggers();    // Restore persisted triggers
 
 // Restore cron state into sessions on boot (best effort)
 const persistedCrons = loadCronRegistry();
@@ -85,6 +99,7 @@ function gracefulShutdown(signal) {
   try { saveMessagesDebounced.flush?.(); } catch { /* */ }
   try { flushSpawnRegistry(); } catch { /* */ }
   try { flushMemories(); } catch { /* */ }
+  try { shutdownTriggers(); } catch { /* */ }
 
   console.log("[WikiChat] State saved. Exiting.");
   process.exit(0);
@@ -781,4 +796,6 @@ app.listen(PORT, HOST, () => {
 ║                                                  ║
 ╚══════════════════════════════════════════════════╝
   `);
+  // Phase 5: fire lifecycle triggers (spawn résidents si configurés)
+  runLifecycleTriggers().catch(() => {});
 });
