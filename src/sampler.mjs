@@ -420,12 +420,16 @@ export function spawnDaemon(projectPath, options = {}) {
       ? { cmd: "cmd", args: ["/c", claudeBin, ...baseArgs] }
       : { cmd: claudeBin, args: baseArgs };
 
+    // detached: false on Windows — keeps the daemon process tied to the
+    // server's lifetime. On Windows, detached children survive parent death
+    // (orphan claude.exe), causing budget leaks. The lifecycle trigger
+    // re-spawns them at next server boot, which is the desired behavior.
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
       windowsHide: true,
-      detached: true,
+      detached: !isWindows,
       shell: false,
     });
 

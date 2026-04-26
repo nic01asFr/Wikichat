@@ -31,9 +31,11 @@
 - **Sentinel** et **Librarian** sont en arrière-plan, communiquent uniquement avec Orchestrator (DM) ou via leurs canaux dédiés (`#library`, `#digest`).
 - Les **subagents headless** (Reviewer, Cartographer, HealthAnalyst, Matchmaker, Triager) sont spawnés à la demande, font leur tâche, partagent un artifact, exit.
 
-## Provisionnement automatique
+## Provisionnement (opt-in)
 
-Au boot du serveur (`npm start`), `src/team-bootstrap.mjs` enregistre automatiquement 6 triggers :
+> ⚠️ **Désactivé par défaut.** L'équipe résidente consomme des tokens même au repos (~$1/jour). Active explicitement avec `WIKICHAT_AUTONOMOUS_TEAM=1 npm start`.
+
+Une fois activé, `src/team-bootstrap.mjs` enregistre 6 triggers :
 
 | Trigger | Type | Effet |
 |---|---|---|
@@ -46,9 +48,11 @@ Au boot du serveur (`npm start`), `src/team-bootstrap.mjs` enregistre automatiqu
 
 Idempotent : si tu redémarres le serveur, les triggers existants sont préservés. Pour forcer la re-création : `WIKICHAT_TEAM_RESET=1 npm start`.
 
-## Désactiver
+## Activer / désactiver
 
-Pour ne PAS provisionner l'équipe : `WIKICHAT_AUTONOMOUS_TEAM=0 npm start`.
+- Activer : `WIKICHAT_AUTONOMOUS_TEAM=1 npm start`
+- Désactivé par défaut sans cette variable
+- Pour effacer une équipe déjà provisionnée : supprime `~/.wikichat/triggers.json` (ou utilise `delete_trigger` pour chaque `team-*`)
 
 ## Configurer manuellement une équipe sur mesure
 

@@ -17,8 +17,8 @@
  *   - clustering weekly (Sunday 03:00)
  *   - Librarian "digest mode" nightly (22:00) via broadcast
  *
- * To disable the auto-team: WIKICHAT_AUTONOMOUS_TEAM=0
- * To re-provision (overwrite): WIKICHAT_TEAM_RESET=1
+ * Opt-in only: set WIKICHAT_AUTONOMOUS_TEAM=1 to enable.
+ * To re-provision (overwrite existing): WIKICHAT_TEAM_RESET=1
  */
 
 import { registerTrigger, listTriggers } from "./triggers.mjs";
@@ -114,7 +114,10 @@ const RECURRING_JOBS = [
  * WIKICHAT_TEAM_RESET=1, in which case they're overwritten.
  */
 export function bootstrapAutonomousTeam() {
-  if (process.env.WIKICHAT_AUTONOMOUS_TEAM === "0") return { skipped: true };
+  // Opt-in: provisioning only happens if explicitly enabled. Default off
+  // because residents are real Claude Code processes — they consume tokens
+  // and shouldn't auto-start without the operator asking for them.
+  if (process.env.WIKICHAT_AUTONOMOUS_TEAM !== "1") return { skipped: true };
 
   const reset = process.env.WIKICHAT_TEAM_RESET === "1";
   const existing = new Set(listTriggers().map(t => t.id));
