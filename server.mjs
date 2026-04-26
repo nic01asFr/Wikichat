@@ -27,6 +27,7 @@ import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
+import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate } from "./src/cockpit.mjs";
 // [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -409,6 +410,21 @@ const transports = new Map(); // sessionId → { transport, server }
 // Dashboard & Game
 app.get("/dashboard", handleDashboardPage);
 app.get("/dashboard/events", handleDashboardEvents);
+
+// Phase 6 PR7 — Cockpit (5-panneaux)
+app.get("/cockpit", handleCockpitPage);
+app.get("/cockpit/data", handleCockpitData);
+app.get("/cockpit/events", handleCockpitEvents);
+app.post("/api/dispatch", express.json(), async (req, res) => {
+  try {
+    const { intent, context, prefer } = req.body || {};
+    if (!intent) return res.status(400).json({ error: "intent required" });
+    const result = await dispatchIntent({ intent, context, prefer, spawnedBy: "cockpit-ui" });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // [DISABLED] app.get("/game", handleGamePage);
 app.get("/style-guide.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "style-guide.html"))); });
 app.get("/concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "concepts.html"))); });
