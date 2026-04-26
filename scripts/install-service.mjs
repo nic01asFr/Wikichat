@@ -1,0 +1,138 @@
+#!/usr/bin/env node
+/**
+ * install-service.mjs — Install WikiChat as a user-level auto-start service.
+ *
+ * Detects OS and provisions the appropriate auto-start mechanism :
+ *   - Windows : Task Scheduler `OnLogon`
+ *   - macOS   : launchd LaunchAgent in ~/Library/LaunchAgents
+ *   - Linux   : systemd --user unit in ~/.config/systemd/user
+ *
+ * The installed service starts WikiChat as the current user when they log in.
+ * Symmetric uninstall available via `npm run uninstall-service`.
+ *
+ * Idempotent : re-running replaces the existing entry cleanly.
+ */
+
+import os from "os";
+import path from "path";
+import fs from "fs";
+import { execSync } from "child_process";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "..");
+const NODE_BIN = process.execPath;
+const SERVER_ENTRY = path.join(REPO_ROOT, "server.mjs");
+const TASK_NAME = "WikiChat";
+const SERVICE_LABEL = "com.wikichat";
+
+function fail(msg) { console.error(`❌ ${msg}`); process.exit(1); }
+function ok(msg) { console.log(`✅ ${msg}`); }
+
+function installWindows() {
+  // schtasks /Create /TN <name> /TR "<cmd>" /SC ONLOGON /RL HIGHEST /F
+  // /F overwrites if exists (idempotent).
+  const tr = `\\"${NODE_BIN}\\" \\"${SERVER_ENTRY}\\"`;
+  const cmd = `schtasks /Create /TN "${TASK_NAME}" /TR "${tr}" /SC ONLOGON /RL HIGHEST /F`;
+  try {
+    execSync(cmd, { stdio: "inherit", shell: "cmd.exe" });
+    ok(`Task Scheduler "${TASK_NAME}" installed (runs at user logon).`);
+    console.log(`  Edit/disable via: taskschd.msc`);
+    console.log(`  Or:               schtasks /Run  /TN ${TASK_NAME}`);
+  } catch (err) {
+    fail(`schtasks failed: ${err.message}`);
+  }
+}
+
+function installMacOS() {
+  const plistDir = path.join(os.homedir(), "Library", "LaunchAgents");
+  fs.mkdirSync(plistDir, { recursive: true });
+  const plistPath = path.join(plistDir, `${SERVICE_LABEL}.plist`);
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${SERVICE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${NODE_BIN}</string>
+    <string>${SERVER_ENTRY}</string>
+  </array>
+  <key>WorkingDirectory</key><string>${REPO_ROOT}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>${path.join(os.homedir(), ".wikichat", "stdout.log")}</string>
+  <key>StandardErrorPath</key><string>${path.join(os.homedir(), ".wikichat", "stderr.log")}</string>
+</dict>
+</plist>
+`;
+  fs.writeFileSync(plistPath, plist);
+  try {
+    // unload first (idempotent), then load
+    try { execSync(`launchctl unload "${plistPath}"`, { stdio: "ignore" }); } catch { /* not loaded yet */ }
+    execSync(`launchctl load "${plistPath}"`, { stdio: "inherit" });
+    ok(`LaunchAgent installed at ${plistPath}`);
+    console.log(`  Status: launchctl list | grep ${SERVICE_LABEL}`);
+  } catch (err) {
+    fail(`launchctl failed: ${err.message}`);
+  }
+}
+
+function installLinux() {
+  const unitDir = path.join(os.homedir(), ".config", "systemd", "user");
+  fs.mkdirSync(unitDir, { recursive: true });
+  const unitPath = path.join(unitDir, "wikichat.service");
+  const unit = `[Unit]
+Description=WikiChat — local multi-agent coordination service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${REPO_ROOT}
+ExecStart=${NODE_BIN} ${SERVER_ENTRY}
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:${path.join(os.homedir(), ".wikichat", "stdout.log")}
+StandardError=append:${path.join(os.homedir(), ".wikichat", "stderr.log")}
+
+[Install]
+WantedBy=default.target
+`;
+  fs.writeFileSync(unitPath, unit);
+  try {
+    execSync(`systemctl --user daemon-reload`, { stdio: "inherit" });
+    execSync(`systemctl --user enable --now wikichat.service`, { stdio: "inherit" });
+    ok(`systemd unit installed at ${unitPath}`);
+    console.log(`  Status: systemctl --user status wikichat`);
+    console.log(`  Logs:   journalctl --user -u wikichat -f`);
+  } catch (err) {
+    fail(`systemctl failed: ${err.message}`);
+  }
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
+if (!fs.existsSync(SERVER_ENTRY)) {
+  fail(`server.mjs not found at ${SERVER_ENTRY}. Run from the repo root.`);
+}
+
+// Ensure log dir exists
+fs.mkdirSync(path.join(os.homedir(), ".wikichat"), { recursive: true });
+
+console.log(`📦 Installing WikiChat auto-start service`);
+console.log(`   node:    ${NODE_BIN}`);
+console.log(`   server:  ${SERVER_ENTRY}`);
+console.log(`   platform: ${process.platform}`);
+console.log("");
+
+switch (process.platform) {
+  case "win32":  installWindows();  break;
+  case "darwin": installMacOS();    break;
+  case "linux":  installLinux();    break;
+  default: fail(`Unsupported platform: ${process.platform}. See docs/setup/autostart.md for manual setup.`);
+}
+
+console.log("");
+console.log(`🌐 Once started, the service listens on http://localhost:3777`);
+console.log(`📊 Dashboard:                       http://localhost:3777/dashboard`);
+console.log(`🛑 Uninstall:                       npm run uninstall-service`);
