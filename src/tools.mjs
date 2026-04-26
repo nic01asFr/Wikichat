@@ -1050,6 +1050,60 @@ export function registerTools(server, sessionId) {
   // respawn handled by watchdog auto-respawn
   // (removed: respawn_session tool — watchdog handles daemon respawn automatically)
 
+  // ── kill_spawn — owner-only kill of a tracked spawn ─────────────────────────
+  // Governance rule:
+  //   - You can kill a spawn you launched (entry.spawned_by == your name)
+  //   - You can kill any spawn if you are the principal agent (env
+  //     WIKICHAT_PRINCIPAL_AGENT matches your name, default "Claude-Code")
+  //   - Workers spawned by triggers (entry.spawned_by starts with "trigger:")
+  //     are owned by the wikichat service — only the principal agent can kill
+  //     them
+  server.tool(
+    "kill_spawn",
+    "Tuer un spawn que tu possèdes. Tu ne peux killer que tes propres spawns, sauf si tu es l'agent principal (WIKICHAT_PRINCIPAL_AGENT).",
+    { name: z.string().describe("Nom de l'agent à tuer") },
+    async ({ name }) => {
+      const caller = getSessionName(sessionId);
+      const principalName = process.env.WIKICHAT_PRINCIPAL_AGENT || "Claude-Code";
+      const isPrincipal = caller === principalName;
+
+      const reg = loadSpawnRegistry();
+      const entry = reg.find(e => e.name === name);
+      if (!entry) return txt(`❌ "${name}" introuvable dans le spawn registry.`);
+      if (!entry.pid) return txt(`❌ "${name}" n'a pas de PID enregistré.`);
+
+      const isWorker = typeof entry.spawned_by === "string" && entry.spawned_by.startsWith("trigger:");
+      const isOwner = entry.spawned_by === caller;
+
+      if (isWorker && !isPrincipal) {
+        return txt(`🚫 "${name}" est un worker WikiChat (spawned_by: ${entry.spawned_by}). Seul l'agent principal (${principalName}) peut le killer.`);
+      }
+      if (!isOwner && !isPrincipal) {
+        return txt(`🚫 "${name}" est owned par ${entry.spawned_by}, pas par toi (${caller}).`);
+      }
+
+      try {
+        process.kill(entry.pid, "SIGTERM");
+        upsertSpawnRegistry({
+          ...entry,
+          status: "ended",
+          ended_at: new Date().toISOString(),
+          ended_reason: `killed_by:${caller}`,
+        });
+        return txt(`🗑️  "${name}" (pid ${entry.pid}) killed par ${caller}.`);
+      } catch (err) {
+        // Process probably already gone — reconcile registry
+        upsertSpawnRegistry({
+          ...entry,
+          status: "ended",
+          ended_at: new Date().toISOString(),
+          ended_reason: "already_dead",
+        });
+        return txt(`⚠️ "${name}" déjà mort (${err.code || err.message}). Registry mis à jour.`);
+      }
+    }
+  );
+
   server.tool("list_spawned", "Lister les sessions spawnées par ce client.", {}, async () => {
     const callerName = getSessionName(sessionId);
     const mine = loadSpawnRegistry().filter(e => e.spawned_by === callerName);
