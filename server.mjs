@@ -34,6 +34,7 @@ import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.m
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
+import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 
@@ -58,6 +59,7 @@ configureTriggers({
   budgetCheckFn: checkBudget,
 });
 loadTriggers();    // Restore persisted triggers
+reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
 const teamResult = bootstrapAutonomousTeam();
 if (teamResult.provisioned > 0) {
   console.log(`[WikiChat] Autonomous team: ${teamResult.provisioned}/${teamResult.total} triggers provisioned`);
@@ -105,6 +107,7 @@ function gracefulShutdown(signal) {
   try { flushSpawnRegistry(); } catch { /* */ }
   try { flushMemories(); } catch { /* */ }
   try { shutdownTriggers(); } catch { /* */ }
+  try { shutdownDaemons(); } catch { /* */ }
 
   console.log("[WikiChat] State saved. Exiting.");
   process.exit(0);
@@ -782,6 +785,12 @@ app.get("/api/health", (_req, res) => {
     spawnRegistry: loadSpawnRegistry().length,
     budget: { current: currentLoad(), max: parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10") },
   });
+});
+
+// Admin: kill all running daemons + reconcile registry. Use when something feels off.
+app.post("/api/admin/cleanup", (_req, res) => {
+  try { res.json(fullCleanup()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Listen ─────────────────────────────────────────────────────────────────────
