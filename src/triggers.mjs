@@ -38,6 +38,8 @@ const _cronTasks = new Map();
 let _spawnFn = null;
 /** Optional budget checker. */
 let _budgetCheckFn = null;
+/** Optional routine runner — set by configureTriggers if available. */
+let _routineFn = null;
 
 let _saveTimer = null;
 function _saveDebounced() {
@@ -61,9 +63,10 @@ function _isDisabled() {
  *   spawnFn: (params) => Promise<{ success, ... }>  — handles spawn_session action
  *   budgetCheckFn: () => null | { error, current, max }
  */
-export function configureTriggers({ spawnFn, budgetCheckFn }) {
+export function configureTriggers({ spawnFn, budgetCheckFn, routineFn }) {
   _spawnFn = spawnFn || null;
   _budgetCheckFn = budgetCheckFn || null;
+  _routineFn = routineFn || null;
 }
 
 export function loadTriggers() {
@@ -205,6 +208,17 @@ async function _runAction(t, source) {
     sysMsg(action.params?.channel || "coordination",
       `🔔 [trigger ${t.id}] ${action.params?.content || ""}`);
     return { ok: true };
+  }
+  if (action.type === "run_routine") {
+    if (!_routineFn) return { ok: false, reason: "routine_runner_not_configured" };
+    try {
+      const res = await _routineFn(action.params?.id, action.params?.params || {}, {
+        spawnedBy: `trigger:${t.id}:${source}`,
+      });
+      return { ok: !res.error && res.status !== "failed", detail: res };
+    } catch (err) {
+      return { ok: false, reason: "routine_threw", detail: err.message };
+    }
   }
   return { ok: false, reason: `unknown_action:${action.type}` };
 }

@@ -33,7 +33,7 @@ import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/reg
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
-import { configureRoutines, loadRoutines } from "./src/routines.mjs";
+import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
 import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } from "./src/dispatch.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
@@ -59,6 +59,7 @@ configureTriggers({
     return spawnHeadless(repo, params.prompt || "register puis attends des instructions.", params);
   },
   budgetCheckFn: checkBudget,
+  // routineFn is wired below after configureRoutines (forward via lazy import)
 });
 loadTriggers();    // Restore persisted triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
@@ -120,6 +121,18 @@ configureRoutines({
   },
 });
 loadRoutines();   // Restore persisted routines
+
+// Now that routines is loaded, finish wiring triggers (so trigger action
+// type "run_routine" can call into the routines engine).
+configureTriggers({
+  spawnFn: async (params) => {
+    const repo = params.repo_path || process.cwd();
+    if (params.mode === "daemon") return spawnDaemon(repo, params);
+    return spawnHeadless(repo, params.prompt || "register puis attends des instructions.", params);
+  },
+  budgetCheckFn: checkBudget,
+  routineFn: (id, params, opts) => runRoutine(id, params, opts),
+});
 
 // Configure dispatch — reuse the spawn callback from routines, plus DM helper
 configureDispatch({
