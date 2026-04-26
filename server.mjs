@@ -33,6 +33,7 @@ import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/reg
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
+import { configureRoutines, loadRoutines } from "./src/routines.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
 import { generateMap } from "./src/map-generator.mjs";
@@ -60,6 +61,64 @@ configureTriggers({
 });
 loadTriggers();    // Restore persisted triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
+
+// Configure routines engine — wire spawn / broadcast / pollTicket / shareArtifact
+configureRoutines({
+  spawn: async (params) => {
+    const repo = params.repo_path || process.cwd();
+    const opts = { ...params, parentDepth: params.parentDepth ?? 0 };
+    const ticketId = randomUUID().slice(0, 8);
+    if (params.mode === "daemon") {
+      const r = spawnDaemon(repo, opts);
+      return { success: r.success, pid: r.pid, error: r.error, ticketId };
+    }
+    // headless: fire-and-forget but return ticket immediately
+    state.spawnTickets.set(ticketId, {
+      id: ticketId, name: params.name, mode: "headless", repo,
+      spawnedBy: opts.spawnedBy, spawnerId: null,
+      status: "running", createdAt: new Date(),
+      completedAt: null, result: null,
+    });
+    spawnHeadless(repo, params.prompt || params.task || "register puis exécute la mission.", opts).then(res => {
+      const t = state.spawnTickets.get(ticketId);
+      if (t) {
+        t.status = res.success ? "completed" : "failed";
+        t.completedAt = new Date();
+        t.result = { success: res.success, exitCode: res.exitCode };
+      }
+      notifyWaiters("__tickets__", null);
+    }).catch(() => {});
+    return { success: true, ticketId };
+  },
+  broadcast: ({ channel, content }) => {
+    const m = sysMsg(channel || "coordination", content);
+    notifyWaiters(channel || "coordination", null);
+    return m;
+  },
+  pollTicket: async (ticketId, timeoutS = 120) => {
+    const t = state.spawnTickets.get(ticketId);
+    if (!t) return { error: "ticket not found", ticketId };
+    if (t.status === "completed" || t.status === "failed") return { ...t };
+    // Poll with timeout
+    const deadline = Date.now() + (timeoutS * 1000);
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500));
+      if (t.status === "completed" || t.status === "failed") return { ...t };
+    }
+    return { ...t, timeout: true };
+  },
+  shareArtifact: ({ channel, title, content }) => {
+    const m = pushMessage({
+      id: randomUUID(), from: "routine", fromName: "🤖 Routine",
+      channel: channel || "coordination",
+      content: `📎 ${title}\n${"─".repeat(40)}\n${content}\n${"─".repeat(40)}`,
+      type: "artifact", timestamp: new Date(),
+    });
+    notifyWaiters(channel || "coordination", null);
+    return m;
+  },
+});
+loadRoutines();   // Restore persisted routines
 const teamResult = bootstrapAutonomousTeam();
 if (teamResult.provisioned > 0) {
   console.log(`[WikiChat] Autonomous team: ${teamResult.provisioned}/${teamResult.total} triggers provisioned`);

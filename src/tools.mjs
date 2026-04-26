@@ -28,6 +28,7 @@ import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, delete
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
+import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
 
@@ -1170,6 +1171,75 @@ export function registerTools(server, sessionId) {
         `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
         `  Relancez poll_ticket("${ticket_id}") pour continuer à attendre.`
       );
+    }
+  );
+
+  // ══ ROUTINES (Phase 6) ══════════════════════════════════════════════════════
+
+  server.tool(
+    "register_routine",
+    "Enregistre un workflow nommé multi-étapes (spawn, broadcast, wait, summarize, sleep). Idempotent par run_key. Persisté.",
+    {
+      id: z.string().describe("Identifiant stable de la routine"),
+      description: z.string().optional(),
+      steps: z.any().describe("Tableau d'étapes [{action, params}], avec interpolation {param} et {stepN.field}"),
+      params: z.any().optional().describe("Schéma des paramètres attendus"),
+      cache_seconds: z.number().optional(),
+    },
+    async (spec) => {
+      try {
+        const def = registerRoutine(spec);
+        return txt(`✅ Routine "${def.id}" enregistrée (${def.steps.length} step(s)).`);
+      } catch (err) {
+        return txt(`❌ ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "list_routines",
+    "Lister les routines disponibles avec stats (run_count, last_run).",
+    {},
+    async () => {
+      const rs = listRoutines();
+      if (rs.length === 0) return txt("(aucune routine)");
+      const lines = rs.map(r =>
+        `${r.enabled ? "🟢" : "⚫"} ${r.id} (${r.steps.length} steps) — ${r.description || "(no desc)"}\n` +
+        `   ran ${r.run_count}× | last: ${r.last_run_at || "never"} (${r.last_run_status || "-"})`
+      );
+      return txt(`📋 ${rs.length} routine(s):\n\n${lines.join("\n\n")}`);
+    }
+  );
+
+  server.tool(
+    "run_routine",
+    "Exécuter une routine avec des paramètres. Idempotent si run_key fourni (re-run dans la fenêtre de cache renvoie le résultat précédent).",
+    {
+      id: z.string(),
+      params: z.any().optional(),
+      run_key: z.string().optional().describe("Clé d'idempotence — réexécuter avec la même clé renvoie le résultat caché si dans cache_seconds"),
+    },
+    async ({ id, params, run_key }) => {
+      const callerName = getSessionName(sessionId);
+      const result = await runRoutine(id, params || {}, {
+        run_key, spawnedBy: callerName, routineId: id,
+      });
+      if (result.error) return txt(`❌ ${result.error}`);
+      const summary = `runId: ${result.runId}\nstatus: ${result.status}\nduration: ${result.durationMs}ms\nsteps: ${result.steps.length}${result.cached ? " (cached)" : ""}`;
+      const stepLines = result.steps.map(s =>
+        `  ${s.error ? "❌" : "✓"} step ${s.step} (${s.action}): ${s.error || JSON.stringify(s.output).slice(0, 100)}`
+      ).join("\n");
+      return txt(`🚀 Routine "${id}":\n${summary}\n\n${stepLines}`);
+    }
+  );
+
+  server.tool(
+    "delete_routine",
+    "Supprimer une routine.",
+    { id: z.string() },
+    async ({ id }) => {
+      const ok = deleteRoutine(id);
+      return txt(ok ? `🗑️  Supprimé: ${id}` : `❌ Routine "${id}" introuvable.`);
     }
   );
 
