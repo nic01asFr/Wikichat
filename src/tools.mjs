@@ -29,6 +29,7 @@ import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./s
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
+import { dispatch as dispatchIntent, readDispatchLog, recordOutcome } from "./dispatch.mjs";
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
 
@@ -1171,6 +1172,58 @@ export function registerTools(server, sessionId) {
         `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
         `  Relancez poll_ticket("${ticket_id}") pour continuer à attendre.`
       );
+    }
+  );
+
+  // ══ DISPATCH (Phase 6) ══════════════════════════════════════════════════════
+
+  server.tool(
+    "dispatch",
+    "Routage par intent : trouve le meilleur agent live pour exécuter la mission, ou spawn ad-hoc. Renvoie {strategy, dispatched_to, ticket_id?, score, ranked}.",
+    {
+      intent: z.string().describe("Description en langage naturel de la mission"),
+      context: z.any().optional().describe("Contexte structuré (repo, commit, file, …)"),
+      prefer: z.string().optional().describe("Nom d'agent préféré (boost +0.2 si présent)"),
+    },
+    async ({ intent, context, prefer }) => {
+      const callerName = getSessionName(sessionId);
+      const result = await dispatchIntent({ intent, context, prefer, spawnedBy: callerName });
+      const lines = [
+        `🎯 Dispatch ${result.dispatch_id}: ${result.strategy}`,
+        result.dispatched_to ? `→ ${result.dispatched_to}` : "→ (no executor)",
+        result.score !== undefined ? `score: ${result.score.toFixed(3)} (cap=${result.breakdown.capability.toFixed(2)} × track=${result.breakdown.trackRecord.toFixed(2)} × avail=${result.breakdown.availability.toFixed(2)})` : "",
+        result.ticket_id ? `ticket: ${result.ticket_id}` : "",
+        result.ranked && result.ranked.length > 0 ? `\nClassement:\n${result.ranked.map(r => `  - ${r.name}: ${r.score.toFixed(3)}`).join("\n")}` : "",
+      ].filter(Boolean);
+      return txt(lines.join("\n"));
+    }
+  );
+
+  server.tool(
+    "explain_dispatch",
+    "Lire les N derniers dispatchs (audit + apprentissage).",
+    { limit: z.number().optional() },
+    async ({ limit }) => {
+      const log = readDispatchLog(limit ?? 10);
+      if (log.length === 0) return txt("(aucun dispatch enregistré)");
+      const lines = log.map(d =>
+        `[${d.startedAt}] ${d.dispatch_id} → ${d.strategy} (${d.dispatched_to || "—"})\n  intent: "${d.intent.slice(0, 80)}"`
+      );
+      return txt(`📊 ${log.length} dispatch(s) récents:\n\n${lines.join("\n\n")}`);
+    }
+  );
+
+  server.tool(
+    "report_dispatch_outcome",
+    "Reporter le succès/échec d'une mission dispatchée pour alimenter le track record. À appeler par l'agent qui a exécuté la mission.",
+    {
+      capabilities: z.array(z.string()).describe("Liste des capabilities exercées (ex: ['review','typescript'])"),
+      success: z.boolean(),
+    },
+    async ({ capabilities, success }) => {
+      const callerName = getSessionName(sessionId);
+      recordOutcome({ agentName: callerName, capabilities, success });
+      return txt(`📈 Track record mis à jour pour "${callerName}" (${capabilities.length} capabilities, ${success ? "✅" : "❌"})`);
     }
   );
 
