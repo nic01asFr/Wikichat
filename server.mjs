@@ -37,6 +37,7 @@ import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs"
 import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } from "./src/dispatch.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
+import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 
@@ -172,6 +173,27 @@ configureDispatch({
   },
 });
 loadDispatchRecord();
+
+// Phase 6 PR6 — start dormant gate watcher + wire wake/sleep callbacks.
+// On wake: re-fire lifecycle triggers (covers the case where principal arrives
+// after server boot). On sleep: log and let watchdog/quota mechanisms do the
+// rest — no force-kill of residents (graceful drift, daemons can finish
+// in-flight work).
+onWake(() => {
+  console.log("[Dormant] WAKE — firing lifecycle triggers");
+  runLifecycleTriggers().catch(() => {});
+});
+onSleep(() => {
+  console.log("[Dormant] SLEEP — triggers will refuse to fire until wake");
+});
+startDormantWatch();
+
+// Admin endpoint to override manually
+app.post("/api/admin/dormant/override", express.json(), (req, res) => {
+  const { value } = req.body || {};
+  res.json(setManualOverride(value === null || value === undefined ? null : !!value));
+});
+app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
 
 // Channel #dispatch : every user message becomes a dispatch automatically.
 // Low-latency hook: when a non-system message lands on #dispatch, fire dispatch.

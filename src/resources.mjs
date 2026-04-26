@@ -20,6 +20,7 @@ import {
 } from "./state.mjs";
 import { recall } from "./identity.mjs";
 import { loadSnapshot } from "./persistence.mjs";
+import { status as dormantStatus } from "./dormant.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -109,6 +110,35 @@ export function registerResources(server, sessionId) {
       ].filter(Boolean).join("\n");
 
       return { contents: [{ uri: "wikichat://briefing", text, mimeType: "text/markdown" }] };
+    }
+  );
+
+  // ── wikichat://principal — Maire status (active / dormant / not-set) ──────
+
+  server.resource(
+    "principal",
+    "wikichat://principal",
+    { description: "État du Maire (agent principal) : connecté, en grâce, ou absent — décide si WikiChat est actif" },
+    async () => {
+      const s = dormantStatus();
+      const text = [
+        `# Principal Agent Status`,
+        ``,
+        `- Name expected: **${s.principalName}**`,
+        `- Live: ${s.principalLive ? "✅ connecté" : "⚫ absent"}`,
+        s.inGracePeriod ? `- Grace period active: ${Math.round(s.gracePeriodMs/1000)}s window, ${s.secondsSincePrincipal}s since last seen` : "",
+        ``,
+        `## Service state`,
+        `- Active: **${s.active ? "🟢 ACTIVE" : "💤 DORMANT"}**`,
+        `- Manual override: ${s.manualOverride === null ? "(auto)" : s.manualOverride ? "forced active" : "forced dormant"}`,
+        `- Registry has projects: ${s.registryHasProjects ? "✅" : "⚫ empty"}`,
+        ``,
+        `## Gates`,
+        `- Principal gate: ${s.gates.principal ? "on" : "off"}`,
+        `- Registry gate: ${s.gates.registry ? "on" : "off"}`,
+        `- Dormant disabled (legacy): ${s.dormantDisabled ? "yes" : "no"}`,
+      ].filter(Boolean).join("\n");
+      return { contents: [{ uri: "wikichat://principal", text, mimeType: "text/markdown" }] };
     }
   );
 

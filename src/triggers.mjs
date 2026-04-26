@@ -27,6 +27,7 @@ import { randomUUID } from "crypto";
 import cron from "node-cron";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { state, sysMsg } from "./state.mjs";
+import { isActive } from "./dormant.mjs";
 
 const TRIGGERS_FILE = path.join(os.homedir(), ".wikichat", "triggers.json");
 
@@ -140,6 +141,7 @@ export async function fireTrigger(id, { force = false, source = "manual" } = {})
   const t = _triggers.get(id);
   if (!t) return { ok: false, reason: "not_found" };
   if (!force && _isDisabled()) return { ok: false, reason: "engine_disabled" };
+  if (!force && !isActive()) return { ok: false, reason: "dormant" };
   if (!force && !_quotaOk(t)) return { ok: false, reason: "quota" };
   if (!force && _onCooldown(t)) return { ok: false, reason: "cooldown" };
 
