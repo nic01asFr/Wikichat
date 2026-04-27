@@ -27,7 +27,7 @@ import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
-import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate } from "./src/cockpit.mjs";
+import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
 // [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -415,6 +415,17 @@ app.get("/dashboard/events", handleDashboardEvents);
 app.get("/cockpit", handleCockpitPage);
 app.get("/cockpit/data", handleCockpitData);
 app.get("/cockpit/events", handleCockpitEvents);
+app.get("/cockpit/agent/:name", handleAgentInspector);
+app.get("/cockpit/routine/:id", handleRoutineInspector);
+app.get("/cockpit/project/:slug", handleProjectView);
+app.get("/cockpit/decisions", handleDecisionsLog);
+app.post("/api/routines/run", express.json(), async (req, res) => {
+  try {
+    const { id, params } = req.body || {};
+    const result = await runRoutine(id, params || {}, { spawnedBy: "cockpit-ui" });
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 app.post("/api/dispatch", express.json(), async (req, res) => {
   try {
     const { intent, context, prefer } = req.body || {};

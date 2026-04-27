@@ -13,11 +13,13 @@
  */
 
 import { state, getChannelCount } from "./state.mjs";
-import { listRoutines } from "./routines.mjs";
+import { listRoutines, getRoutine } from "./routines.mjs";
 import { listTriggers } from "./triggers.mjs";
-import { readDispatchLog } from "./dispatch.mjs";
+import { readDispatchLog, getRecord as getDispatchRecord } from "./dispatch.mjs";
 import { status as dormantStatus } from "./dormant.mjs";
 import { currentLoad, quotaSnapshot } from "./sampler.mjs";
+import { recall } from "./identity.mjs";
+import { loadSnapshot, loadSpawnRegistry } from "./persistence.mjs";
 
 const _sseClients = new Set();
 
@@ -109,6 +111,190 @@ export function pushCockpitUpdate() {
   for (const r of _sseClients) {
     try { r.write(payload); } catch { _sseClients.delete(r); }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drill-down handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function handleAgentInspector(req, res) {
+  const name = req.params.name;
+  const live = [...state.sessions.values()].find(s => s.name === name);
+  const snapshot = loadSnapshot(name);
+  const memories = recall(name) || {};
+  const spawned = loadSpawnRegistry().filter(e => e.name === name);
+  const trackRecord = getDispatchRecord()[name] || {};
+  const messages = state.messages.filter(m => m.fromName === name).slice(-30);
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(_drillHtml(`Agent: ${name}`, [
+    _section("Live status", live ? [
+      `<div><strong>Status:</strong> ${live.availability || "—"}</div>`,
+      `<div><strong>Role:</strong> ${live.role || "—"}</div>`,
+      `<div><strong>Type:</strong> ${live.agent_type || "—"}</div>`,
+      `<div><strong>Project:</strong> ${live.current_project || "—"}</div>`,
+      `<div><strong>Task:</strong> ${live.current_task || "—"}</div>`,
+      `<div><strong>Last seen:</strong> ${live.lastSeen || "—"}</div>`,
+    ] : ['<div class="muted">⚫ Agent not currently connected.</div>']),
+    snapshot ? _section("Last snapshot", [
+      `<div class="muted">Saved: ${snapshot.savedAt}</div>`,
+      `<div><strong>Skills:</strong> ${(snapshot.skills || []).join(", ") || "—"}</div>`,
+      `<div><strong>Last interlocutors:</strong> ${(snapshot.last_interlocutors || []).join(", ") || "—"}</div>`,
+    ]) : "",
+    _section(`Memories (${Object.keys(memories).length})`,
+      Object.keys(memories).length === 0 ? ['<div class="muted">(empty)</div>'] :
+      Object.entries(memories).map(([k, v]) => `<div class="row"><strong>${_esc(k)}</strong>: ${_esc(String(v).slice(0, 200))}</div>`)
+    ),
+    _section("Track record (dispatch)",
+      Object.keys(trackRecord).length === 0 ? ['<div class="muted">(no record yet)</div>'] :
+      Object.entries(trackRecord).map(([cap, st]) => `<div class="row"><span>${_esc(cap)}</span><span>✓ ${st.ok || 0} / ✗ ${st.fail || 0}</span></div>`)
+    ),
+    _section(`Spawn registry entries (${spawned.length})`,
+      spawned.length === 0 ? ['<div class="muted">(no spawns)</div>'] :
+      spawned.map(e => `<div class="row tiny"><span>${e.mode || "?"} • ${e.spawned_by || "?"}</span><span class="muted">${e.status || "?"} • ${e.spawned_at?.slice(0, 19) || "?"}</span></div>`)
+    ),
+    _section(`Recent messages (${messages.length})`,
+      messages.length === 0 ? ['<div class="muted">(none)</div>'] :
+      messages.slice().reverse().map(m => `<div class="item"><span class="tag">${m.channel || "dm"}</span>${_esc(m.content.slice(0, 200))}<div class="tiny muted">${m.timestamp}</div></div>`)
+    ),
+  ]));
+}
+
+export function handleRoutineInspector(req, res) {
+  const id = req.params.id;
+  const r = getRoutine(id);
+  if (!r) { res.status(404).send(_drillHtml(id, [`<div class="panel">Routine not found.</div>`])); return; }
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(_drillHtml(`Routine: ${id}`, [
+    _section("Definition", [
+      `<div><strong>Description:</strong> ${_esc(r.description || "—")}</div>`,
+      `<div><strong>Steps:</strong> ${r.steps?.length || 0}</div>`,
+      `<div><strong>Cache:</strong> ${r.cache_seconds || 0}s</div>`,
+      `<div><strong>Created:</strong> ${r.created_at}</div>`,
+      `<div><strong>Updated:</strong> ${r.updated_at}</div>`,
+    ]),
+    _section("Stats", [
+      `<div><strong>Run count:</strong> ${r.run_count || 0}</div>`,
+      `<div><strong>Last run:</strong> ${r.last_run_at || "never"}</div>`,
+      `<div><strong>Last status:</strong> ${r.last_run_status || "—"}</div>`,
+      `<div><strong>Enabled:</strong> ${r.enabled ? "yes" : "no"}</div>`,
+    ]),
+    _section("Steps", (r.steps || []).map((s, i) =>
+      `<div class="item"><strong>step ${i}: ${_esc(s.action)}</strong><pre style="margin:4px 0 0;font-size:11px">${_esc(JSON.stringify(s.params, null, 2))}</pre></div>`
+    )),
+    _section("Run", [
+      `<div class="dispatch-form">`,
+      `<input id="routine-params" placeholder='Params JSON (ex: {"project":"panoramax3d"})' />`,
+      `<button onclick="runRoutine('${_esc(id)}')">Run</button>`,
+      `</div><div id="routine-result" class="tiny muted" style="margin-top:8px"></div>`,
+      `<script>
+async function runRoutine(routineId) {
+  const params = document.getElementById('routine-params').value.trim();
+  let parsed = {};
+  if (params) { try { parsed = JSON.parse(params); } catch (e) { document.getElementById('routine-result').textContent = '❌ JSON invalide'; return; } }
+  document.getElementById('routine-result').textContent = '...';
+  try {
+    const r = await fetch('/api/routines/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:routineId, params:parsed}) });
+    const j = await r.json();
+    document.getElementById('routine-result').textContent = JSON.stringify(j).slice(0, 500);
+  } catch(e) { document.getElementById('routine-result').textContent = '❌ ' + e.message; }
+}
+</script>`,
+    ]),
+  ]));
+}
+
+export function handleProjectView(req, res) {
+  const slug = req.params.slug;
+  const project = state.projects.get(slug) || [...state.projects.values()].find(p => p.slug === slug);
+  if (!project) { res.status(404).send(_drillHtml(slug, [`<div class="panel">Project not found.</div>`])); return; }
+
+  const activeAgents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === project.name.toLowerCase());
+  const tasks = [...(project.tasks?.values() || [])];
+  const projectMessages = state.messages.filter(m =>
+    String(m.content).toLowerCase().includes(project.name.toLowerCase()) ||
+    String(m.content).toLowerCase().includes(project.slug || "")
+  ).slice(-20);
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(_drillHtml(`Project: ${project.name}`, [
+    _section("Info", [
+      `<div><strong>Slug:</strong> ${project.slug || "—"}</div>`,
+      `<div><strong>Path:</strong> <code>${_esc(project.path || "—")}</code></div>`,
+      `<div><strong>Status:</strong> ${project.status || "—"}</div>`,
+      project.tags?.length ? `<div><strong>Tags:</strong> ${project.tags.join(", ")}</div>` : "",
+    ]),
+    _section(`Active agents (${activeAgents.length})`,
+      activeAgents.length === 0 ? ['<div class="muted">(none working on this project)</div>'] :
+      activeAgents.map(a => `<div class="row"><a href="/cockpit/agent/${_esc(a.name)}">${_esc(a.name)}</a><span class="muted">${a.role || ""} ${a.current_task ? "• " + _esc(a.current_task) : ""}</span></div>`)
+    ),
+    _section(`Tasks (${tasks.length})`,
+      tasks.length === 0 ? ['<div class="muted">(none)</div>'] :
+      tasks.map(t => `<div class="row"><span>${_esc(t.id || "?")} <span class="muted">— ${_esc(t.description || "")}</span></span><span class="muted">${t.status || "?"}${t.claimedBy ? " • " + _esc(t.claimedBy) : ""}</span></div>`)
+    ),
+    _section(`Mentions in messages (${projectMessages.length})`,
+      projectMessages.length === 0 ? ['<div class="muted">(none)</div>'] :
+      projectMessages.slice().reverse().map(m => `<div class="item"><span class="tag">${m.channel || "dm"}</span><strong>${m.fromName}</strong>: ${_esc(m.content.slice(0, 200))}<div class="tiny muted">${m.timestamp}</div></div>`)
+    ),
+  ]));
+}
+
+export function handleDecisionsLog(_req, res) {
+  const decisions = state.messages.filter(m => m.channel === "decisions").slice(-100);
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(_drillHtml("Decisions log", [
+    _section(`${decisions.length} decisions`,
+      decisions.length === 0 ? ['<div class="muted">(none)</div>'] :
+      decisions.slice().reverse().map(m => `<div class="item"><strong>${m.fromName}</strong> <span class="tiny muted">${m.timestamp}</span><div style="margin-top:4px">${_esc(m.content)}</div></div>`)
+    ),
+  ]));
+}
+
+// HTML helpers
+function _esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function _section(title, contentArr) {
+  return `<div class="panel"><h2>${_esc(title)}</h2>${(contentArr || []).join("")}</div>`;
+}
+function _drillHtml(title, panels) {
+  return `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>${_esc(title)} — WikiChat</title>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; }
+* { box-sizing: border-box; }
+body { margin:0; padding:14px; font: 13px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+header { display:flex; justify-content:space-between; align-items:baseline; padding-bottom:12px; border-bottom:1px solid var(--border); margin-bottom:14px; }
+header h1 { font-size:18px; margin:0; font-weight:600; }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:12px; }
+.panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 8px; }
+.row { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed var(--border); }
+.row:last-child { border-bottom:none; }
+.muted { color: var(--muted); }
+.tiny { font-size:11px; }
+.item { padding:6px 0; border-bottom:1px dashed var(--border); }
+.tag { display:inline-block; padding:1px 6px; border-radius:3px; background:var(--bg); border:1px solid var(--border); font-size:10px; color:var(--muted); margin-right:6px; }
+button { background:var(--accent); color:#fff; border:none; padding:5px 12px; border-radius:4px; cursor:pointer; font-size:12px; }
+input { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:4px; font-size:12px; flex:1; }
+.dispatch-form { display:flex; gap:6px; }
+a { color: var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); padding:2px 4px; border-radius:3px; font-size:12px; }
+pre { padding: 8px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>${_esc(title)}</h1>
+  <a href="/cockpit">← Cockpit</a>
+</header>
+${panels.join("\n")}
+</body>
+</html>`;
 }
 
 function _html() {
