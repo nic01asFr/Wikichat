@@ -26,13 +26,20 @@ const SERVER_ENTRY = path.join(REPO_ROOT, "server.mjs");
 const TASK_NAME = "WikiChat";
 const SERVICE_LABEL = "com.wikichat";
 
+// CLI flag : --with-team activates the autonomous team (Sentinel/Librarian/Orchestrator)
+// at boot. Daemons stay dormant until a named session registers (dormant gate).
+const WITH_TEAM = process.argv.includes("--with-team");
+
 function fail(msg) { console.error(`❌ ${msg}`); process.exit(1); }
 function ok(msg) { console.log(`✅ ${msg}`); }
 
 function installWindows() {
   // schtasks /Create /TN <name> /TR "<cmd>" /SC ONLOGON /RL HIGHEST /F
   // /F overwrites if exists (idempotent).
-  const tr = `\\"${NODE_BIN}\\" \\"${SERVER_ENTRY}\\"`;
+  // --with-team : prepend `cmd /c set WIKICHAT_AUTONOMOUS_TEAM=1 && ...`
+  const tr = WITH_TEAM
+    ? `cmd /c set WIKICHAT_AUTONOMOUS_TEAM=1 ^&^& \\"${NODE_BIN}\\" \\"${SERVER_ENTRY}\\"`
+    : `\\"${NODE_BIN}\\" \\"${SERVER_ENTRY}\\"`;
   const cmd = `schtasks /Create /TN "${TASK_NAME}" /TR "${tr}" /SC ONLOGON /RL HIGHEST /F`;
   try {
     execSync(cmd, { stdio: "inherit", shell: "cmd.exe" });
@@ -60,7 +67,9 @@ function installMacOS() {
   </array>
   <key>WorkingDirectory</key><string>${REPO_ROOT}</string>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><false/>
+  <key>KeepAlive</key><false/>${WITH_TEAM ? `
+  <key>EnvironmentVariables</key>
+  <dict><key>WIKICHAT_AUTONOMOUS_TEAM</key><string>1</string></dict>` : ""}
   <key>StandardOutPath</key><string>${path.join(os.homedir(), ".wikichat", "stdout.log")}</string>
   <key>StandardErrorPath</key><string>${path.join(os.homedir(), ".wikichat", "stderr.log")}</string>
 </dict>
@@ -88,7 +97,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${REPO_ROOT}
+WorkingDirectory=${REPO_ROOT}${WITH_TEAM ? `
+Environment="WIKICHAT_AUTONOMOUS_TEAM=1"` : ""}
 ExecStart=${NODE_BIN} ${SERVER_ENTRY}
 Restart=on-failure
 RestartSec=5
@@ -123,6 +133,7 @@ console.log(`📦 Installing WikiChat auto-start service`);
 console.log(`   node:    ${NODE_BIN}`);
 console.log(`   server:  ${SERVER_ENTRY}`);
 console.log(`   platform: ${process.platform}`);
+console.log(`   team:     ${WITH_TEAM ? "ENABLED (Sentinel/Librarian/Orchestrator daemons gated by dormant mode)" : "off (re-run with --with-team to enable)"}`);
 console.log("");
 
 switch (process.platform) {

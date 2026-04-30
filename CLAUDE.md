@@ -7,13 +7,42 @@
 ## Commands
 
 ```bash
-npm start                    # Start server (localhost:3777)
+npm start                    # Start server (localhost:3777, dormant team)
+npm run start:team           # Start server + autonomous team (Sentinel/Librarian/Orchestrator daemons)
 npm run dev                  # Start with auto-reload
 node test-e2e.mjs            # E2E tests (server must be running)
 PORT=3777 HOST=127.0.0.1 npm start  # Override defaults
 ```
 
 Dashboard: `http://localhost:3777/dashboard`
+
+## Background service (recommandé)
+
+Le service est conçu pour tourner en tâche de fond, **dormant à 0% CPU** quand
+personne ne l'utilise, et qui s'éveille automatiquement quand tu ouvres Claude
+Code. Le boot est géré par l'OS (logon Windows / launchd macOS / systemd-user
+Linux).
+
+```bash
+node scripts/install-service.mjs --with-team   # auto-start au logon, team activée
+node scripts/uninstall-service.mjs             # désinstaller
+```
+
+Cycle de vie automatique :
+1. **Allumage machine** → service démarré, dormant (0% CPU, triggers cron schedulés mais ne firent pas)
+2. **Tu ouvres Claude Code** → register de toi-même → `dormant_gate` s'ouvre → résidents spawn → background work démarre
+3. **Tu fermes Claude Code** → 5min grace period → résidents tués → idle gate kicks in → 0% CPU
+4. **22h sans agent ouvert** → digest skip (dormant). Avec agent ouvert → Librarian fait son boulot.
+
+### Variables d'environnement utiles
+
+- `WIKICHAT_AUTONOMOUS_TEAM=1` : active la team (sinon triggers décoratifs)
+- `WIKICHAT_PRINCIPAL_GATE` : `any-named` (défaut) | `strict` | `0`
+  - `any-named` : tout session non-anonyme registered active la team
+  - `strict` : seul `WIKICHAT_PRINCIPAL_AGENT` (défaut "Claude-Code") compte
+  - `0` : pas de gate principal (registry seul décide)
+- `WIKICHAT_DORMANT_DISABLED=1` : toujours actif (legacy, déconseillé)
+- `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant kill des résidents (défaut 5min)
 
 ## Architecture
 
