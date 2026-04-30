@@ -741,7 +741,7 @@ export function registerTools(server, sessionId) {
     async ({ project, task, description }) => {
       const name = getSessionName(sessionId);
       if (!state.projects.has(project)) {
-        state.projects.set(project, { name: project, description: "", repo: null, stack: [], relations: [], status: "active", decisions: [], open_questions: [], blockers: [], tasks: new Map(), createdBy: name, createdAt: new Date() });
+        state.projects.set(project, { name: project, description: "", repo: null, stack: [], relations: [], status: "active", decisions: [], open_questions: [], blockers: [], tasks: new Map(), closure: null, createdBy: name, createdAt: new Date() });
       }
       const proj = state.projects.get(project);
       const existing = proj.tasks.get(task);
@@ -814,7 +814,7 @@ export function registerTools(server, sessionId) {
     async ({ name, description, repo, stack, relations, status }) => {
       const ownerName = getSessionName(sessionId);
       const existing = state.projects.get(name);
-      const proj = existing ?? { name, tasks: new Map(), decisions: [], open_questions: [], blockers: [], createdBy: ownerName, createdAt: new Date() };
+      const proj = existing ?? { name, tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null, createdBy: ownerName, createdAt: new Date() };
       Object.assign(proj, { description, repo: repo ?? proj.repo, stack: stack ?? proj.stack ?? [], relations: relations ?? proj.relations ?? [], status: status ?? proj.status, updatedAt: new Date(), updatedBy: ownerName });
       state.projects.set(name, proj);
       saveProject(proj);
@@ -829,10 +829,111 @@ export function registerTools(server, sessionId) {
     const lines = [...state.projects.values()].map(p => {
       const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
       const active = [...p.tasks.values()].filter(t => t.status === "active").length;
-      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${p.status ? `\n    📊 ${p.status}` : ""}`;
+      const closedFlag = p.closure ? " | 🏁 closed" : "";
+      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${p.status ? `\n    📊 ${p.status}` : ""}${closedFlag}`;
     });
     return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail`);
   });
+
+  server.tool(
+    "close_project",
+    "Clôturer un projet : capture documentation/livrables/rétro/capitalisation, marque status='closed', broadcast un artifact de clôture sur #library pour absorption par le Librarian. " +
+    "Si auto=true (défaut), spawne un agent Closer headless qui lit l'état du projet + artefacts et remplit les sections manquantes. " +
+    "Sinon, fournir directement les 4 sections via le paramètre `closure`.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      auto: z.boolean().default(true).describe("Si true, spawne un agent Closer pour rédiger les sections. Sinon utilise `closure` directement."),
+      closure: z.object({
+        documentation: z.string().describe("Ce qui est documenté, où le trouver"),
+        deliverables: z.string().describe("Ce qui a été livré, statut de chaque livrable"),
+        retro: z.string().describe("Ce qui a marché, ce qui n'a pas marché, leçons"),
+        capitalisation: z.string().describe("Ce qui est réutilisable ailleurs (patterns, snippets, décisions transférables)"),
+      }).optional(),
+      repo_path: z.string().optional().describe("Chemin du repo si auto=true (sinon process.cwd())"),
+    },
+    async ({ project, auto, closure, repo_path }) => {
+      const name = getSessionName(sessionId);
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable. Liste avec list_projects().`);
+      if (proj.closure) return txt(`⚠️ Projet "${project}" déjà clôturé le ${new Date(proj.closure.closedAt).toLocaleDateString("fr-FR")} par ${proj.closure.closedBy}.\n💡 Pour ré-ouvrir, édite manuellement projects/${project}.json.`);
+
+      // Mode auto : spawn Closer headless qui audite et remplit les 4 sections.
+      if (auto && !closure) {
+        const repo = repo_path || process.cwd();
+        const closerPrompt =
+          `Tu es Closer, agent de clôture WikiChat. Lis docs/roles/closer.md.\n\n` +
+          `MISSION : produire un artifact de clôture pour le projet "${project}".\n\n` +
+          `BOUCLE :\n` +
+          `1. register(name="Closer-${project.slice(0,12)}", role="closer", agent_type="headless")\n` +
+          `2. Lis projects/${project}.json (tasks, decisions, blockers, open_questions)\n` +
+          `3. Lis .wikichat/artifacts/ (artefacts produits pendant le projet)\n` +
+          `4. Produis 4 sections dans un seul artifact markdown :\n` +
+          `   ## Documentation\n   ## Livrables\n   ## Rétrospective\n   ## Capitalisation\n` +
+          `5. share_artifact(channel="library", title="Closure: ${project}", artifact_type="text", content=<les 4 sections>)\n` +
+          `6. Appelle close_project(project="${project}", auto=false, closure={ documentation, deliverables, retro, capitalisation })\n` +
+          `7. Sors.`;
+        const ticketId = randomUUID().slice(0, 8);
+        state.spawnTickets.set(ticketId, {
+          id: ticketId, name: `Closer-${project.slice(0,12)}`, mode: "headless", repo,
+          spawnedBy: name, spawnerId: sessionId,
+          status: "running", createdAt: new Date(),
+          completedAt: null, result: null,
+        });
+        spawnHeadless(repo, closerPrompt, { name: `Closer-${project.slice(0,12)}`, role: "closer", spawnedBy: name }).then(res => {
+          const t = state.spawnTickets.get(ticketId);
+          if (t) {
+            t.status = res.success ? "completed" : "failed";
+            t.completedAt = new Date();
+            t.result = { success: res.success, exitCode: res.exitCode };
+          }
+          notify("__tickets__", null);
+        }).catch(() => {});
+        sysMsg("coordination", `🏁 ${name} déclenche la clôture de "${project}" — Closer spawné (ticket ${ticketId}).`);
+        notify("coordination", sessionId);
+        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Suis l'avancée via list_spawned() ou poll_ticket("${ticketId}").`);
+      }
+
+      // Mode manuel : closure fournie directement.
+      if (!closure) return txt(`❌ Si auto=false, le paramètre 'closure' est requis (4 sections : documentation, deliverables, retro, capitalisation).`);
+
+      proj.closure = {
+        documentation: closure.documentation,
+        deliverables: closure.deliverables,
+        retro: closure.retro,
+        capitalisation: closure.capitalisation,
+        closedBy: name,
+        closedAt: new Date().toISOString(),
+      };
+      proj.status = "closed";
+      proj.updatedAt = new Date();
+      proj.updatedBy = name;
+      saveProject(proj);
+
+      // Broadcast sur #library pour que le Librarian absorbe la capitalisation.
+      if (!state.channels.has("library")) {
+        state.channels.set("library", { name: "library", description: "Knowledge base et closures de projets", createdBy: "system", createdAt: new Date() });
+      }
+      pushMessage({
+        id: randomUUID(),
+        from: sessionId, fromName: name,
+        channel: "library",
+        content:
+          `📎 Closure: ${project}\n${"─".repeat(40)}\n` +
+          `## Documentation\n${closure.documentation}\n\n` +
+          `## Livrables\n${closure.deliverables}\n\n` +
+          `## Rétrospective\n${closure.retro}\n\n` +
+          `## Capitalisation\n${closure.capitalisation}\n` +
+          `${"─".repeat(40)}`,
+        type: "artifact",
+        timestamp: new Date(),
+      });
+      notify("library", sessionId);
+
+      sysMsg("coordination", `🏁 ${name} a clôturé le projet "${project}".`);
+      notify("coordination", sessionId);
+      return txt(`🏁 Projet "${project}" clôturé.\n📚 Closure persistée dans projects/${project}.json.\n📡 Artifact partagé sur #library — le Librarian l'absorbera dans la KB transverse au prochain digest.`);
+    }
+  );
 
   // ══ SPAWN ═════════════════════════════════════════════════════════════════════
 

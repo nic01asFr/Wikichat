@@ -44,15 +44,19 @@ src/map-generator.mjs — Thematic island map generation from registry
 - **daemon**: Persistent agent using `claude -p` with poll_messages loop prompt. Auto-respawn with exponential backoff (max 5 attempts, 3 concurrent). Uses Haiku by default for speed.
 - **interactive**: Opens a terminal window with `claude` in interactive mode.
 
-## MCP Tools (20 total)
+## MCP Tools (41 total)
 
-**Identity:** register, set_status, get_context
+**Identity:** register, set_status, get_context, get_briefing, remember, recall, forget
 **Messaging:** send_message, read_messages, poll_messages, broadcast, share_artifact
 **Channels:** list_sessions, list_channels, create_channel
 **Coordination:** declare_capabilities, declare_delay
 **Tasks:** claim_task, release_task
-**Projects:** declare_project, list_projects, scan_projects
-**Spawning:** spawn_session, list_spawned
+**Projects:** declare_project, list_projects, close_project, scan_projects
+**Spawning:** spawn_session, list_spawned, kill_spawn, poll_ticket
+**Dispatch:** dispatch, explain_dispatch, report_dispatch_outcome
+**Routines:** register_routine, list_routines, run_routine, delete_routine
+**Triggers:** register_trigger, list_triggers, fire_trigger, set_trigger_enabled, delete_trigger
+**Background jobs:** run_cartography, run_clustering
 
 ## REST API
 
