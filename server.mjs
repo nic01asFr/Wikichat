@@ -42,6 +42,7 @@ import { startDormantWatch, status as dormantStatus, setManualOverride, isActive
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 loadChannels();   // Restore persisted channels
@@ -189,13 +190,6 @@ onSleep(() => {
 });
 startDormantWatch();
 
-// Admin endpoint to override manually
-app.post("/api/admin/dormant/override", express.json(), (req, res) => {
-  const { value } = req.body || {};
-  res.json(setManualOverride(value === null || value === undefined ? null : !!value));
-});
-app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
-
 // Channel #dispatch : every user message becomes a dispatch automatically.
 // Low-latency hook: when a non-system message lands on #dispatch, fire dispatch.
 const _origPushMessage = state.__origPushMessage || null;
@@ -335,7 +329,14 @@ setInterval(async () => {
 }, 2 * 60 * 1000);
 
 // Cleanup interval: orphan tasks (TTL expired) + stale sessions
-setInterval(() => {
+let _cleanupInProgress = false;
+setInterval(async () => {
+  if (_cleanupInProgress) {
+    console.warn("[Cleanup] previous run still in progress — skipping this tick");
+    return;
+  }
+  _cleanupInProgress = true;
+  try {
   const now = new Date();
   for (const proj of state.projects.values()) {
     let changed = false;
@@ -378,7 +379,7 @@ setInterval(() => {
   try {
     const registry = loadRegistry();
     const projects = (registry.projects || []).filter(p => p.status !== "missing" && p.path);
-    const changed = scanForChanges(projects);
+    const changed = await scanForChanges(projects);
     if (changed.length > 0) {
       // Auto-create #insights channel if needed
       if (!state.channels.has("insights")) {
@@ -398,12 +399,20 @@ setInterval(() => {
   }
 
   pushDashboardUpdate();
+  } finally { _cleanupInProgress = false; }
 }, 5 * 60 * 1000);
 
 // ── Express ───────────────────────────────────────────────────────────────────
 
 const app = express();
 app.use(express.json());
+
+// Admin endpoint to override dormant gate manually
+app.post("/api/admin/dormant/override", (req, res) => {
+  const { value } = req.body || {};
+  res.json(setManualOverride(value === null || value === undefined ? null : !!value));
+});
+app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
 
 const transports = new Map(); // sessionId → { transport, server }
 

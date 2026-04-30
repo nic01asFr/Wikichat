@@ -100,6 +100,23 @@ export function writeAtomic(filePath, content) {
   }
 }
 
+// Async variant — use in hot paths (per-project loops) to avoid event-loop block.
+export async function writeAtomicAsync(filePath, content) {
+  const tmp = filePath + ".tmp";
+  try {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(tmp, content, "utf8");
+    await fs.promises.rename(tmp, filePath);
+  } catch (err) {
+    try { await fs.promises.unlink(tmp); } catch { /* ignore */ }
+    throw err;
+  }
+}
+
+export async function writeAtomicJSONAsync(filePath, obj) {
+  return writeAtomicAsync(filePath, JSON.stringify(obj, null, 2));
+}
+
 export function writeAtomicJSON(filePath, obj) {
   writeAtomic(filePath, JSON.stringify(obj, null, 2));
 }

@@ -44,7 +44,7 @@ export async function runCartography({ log, share }) {
     try {
       if (!p.path || !fs.existsSync(p.path)) continue;
       const prev = loadSnapshot(p.path);
-      const curr = collectSnapshot(p.path);
+      const curr = await collectSnapshot(p.path, prev);
 
       if (prev) {
         const changes = detectChanges(prev, curr);
@@ -61,7 +61,7 @@ export async function runCartography({ log, share }) {
         }
       }
 
-      saveSnapshot(p.path, curr);
+      await saveSnapshot(p.path, curr);
     } catch { /* skip broken projects */ }
   }
   log(`[Cartography] ${summary.length} project(s) with significant changes`);
