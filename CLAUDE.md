@@ -44,6 +44,27 @@ Cycle de vie automatique :
 - `WIKICHAT_DORMANT_DISABLED=1` : toujours actif (legacy, déconseillé)
 - `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant kill des résidents (défaut 5min)
 
+## Distribution principle
+
+**Le contenu vit dans les projets, WikiChat ne fait que pointer.**
+
+- `<projet>/.wikichat/artifacts/` — artefacts produits par les agents
+- `<projet>/.wikichat/queue/` — actions offline (recovery au boot)
+- `<projet>/.wikichat/state-snapshot.json` — git/files snapshot
+- `<projet>/.wikichat/project-state.json` — **state du projet** : tasks, decisions, blockers, closure (anciennement centralisé dans `wikichat/projects/<slug>.json`, migré local automatiquement à la 1ère save)
+- `<projet>/.wikichat/instructions.md` + `context.json` — boilerplate par projet
+- `<projet>/.wikichat/roles/` — overrides locaux des rôles
+
+Côté wikichat (mairie, légitimement central) :
+- `~/.wikichat/registry.json` — index des paths projet
+- `~/.wikichat/triggers.json` — config triggers
+- `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
+- `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse)
+- `wikichat-repo/.wikichat/messages.json` — last 200 messages (fabric coordination, transitoire)
+- `wikichat-repo/projects/` — fallback pour projets déclarés sans repo réel
+
+Bénéfice : `git add .wikichat/` dans chaque projet sauvegarde naturellement la connaissance projet. Tu peux déplacer un projet entre machines, sa state suit.
+
 ## Architecture
 
 Modular — 12 files in `src/`, entry point `server.mjs`.

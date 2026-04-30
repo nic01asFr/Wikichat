@@ -32,6 +32,27 @@ for (const dir of [
 }
 
 /**
+ * Lookup a project's filesystem path by name (case-insensitive). Used by the
+ * project-state distribution model : content lives in <path>/.wikichat/, the
+ * registry is just the index of pointers.
+ *
+ * Returns null if the name doesn't match any registered project (e.g. project
+ * declared via declare_project without a real repo on disk).
+ */
+export function getProjectPath(projectName) {
+  if (!projectName) return null;
+  const reg = loadRegistry();
+  const lower = projectName.toLowerCase();
+  for (const p of reg.projects) {
+    if (!p.path) continue;
+    if ((p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === lower)) {
+      return p.path;
+    }
+  }
+  return null;
+}
+
+/**
  * Load registry from disk. Returns { projects: [], lastScan: null } if not found.
  */
 export function loadRegistry() {

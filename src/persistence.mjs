@@ -180,16 +180,75 @@ export function loadSnapshot(name) {
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────────
+// Distribution model : project state (tasks, decisions, blockers, closure)
+// lives in <projectPath>/.wikichat/project-state.json. WikiChat's central
+// `projects/` directory is a FALLBACK only — used when the registry has no
+// path for the project (declared without a real repo) or when the path is
+// read-only. Legacy central files are auto-migrated to local on first save.
+
+import os from "os";
+const REGISTRY_FILE = path.join(os.homedir(), ".wikichat", "registry.json");
+const LOCAL_STATE_FILE = "project-state.json";
+
+function _projectLocalPath(project) {
+  try {
+    if (!fs.existsSync(REGISTRY_FILE)) return null;
+    const reg = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8"));
+    const lower = (project.name || "").toLowerCase();
+    const slug = (project.slug || "").toLowerCase();
+    for (const p of reg.projects || []) {
+      if (!p.path) continue;
+      const matchesName = p.name && p.name.toLowerCase() === lower;
+      const matchesSlug = p.slug && (p.slug.toLowerCase() === slug || p.slug.toLowerCase() === lower);
+      if (matchesName || matchesSlug) return path.join(p.path, ".wikichat", LOCAL_STATE_FILE);
+    }
+  } catch { /* ignore */ }
+  return null;
+}
 
 export function saveProject(project) {
   const data = { ...project, tasks: Object.fromEntries(project.tasks) };
+  const local = _projectLocalPath(project);
+  if (local) {
+    try {
+      fs.mkdirSync(path.dirname(local), { recursive: true });
+      writeAtomicJSON(local, data);
+      // Migration : remove the legacy central copy now that local owns the state.
+      const central = path.join(PROJECT_STORE, `${project.name}.json`);
+      try { if (fs.existsSync(central)) fs.unlinkSync(central); } catch { /* */ }
+      return;
+    } catch (err) {
+      // Path not writable — fall through to central fallback.
+      console.warn(`[persistence] saveProject local failed for ${project.name}: ${err.message} — falling back to central`);
+    }
+  }
   writeAtomicJSON(path.join(PROJECT_STORE, `${project.name}.json`), data);
 }
 
 export function loadProjects() {
+  // 1. Hydrate from per-project local state files (the canonical source).
+  try {
+    if (fs.existsSync(REGISTRY_FILE)) {
+      const reg = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8"));
+      for (const p of reg.projects || []) {
+        if (!p.path) continue;
+        const local = path.join(p.path, ".wikichat", LOCAL_STATE_FILE);
+        if (!fs.existsSync(local)) continue;
+        try {
+          const data = JSON.parse(fs.readFileSync(local, "utf8"));
+          data.tasks = new Map(Object.entries(data.tasks || {}));
+          state.projects.set(data.name, data);
+        } catch { /* corrupt local state — skip */ }
+      }
+    }
+  } catch { /* */ }
+
+  // 2. Fallback : central PROJECT_STORE for projects without a local file
+  //    (legacy data + projects without a real repo path on disk).
   try {
     for (const f of fs.readdirSync(PROJECT_STORE).filter(f => f.endsWith(".json"))) {
       const data = JSON.parse(fs.readFileSync(path.join(PROJECT_STORE, f), "utf8"));
+      if (state.projects.has(data.name)) continue; // already loaded from local
       data.tasks = new Map(Object.entries(data.tasks || {}));
       state.projects.set(data.name, data);
     }
