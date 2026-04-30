@@ -935,6 +935,56 @@ export function registerTools(server, sessionId) {
     }
   );
 
+  server.tool(
+    "purge_registry",
+    "Retire du registry (~/.wikichat/registry.json) les projets non-substantiels : pas de CLAUDE.md sérieux (<200 chars) ET aucun artefact dans .wikichat/artifacts/. " +
+    "Par défaut dry_run=true : retourne la liste sans modifier. dry_run=false applique. Réduit drastiquement le coût des cleanup ticks.",
+    {
+      dry_run: z.boolean().default(true).describe("Si true, retourne la liste sans modifier le registry. Si false, applique."),
+      min_claude_md_bytes: z.number().default(200).describe("Seuil au-dessous duquel un CLAUDE.md est considéré non-substantiel"),
+    },
+    async ({ dry_run, min_claude_md_bytes }) => {
+      const registry = loadRegistry();
+      const keep = [];
+      const drop = [];
+      for (const p of registry.projects) {
+        if (!p.path) { drop.push({ slug: p.slug, reason: "no path" }); continue; }
+        if (!fs.existsSync(p.path)) { drop.push({ slug: p.slug, reason: "path missing" }); continue; }
+        // Substantial CLAUDE.md ?
+        const claudeMdPath = path.join(p.path, "CLAUDE.md");
+        let claudeMdSize = 0;
+        try { claudeMdSize = fs.statSync(claudeMdPath).size; } catch { /* absent */ }
+        // Non-empty .wikichat/artifacts ?
+        const artifactsDir = path.join(p.path, ".wikichat", "artifacts");
+        let artifactCount = 0;
+        try { artifactCount = fs.readdirSync(artifactsDir).filter(f => /\.(md|json|txt)$/.test(f)).length; } catch { /* absent */ }
+        // Keep if EITHER signal is positive
+        if (claudeMdSize >= min_claude_md_bytes || artifactCount > 0) {
+          keep.push({ slug: p.slug, claudeMdSize, artifactCount });
+        } else {
+          drop.push({ slug: p.slug, reason: `claudeMd=${claudeMdSize}B artifacts=${artifactCount}` });
+        }
+      }
+      let summary = `📦 Registry: ${registry.projects.length} projets total\n` +
+                    `  ✅ Keep: ${keep.length}\n` +
+                    `  🗑️  Drop: ${drop.length}\n\n`;
+      summary += "**Drop list (top 30):**\n";
+      summary += drop.slice(0, 30).map(d => `  • ${d.slug} — ${d.reason}`).join("\n");
+      if (drop.length > 30) summary += `\n  …et ${drop.length - 30} autres.`;
+      if (dry_run) {
+        summary = `🔍 **DRY RUN** — registry non modifié. Re-appelle avec dry_run=false pour appliquer.\n\n` + summary;
+        return txt(summary);
+      }
+      // Apply : keep only the kept slugs.
+      const keepSet = new Set(keep.map(k => k.slug));
+      registry.projects = registry.projects.filter(p => keepSet.has(p.slug));
+      saveRegistry(registry);
+      sysMsg("coordination", `🗑️ ${getSessionName(sessionId)} a purgé le registry : ${drop.length} projets retirés (kept ${keep.length}).`);
+      notify("coordination", sessionId);
+      return txt(`✅ **APPLIQUÉ** — ${drop.length} projets retirés du registry, ${keep.length} conservés.\n\n` + summary);
+    }
+  );
+
   // ══ SPAWN ═════════════════════════════════════════════════════════════════════
 
   server.tool(

@@ -19,7 +19,7 @@ import { readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join, extname } from "path";
 import { homedir } from "os";
 
-import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, rebuildChannelCounts, getChannelCount } from "./src/state.mjs";
+import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
 import { loadMemories, flushMemories } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
@@ -199,6 +199,7 @@ import("./src/state.mjs").then(({ pushMessage: pm }) => {
 });
 let _dispatchSeenIds = new Set();
 setInterval(() => {
+  if (!recentlyActive(5 * 60 * 1000)) return; // idle-gate
   const msgs = state.messages.filter(m => m.channel === "dispatch" && m.from !== "wikichat-dispatch");
   for (const m of msgs.slice(-20)) {
     if (_dispatchSeenIds.has(m.id)) continue;
@@ -299,6 +300,9 @@ process.on("unhandledRejection", (reason) => {
 // Queue + artifact pickup: every 2 minutes
 // Recovers all agent output even when MCP was unavailable (local-first protocol)
 setInterval(async () => {
+  // Idle gate : agents only write to queue/artifacts when active. If we've
+  // been idle, nothing new to recover. Skip the 120-projects scan.
+  if (!recentlyActive(5 * 60 * 1000)) return;
   try {
     const registry = loadRegistry();
     for (const p of registry.projects.filter(q => q.status !== "missing")) {
@@ -335,6 +339,9 @@ setInterval(async () => {
     console.warn("[Cleanup] previous run still in progress — skipping this tick");
     return;
   }
+  // Idle gate : skip the entire cleanup body if nothing user-relevant happened
+  // in the last 5 minutes. The service should consume ~0 CPU when idle.
+  if (!recentlyActive(5 * 60 * 1000)) return;
   _cleanupInProgress = true;
   try {
   const now = new Date();
@@ -493,6 +500,12 @@ app.get("/sse", async (req, res) => {
 
 // MCP POST messages
 app.post("/messages", async (req, res) => {
+  // Distinguish real intent (tool/resource calls) from MCP handshake noise
+  // (initialize, notifications/initialized) — only the former counts as activity.
+  const method = req.body?.method;
+  if (method && (method.startsWith("tools/") || method.startsWith("resources/") || method.startsWith("prompts/"))) {
+    markActivity();
+  }
   const sid = req.query.sessionId;
   const entry = transports.get(sid);
   if (!entry) { res.status(404).json({ error: "Session not found" }); return; }
