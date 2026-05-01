@@ -130,6 +130,7 @@ src/snapshot.mjs        — snapshots d'état et détection de changements
 | Coordination (2) | `declare_capabilities`, `declare_delay` |
 | Tâches (2) | `claim_task`, `release_task` |
 | Projets (5) | `declare_project`, `list_projects`, `close_project`, `purge_registry`, `scan_projects` |
+| Knowledge (1) | `search_knowledge` |
 | Spawning (4) | `spawn_session`, `list_spawned`, `kill_spawn`, `poll_ticket` |
 | Dispatch (3) | `dispatch`, `explain_dispatch`, `report_dispatch_outcome` |
 | Routines (4) | `register_routine`, `list_routines`, `run_routine`, `delete_routine` |

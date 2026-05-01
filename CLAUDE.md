@@ -101,7 +101,8 @@ src/map-generator.mjs — Thematic island map generation from registry
 **Channels:** list_sessions, list_channels, create_channel
 **Coordination:** declare_capabilities, declare_delay
 **Tasks:** claim_task, release_task
-**Projects:** declare_project, list_projects, close_project, scan_projects
+**Projects:** declare_project, list_projects, close_project, purge_registry, scan_projects
+**Knowledge:** search_knowledge
 **Spawning:** spawn_session, list_spawned, kill_spawn, poll_ticket
 **Dispatch:** dispatch, explain_dispatch, report_dispatch_outcome
 **Routines:** register_routine, list_routines, run_routine, delete_routine

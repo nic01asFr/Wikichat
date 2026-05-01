@@ -985,6 +985,105 @@ export function registerTools(server, sessionId) {
     }
   );
 
+  server.tool(
+    "search_knowledge",
+    "Cherche en full-text dans la KB : ~/.wikichat/knowledge/*.md (Compiled Truth transverse) + <projet>/.wikichat/knowledge/*.md (par projet du registry). " +
+    "Scoring : termes dans titre (×3), headers (×2), corps (×1). Retourne top-K avec extrait contexte.",
+    {
+      query: z.string().describe("Requête en mots-clés (ex: 'grist widget standalone', 'mcp tools consolidés')"),
+      scope: z.enum(["central", "projects", "all"]).default("all").describe("'central' = ~/.wikichat/knowledge/ uniquement, 'projects' = par-projet uniquement, 'all' = les deux"),
+      limit: z.number().default(5).describe("Top-K résultats à retourner"),
+    },
+    async ({ query, scope, limit }) => {
+      const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+      if (terms.length === 0) return txt("⚠️ Query vide ou trop courte.");
+
+      const candidates = [];
+      const seenPaths = new Set(); // dedup by absolute path (e.g. project="Omen" with path=~ collides with central)
+      const addCandidate = (source, p) => {
+        let abs;
+        try { abs = fs.realpathSync(p); } catch { abs = path.resolve(p); }
+        if (seenPaths.has(abs)) return;
+        seenPaths.add(abs);
+        candidates.push({ source, path: abs });
+      };
+      // 1. Central knowledge dir
+      const homeDir = process.env.USERPROFILE || process.env.HOME || ".";
+      const centralDir = path.join(homeDir, ".wikichat", "knowledge");
+      if (scope === "central" || scope === "all") {
+        try {
+          for (const entry of fs.readdirSync(centralDir, { withFileTypes: true })) {
+            if (entry.isFile() && entry.name.endsWith(".md")) {
+              addCandidate("central", path.join(centralDir, entry.name));
+            }
+          }
+        } catch { /* central dir absent */ }
+      }
+      // 2. Per-project knowledge dirs (via registry)
+      if (scope === "projects" || scope === "all") {
+        try {
+          const reg = loadRegistry();
+          for (const p of reg.projects) {
+            if (!p.path) continue;
+            const projKb = path.join(p.path, ".wikichat", "knowledge");
+            try {
+              for (const entry of fs.readdirSync(projKb, { withFileTypes: true })) {
+                if (entry.isFile() && entry.name.endsWith(".md")) {
+                  addCandidate(p.slug || p.name, path.join(projKb, entry.name));
+                }
+              }
+            } catch { /* project has no knowledge/ */ }
+          }
+        } catch { /* registry empty */ }
+      }
+
+      if (candidates.length === 0) return txt(`📭 Aucun fichier de connaissance trouvé (scope=${scope}).\n💡 Vérifier ~/.wikichat/knowledge/ ou les .wikichat/knowledge/ des projets du registry.`);
+
+      // 3. Score each candidate
+      const results = [];
+      for (const c of candidates) {
+        let content;
+        try { content = fs.readFileSync(c.path, "utf8"); } catch { continue; }
+        const lower = content.toLowerCase();
+        // Extract title (first H1 or filename)
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        const title = titleMatch ? titleMatch[1].trim() : path.basename(c.path, ".md");
+        // Score
+        let score = 0;
+        const headers = [...content.matchAll(/^#{1,3}\s+(.+)$/gm)].map(m => m[1].toLowerCase());
+        for (const term of terms) {
+          // Title weight ×3
+          if (title.toLowerCase().includes(term)) score += 3;
+          // Headers weight ×2
+          for (const h of headers) if (h.includes(term)) score += 2;
+          // Body weight ×1 (count occurrences, capped to 10 per term to avoid spam)
+          const matches = lower.split(term).length - 1;
+          score += Math.min(matches, 10);
+        }
+        if (score === 0) continue;
+        // Build excerpt around first match
+        let excerptStart = -1;
+        for (const term of terms) {
+          const idx = lower.indexOf(term);
+          if (idx >= 0 && (excerptStart < 0 || idx < excerptStart)) excerptStart = idx;
+        }
+        const excerptFrom = Math.max(0, excerptStart - 80);
+        const excerpt = content.slice(excerptFrom, excerptFrom + 280).replace(/\s+/g, " ").trim();
+        results.push({ source: c.source, path: c.path, title, score, excerpt });
+      }
+
+      results.sort((a, b) => b.score - a.score);
+      const top = results.slice(0, limit);
+
+      if (top.length === 0) return txt(`🔍 Aucun match pour "${query}" (scope=${scope}, ${candidates.length} fichier(s) scannés).`);
+
+      const lines = top.map((r, i) =>
+        `**${i + 1}. ${r.title}** (score=${r.score})\n   📁 [${r.source}] ${r.path}\n   📄 …${r.excerpt}…`
+      );
+      return txt(`🔍 ${top.length}/${results.length} match(s) pour "${query}" (${candidates.length} fichier(s) KB scannés) :\n\n${lines.join("\n\n")}`);
+    }
+  );
+
   // ══ SPAWN ═════════════════════════════════════════════════════════════════════
 
   server.tool(
