@@ -56,12 +56,18 @@ Cycle de vie automatique :
 - `<projet>/.wikichat/roles/` — overrides locaux des rôles
 
 Côté wikichat (mairie, légitimement central) :
-- `~/.wikichat/registry.json` — index des paths projet
+- `~/.wikichat/registry.json` — index des paths projet, **enrichi avec `github` field** (URL remote, owner, repo, visibility) détecté par scanner via `git remote`
 - `~/.wikichat/triggers.json` — config triggers
 - `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
-- `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse)
+- `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse), markdown plain
 - `wikichat-repo/.wikichat/messages.json` — last 200 messages (fabric coordination, transitoire)
 - `wikichat-repo/projects/` — fallback pour projets déclarés sans repo réel
+
+### Sources externes (GitHub, APIs) — DÉLÉGATION aux agents
+
+WikiChat ne fetche jamais GitHub/GitLab/APIs lui-même. Le scanner enrichit le registry avec `github.url` détecté localement, et les prompts d'agents (Librarian-Compiler, Librarian-Absorber) mentionnent "si tu as des tools GitHub MCP disponibles, sers-t'en". Cela évite de gérer auth/rate-limiting/cache côté wikichat — l'utilisateur a déjà son tooling MCP configuré, les agents l'utilisent à la demande.
+
+Pattern : `wikichat orchestre + state local`, `agents exécutent + tool use`. Les sources externes deviennent des capacités d'agents, pas des features wikichat.
 
 Bénéfice : `git add .wikichat/` dans chaque projet sauvegarde naturellement la connaissance projet. Tu peux déplacer un projet entre machines, sa state suit.
 

@@ -133,6 +133,7 @@ export function mergeProjects(existing, scanned) {
         description: proj.description || old.description || "",
         name: proj.name || old.name,
         slug: old.slug || proj.slug, // keep existing slug to avoid breaking references
+        github: proj.github ?? old.github ?? null, // GitHub remote metadata (refresh from scanner if available)
         detectedAt: old.detectedAt || proj.detectedAt,
         updatedAt: new Date().toISOString(),
         status: old.status === "missing" ? "discovered" : (old.status || "discovered"),

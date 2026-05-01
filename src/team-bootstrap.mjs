@@ -72,28 +72,34 @@ const KNOWLEDGE_ROUTINES = [
             "2. list_projects() pour récupérer la liste\n" +
             "3. Filtre : garde uniquement les projets dont le name OU slug OU path OU stack contient '{topic}' (case-insensitive)\n" +
             "4. **CAP À 10 PROJETS MAX** — si plus, garde les 10 plus pertinents (priorité : match exact name > stack > path)\n" +
-            "5. Note la liste des 10 paths sélectionnés. Si 0 projet trouvé : poste sur #insights et sors immédiatement.\n\n" +
+            "5. Pour chaque projet retenu, NOTE le path local ET le `github` field s'il existe (URL remote, owner, repo, visibility).\n" +
+            "6. Si 0 projet trouvé : poste sur #insights et sors immédiatement.\n\n" +
             "**PHASE 2 — Read (max 90s, lecture minimale)**\n" +
-            "6. Pour chaque projet sélectionné, lis UNIQUEMENT :\n" +
+            "7. Pour chaque projet sélectionné, lis UNIQUEMENT en local :\n" +
             "   - Les 50 PREMIÈRES LIGNES du CLAUDE.md (pas plus, pas le README, pas le project-state.json)\n" +
             "   - Si CLAUDE.md absent : les 30 premières lignes du README.md\n" +
-            "7. Pour chaque projet, extrais 1 phrase de description et 1 ligne de stack/keywords\n\n" +
+            "8. **Si tu as des tools GitHub MCP disponibles** (cherche mcp__*Github*get_file_contents, mcp__github__*, ou équivalent dans tes tools) ET qu'un projet a `github.url` :\n" +
+            "   - OPTIONNELLEMENT, lis aussi le CLAUDE.md DISTANT via ce tool (50 lignes max)\n" +
+            "   - Si distant plus récent OU local absent → utilise le distant\n" +
+            "   - Best-effort : si pas de tools GitHub OU si fetch échoue, ignore silencieusement et travaille avec le local\n" +
+            "9. Pour chaque projet, extrais 1 phrase de description et 1 ligne de stack/keywords.\n\n" +
             "**PHASE 3 — Synthesis (max 120s, écriture finale)**\n" +
-            "8. Produis le markdown avec ces sections (chacune ≤30 lignes) :\n" +
-            "   - Frontmatter YAML : type=axis, topic, last_compiled=2026-05-01, producer, status=DRAFT\n" +
-            "   - # Axe {topic} — synthèse transverse\n" +
-            "   - ## TL;DR (3-5 lignes)\n" +
-            "   - ## Briques disponibles (tableau projet | path | description courte)\n" +
-            "   - ## Patterns observés (3-5 patterns max, avec source)\n" +
-            "   - ## Pour démarrer un nouveau projet {topic} (3 conseils max)\n" +
-            "9. share_artifact(channel='library', title='Compiled axis: {topic}', artifact_type='text', content=<markdown>)\n" +
-            "10. Écris le fichier dans ~/.wikichat/knowledge/{topic}-axis.md\n" +
-            "11. Sors immédiatement.\n\n" +
+            "10. Produis le markdown avec ces sections (chacune ≤30 lignes) :\n" +
+            "    - Frontmatter YAML : type=axis, topic, last_compiled=<today>, producer, status=DRAFT, sources_used=[local] ou [local,github]\n" +
+            "    - # Axe {topic} — synthèse transverse\n" +
+            "    - ## TL;DR (3-5 lignes)\n" +
+            "    - ## Briques disponibles (tableau projet | path local | github | description)\n" +
+            "    - ## Patterns observés (3-5 patterns max, avec source)\n" +
+            "    - ## Pour démarrer un nouveau projet {topic} (3 conseils max)\n" +
+            "11. share_artifact(channel='library', title='Compiled axis: {topic}', artifact_type='text', content=<markdown>)\n" +
+            "12. Écris le fichier dans ~/.wikichat/knowledge/{topic}-axis.md\n" +
+            "13. Sors immédiatement.\n\n" +
             "**RÈGLES CRITIQUES** :\n" +
-            "- NE LIS JAMAIS plus de 10 fichiers projets au total\n" +
+            "- NE LIS JAMAIS plus de 10 fichiers projets au total (local) + 10 distants max via GitHub MCP si tu y as accès\n" +
             "- NE LIS JAMAIS plus de 50 lignes par fichier\n" +
             "- Si une phase dépasse son budget, passe à la suivante avec ce que tu as\n" +
             "- Markdown final ≤ 200 lignes total\n" +
+            "- Le fetch distant est BEST-EFFORT — aucune erreur GitHub MCP ne doit te bloquer, retombe sur le local\n" +
             "- Sors propre, pas de boucle.",
         },
       },
@@ -116,7 +122,8 @@ const KNOWLEDGE_ROUTINES = [
             "3. search_knowledge(query=<topic principal du projet>, scope='central') pour identifier l'axe pertinent (ex: grist-axis.md). " +
             "4. Si axe trouvé : lire l'axe, identifier la section pertinente (Briques disponibles, Patterns, Anti-patterns), append le contenu de la closure mappé. " +
             "5. Si pas d'axe correspondant : créer un brouillon ~/.wikichat/knowledge/<topic>-axis.draft.md avec la closure et alerter sur #insights. " +
-            "6. Sors.",
+            "6. **Optionnel** : si tu as des tools GitHub MCP disponibles ET le projet a un `github.url` (cf. list_projects), tu peux poster un commentaire ou créer une issue sur le repo GitHub pour signaler la closure (best-effort, ignore si pas de tools ou si fetch échoue). " +
+            "7. Sors.",
         },
       },
     ],

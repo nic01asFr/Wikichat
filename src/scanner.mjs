@@ -6,6 +6,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { execSync } from "child_process";
 
 const DEFAULT_ROOTS = ["C:\\Users", os.homedir()];
 const MAX_DEPTH = 6;
@@ -83,13 +84,58 @@ export async function scanForProjects(roots = DEFAULT_ROOTS, maxDepth = MAX_DEPT
   // Sort by path for deterministic output
   const results = [...found.values()].sort((a, b) => a.path.localeCompare(b.path));
 
-  // Enrich with stack and description asynchronously
+  // Enrich with stack, description, and git remote (GitHub) info asynchronously
   await Promise.all(results.map(async (proj) => {
     proj.stack = await detectStack(proj.path).catch(() => []);
     proj.description = await readClaudeMd(proj.path).catch(() => "");
+    proj.github = detectGitHubRemote(proj.path);
   }));
 
   return results;
+}
+
+/**
+ * Read git remote URL of a project and extract GitHub/GitLab metadata.
+ * Returns null if not a git repo or no recognized remote.
+ *
+ * Used to enrich the registry so agents can know:
+ *   - which projects exist remotely (vs local-only)
+ *   - the remote URL (so agents with GitHub MCP tools can fetch from it)
+ *   - visibility hint (public/private)
+ *
+ * Note : we don't determine visibility authoritatively (would require API auth);
+ * we infer from URL presence + branch existence. Agents with GitHub MCP tools
+ * can confirm authoritatively if needed.
+ */
+export function detectGitHubRemote(projectPath) {
+  try {
+    if (!fs.existsSync(path.join(projectPath, ".git"))) return null;
+    const remoteUrl = execSync("git remote get-url origin", {
+      cwd: projectPath, encoding: "utf8", timeout: 2000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (!remoteUrl) return null;
+
+    // Parse known forge patterns.
+    // GitHub : git@github.com:user/repo.git OR https://github.com/user/repo.git
+    // GitLab CEREMA : git@gitlab.cerema.fr:group/repo.git OR https://gitlab.cerema.fr/...
+    let host = null, owner = null, repo = null;
+    const sshMatch = remoteUrl.match(/^[\w.-]+@([\w.-]+):([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
+    const httpsMatch = remoteUrl.match(/^https?:\/\/([\w.-]+)\/([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
+    const m = sshMatch || httpsMatch;
+    if (m) { [, host, owner, repo] = m; }
+    else return { url: remoteUrl, host: null, owner: null, repo: null, visibility: "unknown" };
+
+    // Heuristic visibility : github.com → likely public unless 404, internal forge → likely internal
+    let visibility = "unknown";
+    if (host === "github.com") visibility = "public-github"; // user can downgrade if private
+    else if (host.includes("gitlab")) visibility = "internal-gitlab";
+    else if (host.includes("bitbucket")) visibility = "internal-bitbucket";
+
+    return { url: remoteUrl, host, owner, repo, visibility };
+  } catch {
+    return null; // not a git repo, no remote, or git not on PATH
+  }
 }
 
 /**

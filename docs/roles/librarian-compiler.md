@@ -38,6 +38,12 @@ Headless one-shot. Spécialisation du Librarian pour la compilation initiale d'u
 - Les anti-patterns implicites (ex: "v2 = 8 tools au lieu de 30") → les rendre explicites en lisant entre les lignes des commits / CLAUDE.md.
 - Limite : <500 lignes pour rester lisible. Si plus, c'est probablement 2 axes différents.
 
+**SOURCES EXTERNES (GitHub MCP) — DÉLÉGATION** :
+- WikiChat ne fetche PAS lui-même GitHub. Le scanner enrichit le registry avec `github.url` + `visibility` à partir du `git remote` local.
+- Si tu vois dans tes tools dispos un `mcp__*Github*get_file_contents` ou équivalent : tu peux fetcher le `.wikichat/` distant pour comparer/compléter le local.
+- Si pas de tools GitHub : travaille uniquement avec le local. Aucune dégradation, juste pas de cross-validation distante.
+- Le pattern : "le user a déjà ses tools GitHub MCP configurés, je m'en sers si présents, je ne dépends pas d'eux."
+
 **Budget** : Sonnet (qualité de synthèse essentielle). Spawn unique, pas de respawn.
 
 **Déclenchement** :
