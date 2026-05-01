@@ -58,6 +58,9 @@ export function rebuildChannelCounts() {
 /** Hook for persistence — set by persistence.mjs at boot */
 let _onMessagePush = null;
 export function setOnMessagePush(fn) { _onMessagePush = fn; }
+/** Listeners notified with each new message (msg) — used by triggers (channel_match, mention). */
+const _messageListeners = [];
+export function addMessageListener(fn) { _messageListeners.push(fn); }
 
 /** Add a message and evict oldest if over cap */
 export function pushMessage(msg) {
@@ -84,6 +87,9 @@ export function pushMessage(msg) {
     }
   }
   if (_onMessagePush) _onMessagePush();
+  for (const fn of _messageListeners) {
+    try { fn(msg); } catch { /* listener errors must not break the message bus */ }
+  }
   return msg;
 }
 

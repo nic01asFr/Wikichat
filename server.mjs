@@ -19,7 +19,7 @@ import { readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join, extname } from "path";
 import { homedir } from "os";
 
-import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
+import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
 import { loadMemories, flushMemories } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
@@ -33,7 +33,7 @@ import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
-import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
+import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook } from "./src/triggers.mjs";
 import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
 import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } from "./src/dispatch.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
@@ -65,6 +65,7 @@ configureTriggers({
   // routineFn is wired below after configureRoutines (forward via lazy import)
 });
 loadTriggers();    // Restore persisted triggers
+addMessageListener(notifyMessageForTriggers); // Wire mention/channel_match triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
 
 // Configure routines engine — wire spawn / broadcast / pollTicket / shareArtifact
@@ -999,6 +1000,16 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/admin/cleanup", (_req, res) => {
   try { res.json(fullCleanup()); }
   catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Webhook trigger endpoint : fire a registered webhook trigger by id with arbitrary payload.
+// curl -X POST http://localhost:3777/api/triggers/webhook/<id> -d '{...}'
+app.post("/api/triggers/webhook/:id", async (req, res) => {
+  try {
+    const result = await fireWebhook(req.params.id, req.body || {}, `webhook:${req.headers["user-agent"] || "unknown"}`);
+    if (result?.ok === false) return res.status(400).json(result);
+    res.json(result || { ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Listen ─────────────────────────────────────────────────────────────────────
