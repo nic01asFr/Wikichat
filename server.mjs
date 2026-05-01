@@ -19,7 +19,7 @@ import { readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join, extname } from "path";
 import { homedir } from "os";
 
-import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, rebuildChannelCounts, getChannelCount } from "./src/state.mjs";
+import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
 import { loadMemories, flushMemories } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
@@ -33,7 +33,7 @@ import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
-import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers } from "./src/triggers.mjs";
+import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook } from "./src/triggers.mjs";
 import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
 import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } from "./src/dispatch.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
@@ -41,6 +41,7 @@ import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daem
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
+
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ configureTriggers({
   // routineFn is wired below after configureRoutines (forward via lazy import)
 });
 loadTriggers();    // Restore persisted triggers
+addMessageListener(notifyMessageForTriggers); // Wire mention/channel_match triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
 
 // Configure routines engine — wire spawn / broadcast / pollTicket / shareArtifact
@@ -189,13 +191,6 @@ onSleep(() => {
 });
 startDormantWatch();
 
-// Admin endpoint to override manually
-app.post("/api/admin/dormant/override", express.json(), (req, res) => {
-  const { value } = req.body || {};
-  res.json(setManualOverride(value === null || value === undefined ? null : !!value));
-});
-app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
-
 // Channel #dispatch : every user message becomes a dispatch automatically.
 // Low-latency hook: when a non-system message lands on #dispatch, fire dispatch.
 const _origPushMessage = state.__origPushMessage || null;
@@ -205,6 +200,7 @@ import("./src/state.mjs").then(({ pushMessage: pm }) => {
 });
 let _dispatchSeenIds = new Set();
 setInterval(() => {
+  if (!recentlyActive(5 * 60 * 1000)) return; // idle-gate
   const msgs = state.messages.filter(m => m.channel === "dispatch" && m.from !== "wikichat-dispatch");
   for (const m of msgs.slice(-20)) {
     if (_dispatchSeenIds.has(m.id)) continue;
@@ -305,6 +301,9 @@ process.on("unhandledRejection", (reason) => {
 // Queue + artifact pickup: every 2 minutes
 // Recovers all agent output even when MCP was unavailable (local-first protocol)
 setInterval(async () => {
+  // Idle gate : agents only write to queue/artifacts when active. If we've
+  // been idle, nothing new to recover. Skip the 120-projects scan.
+  if (!recentlyActive(5 * 60 * 1000)) return;
   try {
     const registry = loadRegistry();
     for (const p of registry.projects.filter(q => q.status !== "missing")) {
@@ -335,7 +334,17 @@ setInterval(async () => {
 }, 2 * 60 * 1000);
 
 // Cleanup interval: orphan tasks (TTL expired) + stale sessions
-setInterval(() => {
+let _cleanupInProgress = false;
+setInterval(async () => {
+  if (_cleanupInProgress) {
+    console.warn("[Cleanup] previous run still in progress — skipping this tick");
+    return;
+  }
+  // Idle gate : skip the entire cleanup body if nothing user-relevant happened
+  // in the last 5 minutes. The service should consume ~0 CPU when idle.
+  if (!recentlyActive(5 * 60 * 1000)) return;
+  _cleanupInProgress = true;
+  try {
   const now = new Date();
   for (const proj of state.projects.values()) {
     let changed = false;
@@ -378,7 +387,7 @@ setInterval(() => {
   try {
     const registry = loadRegistry();
     const projects = (registry.projects || []).filter(p => p.status !== "missing" && p.path);
-    const changed = scanForChanges(projects);
+    const changed = await scanForChanges(projects);
     if (changed.length > 0) {
       // Auto-create #insights channel if needed
       if (!state.channels.has("insights")) {
@@ -398,12 +407,20 @@ setInterval(() => {
   }
 
   pushDashboardUpdate();
+  } finally { _cleanupInProgress = false; }
 }, 5 * 60 * 1000);
 
 // ── Express ───────────────────────────────────────────────────────────────────
 
 const app = express();
 app.use(express.json());
+
+// Admin endpoint to override dormant gate manually
+app.post("/api/admin/dormant/override", (req, res) => {
+  const { value } = req.body || {};
+  res.json(setManualOverride(value === null || value === undefined ? null : !!value));
+});
+app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
 
 const transports = new Map(); // sessionId → { transport, server }
 
@@ -484,6 +501,12 @@ app.get("/sse", async (req, res) => {
 
 // MCP POST messages
 app.post("/messages", async (req, res) => {
+  // Distinguish real intent (tool/resource calls) from MCP handshake noise
+  // (initialize, notifications/initialized) — only the former counts as activity.
+  const method = req.body?.method;
+  if (method && (method.startsWith("tools/") || method.startsWith("resources/") || method.startsWith("prompts/"))) {
+    markActivity();
+  }
   const sid = req.query.sessionId;
   const entry = transports.get(sid);
   if (!entry) { res.status(404).json({ error: "Session not found" }); return; }
@@ -977,6 +1000,16 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/admin/cleanup", (_req, res) => {
   try { res.json(fullCleanup()); }
   catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Webhook trigger endpoint : fire a registered webhook trigger by id with arbitrary payload.
+// curl -X POST http://localhost:3777/api/triggers/webhook/<id> -d '{...}'
+app.post("/api/triggers/webhook/:id", async (req, res) => {
+  try {
+    const result = await fireWebhook(req.params.id, req.body || {}, `webhook:${req.headers["user-agent"] || "unknown"}`);
+    if (result?.ok === false) return res.status(400).json(result);
+    res.json(result || { ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Listen ─────────────────────────────────────────────────────────────────────

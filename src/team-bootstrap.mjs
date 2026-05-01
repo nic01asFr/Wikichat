@@ -48,6 +48,136 @@ const RESIDENTS = [
   },
 ];
 
+// Knowledge layer : 3 routines + 2 triggers pour entretenir la KB transverse
+// (~/.wikichat/knowledge/<topic>-axis.md) de manière automatique. S'appuie sur :
+//   - search_knowledge (MCP tool) pour cross-référencer
+//   - close_project broadcast sur #library (déjà existant)
+//   - channel_match trigger (Phase 6 récent)
+const KNOWLEDGE_ROUTINES = [
+  {
+    id: "team:knowledge-compile-axis",
+    description: "Spawne un Librarian-Compiler headless qui produit ~/.wikichat/knowledge/{topic}-axis.md. Travail séquencé en 3 phases bornées pour éviter le hang sur gros registry.",
+    steps: [
+      {
+        action: "spawn",
+        params: {
+          name: "LibrarianCompiler-{topic}-{ts}",
+          role: "librarian-compiler",
+          mode: "headless",
+          model: "sonnet",
+          task: "Tu es Librarian-Compiler. Mission : produire ~/.wikichat/knowledge/{topic}-axis.md, format inspiré de grist-axis.md.\n\n" +
+            "TRAVAIL EN 3 PHASES SÉQUENTIELLES, STRICTEMENT BORNÉES :\n\n" +
+            "**PHASE 1 — Discovery (max 60s)**\n" +
+            "1. register(name='LibrarianCompiler-{topic}-{ts}', role='librarian-compiler', agent_type='headless')\n" +
+            "2. list_projects() pour récupérer la liste\n" +
+            "3. Filtre : garde uniquement les projets dont le name OU slug OU path OU stack contient '{topic}' (case-insensitive)\n" +
+            "4. **CAP À 10 PROJETS MAX** — si plus, garde les 10 plus pertinents (priorité : match exact name > stack > path)\n" +
+            "5. Pour chaque projet retenu, NOTE le path local ET le `github` field s'il existe (URL remote, owner, repo, visibility).\n" +
+            "6. Si 0 projet trouvé : poste sur #insights et sors immédiatement.\n\n" +
+            "**PHASE 2 — Read (max 90s, lecture minimale)**\n" +
+            "7. Pour chaque projet sélectionné, lis UNIQUEMENT en local :\n" +
+            "   - Les 50 PREMIÈRES LIGNES du CLAUDE.md (pas plus, pas le README, pas le project-state.json)\n" +
+            "   - Si CLAUDE.md absent : les 30 premières lignes du README.md\n" +
+            "8. **Si tu as des tools GitHub MCP disponibles** (cherche mcp__*Github*get_file_contents, mcp__github__*, ou équivalent dans tes tools) ET qu'un projet a `github.url` :\n" +
+            "   - OPTIONNELLEMENT, lis aussi le CLAUDE.md DISTANT via ce tool (50 lignes max)\n" +
+            "   - Si distant plus récent OU local absent → utilise le distant\n" +
+            "   - Best-effort : si pas de tools GitHub OU si fetch échoue, ignore silencieusement et travaille avec le local\n" +
+            "9. Pour chaque projet, extrais 1 phrase de description et 1 ligne de stack/keywords.\n\n" +
+            "**PHASE 3 — Synthesis (max 120s, écriture finale)**\n" +
+            "10. Produis le markdown avec ces sections (chacune ≤30 lignes) :\n" +
+            "    - Frontmatter YAML : type=axis, topic, last_compiled=<today>, producer, status=DRAFT, sources_used=[local] ou [local,github]\n" +
+            "    - # Axe {topic} — synthèse transverse\n" +
+            "    - ## TL;DR (3-5 lignes)\n" +
+            "    - ## Briques disponibles (tableau projet | path local | github | description)\n" +
+            "    - ## Patterns observés (3-5 patterns max, avec source)\n" +
+            "    - ## Pour démarrer un nouveau projet {topic} (3 conseils max)\n" +
+            "11. share_artifact(channel='library', title='Compiled axis: {topic}', artifact_type='text', content=<markdown>)\n" +
+            "12. Écris le fichier dans ~/.wikichat/knowledge/{topic}-axis.md\n" +
+            "13. Sors immédiatement.\n\n" +
+            "**RÈGLES CRITIQUES** :\n" +
+            "- NE LIS JAMAIS plus de 10 fichiers projets au total (local) + 10 distants max via GitHub MCP si tu y as accès\n" +
+            "- NE LIS JAMAIS plus de 50 lignes par fichier\n" +
+            "- Si une phase dépasse son budget, passe à la suivante avec ce que tu as\n" +
+            "- Markdown final ≤ 200 lignes total\n" +
+            "- Le fetch distant est BEST-EFFORT — aucune erreur GitHub MCP ne doit te bloquer, retombe sur le local\n" +
+            "- Sors propre, pas de boucle.",
+        },
+      },
+    ],
+  },
+  {
+    id: "team:knowledge-absorb-closure",
+    description: "Spawne un Librarian-Absorber qui ingère un artifact de closure dans l'axe pertinent",
+    steps: [
+      {
+        action: "spawn",
+        params: {
+          name: "LibrarianAbsorber-{ts}",
+          role: "librarian-absorber",
+          mode: "headless",
+          model: "haiku",
+          task: "Tu es Librarian-Absorber. Mission : ingérer le dernier artifact de closure de #library dans le bon axe de connaissance. " +
+            "1. register(name='LibrarianAbsorber-{ts}', role='librarian-absorber', agent_type='headless'). " +
+            "2. read_messages(channel='library', limit=5) pour trouver le dernier artifact 'Closure: <slug>'. " +
+            "3. search_knowledge(query=<topic principal du projet>, scope='central') pour identifier l'axe pertinent (ex: grist-axis.md). " +
+            "4. Si axe trouvé : lire l'axe, identifier la section pertinente (Briques disponibles, Patterns, Anti-patterns), append le contenu de la closure mappé. " +
+            "5. Si pas d'axe correspondant : créer un brouillon ~/.wikichat/knowledge/<topic>-axis.draft.md avec la closure et alerter sur #insights. " +
+            "6. **Optionnel** : si tu as des tools GitHub MCP disponibles ET le projet a un `github.url` (cf. list_projects), tu peux poster un commentaire ou créer une issue sur le repo GitHub pour signaler la closure (best-effort, ignore si pas de tools ou si fetch échoue). " +
+            "7. Sors.",
+        },
+      },
+    ],
+  },
+  {
+    id: "team:knowledge-axis-discovery",
+    description: "Spawne un Discoverer qui scan le registry et propose des nouveaux axes orphelins",
+    steps: [
+      {
+        action: "spawn",
+        params: {
+          name: "AxisDiscoverer-{ts}",
+          role: "axis-discoverer",
+          mode: "headless",
+          model: "haiku",
+          task: "Tu es AxisDiscoverer. Mission : détecter les topics récurrents dans le registry qui n'ont pas encore d'axe compilé. " +
+            "1. register(name='AxisDiscoverer-{ts}', role='axis-discoverer', agent_type='headless'). " +
+            "2. list_projects() pour récupérer la liste. " +
+            "3. Pour chaque projet, extraire les keywords du nom + path + description. " +
+            "4. Compter les keywords récurrents (apparaissent dans 3+ projets). " +
+            "5. Lister les fichiers existants dans ~/.wikichat/knowledge/*-axis.md. " +
+            "6. Pour chaque keyword récurrent SANS axe existant : poster sur #insights 'Axe candidat : <keyword> (N projets concernés). Lance team:knowledge-compile-axis avec topic=<keyword> pour compiler.' " +
+            "7. Sors.",
+        },
+      },
+    ],
+  },
+];
+
+const KNOWLEDGE_TRIGGERS = [
+  {
+    id: "team-channel-library-closure",
+    description: "Quand un artifact de closure est posté sur #library, déclencher l'absorption automatique",
+    type: "channel_match",
+    config: {
+      channel: "library",
+      pattern: "^📎 Closure:",
+      flags: "m",
+    },
+    routine: "team:knowledge-absorb-closure",
+    cooldown_s: 30,
+    max_per_day: 50,
+  },
+  {
+    id: "team-cron-axis-discovery",
+    description: "Discover potential new axes — Monday 08:00",
+    type: "cron",
+    config: { schedule: "0 8 * * 1" },
+    routine: "team:knowledge-axis-discovery",
+    cooldown_s: 3600,
+    max_per_day: 1,
+  },
+];
+
 const RECURRING_JOBS = [
   {
     id: "team-cron-cartography",
@@ -177,5 +307,33 @@ export function bootstrapAutonomousTeam() {
     provisioned++;
   }
 
-  return { provisioned, residents: RESIDENTS.length, jobs: RECURRING_JOBS.length };
+  // 4. Knowledge layer : routines (toujours enregistrées, déclenchables manuellement
+  //    via run_routine) + 2 triggers (1 channel_match auto + 1 cron weekly).
+  for (const routine of KNOWLEDGE_ROUTINES) {
+    registerRoutine(routine);
+  }
+  for (const tr of KNOWLEDGE_TRIGGERS) {
+    if (existing.has(tr.id) && !reset) continue;
+    registerTrigger({
+      id: tr.id,
+      type: tr.type,
+      config: tr.config,
+      action: {
+        type: "run_routine",
+        params: { id: tr.routine },
+      },
+      cooldown_s: tr.cooldown_s ?? 60,
+      max_per_day: tr.max_per_day ?? 24,
+      description: tr.description,
+    });
+    provisioned++;
+  }
+
+  return {
+    provisioned,
+    residents: RESIDENTS.length,
+    jobs: RECURRING_JOBS.length,
+    knowledge_routines: KNOWLEDGE_ROUTINES.length,
+    knowledge_triggers: KNOWLEDGE_TRIGGERS.length,
+  };
 }

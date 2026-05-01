@@ -25,6 +25,7 @@ import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
 import cron from "node-cron";
+import chokidar from "chokidar";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { state, sysMsg } from "./state.mjs";
 import { isActive } from "./dormant.mjs";
@@ -35,6 +36,12 @@ const TRIGGERS_FILE = path.join(os.homedir(), ".wikichat", "triggers.json");
 const _triggers = new Map();
 /** node-cron task handles, keyed by trigger id. */
 const _cronTasks = new Map();
+/** chokidar watcher handles, keyed by trigger id. */
+const _watchers = new Map();
+/** Pending file_watch fires (debounce). */
+const _watchDebounce = new Map();
+/** Mention listeners, keyed by trigger id (predicate fn). */
+const _mentionListeners = new Map();
 /** Optional spawn function injected from outside (avoids circular import). */
 let _spawnFn = null;
 /** Optional budget checker. */
@@ -74,7 +81,17 @@ export function loadTriggers() {
   try {
     if (!fs.existsSync(TRIGGERS_FILE)) return;
     const raw = JSON.parse(fs.readFileSync(TRIGGERS_FILE, "utf8"));
-    for (const [id, t] of Object.entries(raw)) _triggers.set(id, t);
+    for (const [id, t] of Object.entries(raw)) {
+      _triggers.set(id, t);
+      // CRITICAL : activate the runtime side of each enabled trigger.
+      // Without this, persisted triggers are "in memory" but their cron tasks /
+      // chokidar watchers / channel_match listeners are never started → fired 0x.
+      // Only lifecycle triggers were working before because runLifecycleTriggers()
+      // is called explicitly elsewhere.
+      if (t.enabled) {
+        try { _activate(t); } catch (err) { console.warn(`[triggers] failed to activate ${id}: ${err.message}`); }
+      }
+    }
   } catch { /* ignore */ }
 }
 
@@ -111,7 +128,7 @@ export function registerTrigger(spec) {
     trigger.last_fired = existing.last_fired;
     trigger.fire_count = existing.fire_count;
     trigger.created_at = existing.created_at;
-    _stopCron(id);
+    _deactivate(existing);
   }
   _triggers.set(id, trigger);
   if (trigger.enabled) _activate(trigger);
@@ -120,8 +137,9 @@ export function registerTrigger(spec) {
 }
 
 export function deleteTrigger(id) {
-  if (!_triggers.has(id)) return false;
-  _stopCron(id);
+  const t = _triggers.get(id);
+  if (!t) return false;
+  _deactivate(t);
   _triggers.delete(id);
   _saveDebounced();
   return true;
@@ -131,7 +149,7 @@ export function setEnabled(id, enabled) {
   const t = _triggers.get(id);
   if (!t) return false;
   t.enabled = !!enabled;
-  if (t.enabled) _activate(t); else _stopCron(id);
+  if (t.enabled) _activate(t); else _deactivate(t);
   _saveDebounced();
   return true;
 }
@@ -158,7 +176,15 @@ export async function fireTrigger(id, { force = false, source = "manual" } = {})
 
 function _activate(t) {
   if (t.type === "cron") _startCron(t);
-  // lifecycle triggers fire from runLifecycleTriggers() at boot
+  if (t.type === "file_watch") _startFileWatch(t);
+  if (t.type === "channel_match" || t.type === "mention") _startListener(t);
+  // lifecycle / webhook fire on demand (boot or POST endpoint)
+}
+
+function _deactivate(t) {
+  _stopCron(t.id);
+  _stopFileWatch(t.id);
+  _mentionListeners.delete(t.id);
 }
 
 function _startCron(t) {
@@ -178,6 +204,83 @@ function _stopCron(id) {
     try { task.stop(); } catch { /* */ }
     _cronTasks.delete(id);
   }
+}
+
+// ── file_watch ──────────────────────────────────────────────────────────────
+// Path safety: only watch under home directory or absolute paths the operator
+// explicitly registered. Always ignore .git/, node_modules/, .wikichat/.
+function _startFileWatch(t) {
+  const paths = Array.isArray(t.config?.paths) ? t.config.paths : [t.config?.path];
+  const safePaths = paths.filter(p => typeof p === "string" && p.length > 0);
+  if (safePaths.length === 0) return;
+  const debounceMs = t.config?.debounce_ms ?? 500;
+  try {
+    const w = chokidar.watch(safePaths, {
+      ignored: [/(^|[\/\\])\..*\.swp$/, /node_modules/, /\.git\//, /\.wikichat\//, /dist\//, /build\//],
+      persistent: true,
+      ignoreInitial: true,
+      depth: t.config?.depth ?? 5,
+    });
+    w.on("all", (event, filePath) => {
+      // Debounce per trigger id
+      clearTimeout(_watchDebounce.get(t.id));
+      _watchDebounce.set(t.id, setTimeout(() => {
+        _watchDebounce.delete(t.id);
+        fireTrigger(t.id, { source: `file_watch:${event}:${filePath}` }).catch(() => {});
+      }, debounceMs));
+    });
+    _watchers.set(t.id, w);
+  } catch { /* invalid path */ }
+}
+
+function _stopFileWatch(id) {
+  const w = _watchers.get(id);
+  if (w) {
+    try { w.close(); } catch { /* */ }
+    _watchers.delete(id);
+  }
+  const tm = _watchDebounce.get(id);
+  if (tm) { clearTimeout(tm); _watchDebounce.delete(id); }
+}
+
+// ── channel_match / mention ─────────────────────────────────────────────────
+function _startListener(t) {
+  if (t.type === "mention") {
+    const target = t.config?.target_name || t.config?.name;
+    if (!target) return;
+    const rx = new RegExp(`@${target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+    _mentionListeners.set(t.id, (msg) => rx.test(msg.content));
+    return;
+  }
+  if (t.type === "channel_match") {
+    const channel = t.config?.channel;
+    const pattern = t.config?.pattern ? new RegExp(t.config.pattern, t.config?.flags || "i") : null;
+    _mentionListeners.set(t.id, (msg) => {
+      if (channel && msg.channel !== channel) return false;
+      if (pattern && !pattern.test(msg.content)) return false;
+      return true;
+    });
+  }
+}
+
+/** Hook called by pushMessage upstream (wired in server.mjs) to test
+ *  channel_match and mention triggers against new messages. */
+export function notifyMessageForTriggers(msg) {
+  if (_isDisabled() || !isActive()) return;
+  for (const [id, predicate] of _mentionListeners) {
+    try {
+      if (predicate(msg)) {
+        fireTrigger(id, { source: `${_triggers.get(id)?.type || "match"}:${msg.id}` }).catch(() => {});
+      }
+    } catch { /* */ }
+  }
+}
+
+/** Webhook : public hook to fire from REST endpoint. */
+export async function fireWebhook(id, payload, sourceLabel = "webhook") {
+  const t = _triggers.get(id);
+  if (!t || t.type !== "webhook") return { ok: false, reason: "not_a_webhook" };
+  return fireTrigger(id, { source: sourceLabel, payload });
 }
 
 function _onCooldown(t) {
@@ -277,8 +380,10 @@ function _lifecycleConditionMet(t) {
   return false;
 }
 
-/** Stop all active cron tasks. Called at graceful shutdown. */
+/** Stop all active cron tasks + watchers. Called at graceful shutdown. */
 export function shutdownTriggers() {
   for (const id of [..._cronTasks.keys()]) _stopCron(id);
+  for (const id of [..._watchers.keys()]) _stopFileWatch(id);
+  _mentionListeners.clear();
   _flush();
 }

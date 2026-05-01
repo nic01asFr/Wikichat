@@ -597,7 +597,15 @@ export function registerTools(server, sessionId) {
         targetChannel = res.channel;
         isDM = true;
       } else if (!state.channels.has(channel)) {
-        return txt(`❌ Canal "#${channel}" inexistant.`);
+        // Auto-create channel : un share_artifact sur un canal libre/topic-driven
+        // ne doit pas échouer (sinon les triggers channel_match sur des canaux
+        // pas-encore-créés ne firent jamais).
+        state.channels.set(channel, {
+          name: channel,
+          description: `Canal auto-créé par share_artifact (${senderName})`,
+          createdBy: senderName,
+          createdAt: new Date(),
+        });
       }
 
       const msg = pushMessage({
@@ -741,7 +749,7 @@ export function registerTools(server, sessionId) {
     async ({ project, task, description }) => {
       const name = getSessionName(sessionId);
       if (!state.projects.has(project)) {
-        state.projects.set(project, { name: project, description: "", repo: null, stack: [], relations: [], status: "active", decisions: [], open_questions: [], blockers: [], tasks: new Map(), createdBy: name, createdAt: new Date() });
+        state.projects.set(project, { name: project, description: "", repo: null, stack: [], relations: [], status: "active", decisions: [], open_questions: [], blockers: [], tasks: new Map(), closure: null, createdBy: name, createdAt: new Date() });
       }
       const proj = state.projects.get(project);
       const existing = proj.tasks.get(task);
@@ -814,7 +822,7 @@ export function registerTools(server, sessionId) {
     async ({ name, description, repo, stack, relations, status }) => {
       const ownerName = getSessionName(sessionId);
       const existing = state.projects.get(name);
-      const proj = existing ?? { name, tasks: new Map(), decisions: [], open_questions: [], blockers: [], createdBy: ownerName, createdAt: new Date() };
+      const proj = existing ?? { name, tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null, createdBy: ownerName, createdAt: new Date() };
       Object.assign(proj, { description, repo: repo ?? proj.repo, stack: stack ?? proj.stack ?? [], relations: relations ?? proj.relations ?? [], status: status ?? proj.status, updatedAt: new Date(), updatedBy: ownerName });
       state.projects.set(name, proj);
       saveProject(proj);
@@ -829,10 +837,260 @@ export function registerTools(server, sessionId) {
     const lines = [...state.projects.values()].map(p => {
       const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
       const active = [...p.tasks.values()].filter(t => t.status === "active").length;
-      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${p.status ? `\n    📊 ${p.status}` : ""}`;
+      const closedFlag = p.closure ? " | 🏁 closed" : "";
+      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${p.status ? `\n    📊 ${p.status}` : ""}${closedFlag}`;
     });
     return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail`);
   });
+
+  server.tool(
+    "close_project",
+    "Clôturer un projet : capture documentation/livrables/rétro/capitalisation, marque status='closed', broadcast un artifact de clôture sur #library pour absorption par le Librarian. " +
+    "Si auto=true (défaut), spawne un agent Closer headless qui lit l'état du projet + artefacts et remplit les sections manquantes. " +
+    "Sinon, fournir directement les 4 sections via le paramètre `closure`.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      auto: z.boolean().default(true).describe("Si true, spawne un agent Closer pour rédiger les sections. Sinon utilise `closure` directement."),
+      closure: z.object({
+        documentation: z.string().describe("Ce qui est documenté, où le trouver"),
+        deliverables: z.string().describe("Ce qui a été livré, statut de chaque livrable"),
+        retro: z.string().describe("Ce qui a marché, ce qui n'a pas marché, leçons"),
+        capitalisation: z.string().describe("Ce qui est réutilisable ailleurs (patterns, snippets, décisions transférables)"),
+      }).optional(),
+      repo_path: z.string().optional().describe("Chemin du repo si auto=true (sinon process.cwd())"),
+    },
+    async ({ project, auto, closure, repo_path }) => {
+      const name = getSessionName(sessionId);
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable. Liste avec list_projects().`);
+      if (proj.closure) return txt(`⚠️ Projet "${project}" déjà clôturé le ${new Date(proj.closure.closedAt).toLocaleDateString("fr-FR")} par ${proj.closure.closedBy}.\n💡 Pour ré-ouvrir, édite manuellement projects/${project}.json.`);
+
+      // Mode auto : spawn Closer headless qui audite et remplit les 4 sections.
+      if (auto && !closure) {
+        const repo = repo_path || process.cwd();
+        const closerPrompt =
+          `Tu es Closer, agent de clôture WikiChat. Lis docs/roles/closer.md.\n\n` +
+          `MISSION : produire un artifact de clôture pour le projet "${project}".\n\n` +
+          `BOUCLE :\n` +
+          `1. register(name="Closer-${project.slice(0,12)}", role="closer", agent_type="headless")\n` +
+          `2. Lis projects/${project}.json (tasks, decisions, blockers, open_questions)\n` +
+          `3. Lis .wikichat/artifacts/ (artefacts produits pendant le projet)\n` +
+          `4. Produis 4 sections dans un seul artifact markdown :\n` +
+          `   ## Documentation\n   ## Livrables\n   ## Rétrospective\n   ## Capitalisation\n` +
+          `5. share_artifact(channel="library", title="Closure: ${project}", artifact_type="text", content=<les 4 sections>)\n` +
+          `6. Appelle close_project(project="${project}", auto=false, closure={ documentation, deliverables, retro, capitalisation })\n` +
+          `7. Sors.`;
+        const ticketId = randomUUID().slice(0, 8);
+        state.spawnTickets.set(ticketId, {
+          id: ticketId, name: `Closer-${project.slice(0,12)}`, mode: "headless", repo,
+          spawnedBy: name, spawnerId: sessionId,
+          status: "running", createdAt: new Date(),
+          completedAt: null, result: null,
+        });
+        spawnHeadless(repo, closerPrompt, { name: `Closer-${project.slice(0,12)}`, role: "closer", spawnedBy: name }).then(res => {
+          const t = state.spawnTickets.get(ticketId);
+          if (t) {
+            t.status = res.success ? "completed" : "failed";
+            t.completedAt = new Date();
+            t.result = { success: res.success, exitCode: res.exitCode };
+          }
+          notify("__tickets__", null);
+        }).catch(() => {});
+        sysMsg("coordination", `🏁 ${name} déclenche la clôture de "${project}" — Closer spawné (ticket ${ticketId}).`);
+        notify("coordination", sessionId);
+        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Suis l'avancée via list_spawned() ou poll_ticket("${ticketId}").`);
+      }
+
+      // Mode manuel : closure fournie directement.
+      if (!closure) return txt(`❌ Si auto=false, le paramètre 'closure' est requis (4 sections : documentation, deliverables, retro, capitalisation).`);
+
+      proj.closure = {
+        documentation: closure.documentation,
+        deliverables: closure.deliverables,
+        retro: closure.retro,
+        capitalisation: closure.capitalisation,
+        closedBy: name,
+        closedAt: new Date().toISOString(),
+      };
+      proj.status = "closed";
+      proj.updatedAt = new Date();
+      proj.updatedBy = name;
+      saveProject(proj);
+
+      // Broadcast sur #library pour que le Librarian absorbe la capitalisation.
+      if (!state.channels.has("library")) {
+        state.channels.set("library", { name: "library", description: "Knowledge base et closures de projets", createdBy: "system", createdAt: new Date() });
+      }
+      pushMessage({
+        id: randomUUID(),
+        from: sessionId, fromName: name,
+        channel: "library",
+        content:
+          `📎 Closure: ${project}\n${"─".repeat(40)}\n` +
+          `## Documentation\n${closure.documentation}\n\n` +
+          `## Livrables\n${closure.deliverables}\n\n` +
+          `## Rétrospective\n${closure.retro}\n\n` +
+          `## Capitalisation\n${closure.capitalisation}\n` +
+          `${"─".repeat(40)}`,
+        type: "artifact",
+        timestamp: new Date(),
+      });
+      notify("library", sessionId);
+
+      sysMsg("coordination", `🏁 ${name} a clôturé le projet "${project}".`);
+      notify("coordination", sessionId);
+      return txt(`🏁 Projet "${project}" clôturé.\n📚 Closure persistée dans projects/${project}.json.\n📡 Artifact partagé sur #library — le Librarian l'absorbera dans la KB transverse au prochain digest.`);
+    }
+  );
+
+  server.tool(
+    "purge_registry",
+    "Retire du registry (~/.wikichat/registry.json) les projets non-substantiels : pas de CLAUDE.md sérieux (<200 chars) ET aucun artefact dans .wikichat/artifacts/. " +
+    "Par défaut dry_run=true : retourne la liste sans modifier. dry_run=false applique. Réduit drastiquement le coût des cleanup ticks.",
+    {
+      dry_run: z.boolean().default(true).describe("Si true, retourne la liste sans modifier le registry. Si false, applique."),
+      min_claude_md_bytes: z.number().default(200).describe("Seuil au-dessous duquel un CLAUDE.md est considéré non-substantiel"),
+    },
+    async ({ dry_run, min_claude_md_bytes }) => {
+      const registry = loadRegistry();
+      const keep = [];
+      const drop = [];
+      for (const p of registry.projects) {
+        if (!p.path) { drop.push({ slug: p.slug, reason: "no path" }); continue; }
+        if (!fs.existsSync(p.path)) { drop.push({ slug: p.slug, reason: "path missing" }); continue; }
+        // Substantial CLAUDE.md ?
+        const claudeMdPath = path.join(p.path, "CLAUDE.md");
+        let claudeMdSize = 0;
+        try { claudeMdSize = fs.statSync(claudeMdPath).size; } catch { /* absent */ }
+        // Non-empty .wikichat/artifacts ?
+        const artifactsDir = path.join(p.path, ".wikichat", "artifacts");
+        let artifactCount = 0;
+        try { artifactCount = fs.readdirSync(artifactsDir).filter(f => /\.(md|json|txt)$/.test(f)).length; } catch { /* absent */ }
+        // Keep if EITHER signal is positive
+        if (claudeMdSize >= min_claude_md_bytes || artifactCount > 0) {
+          keep.push({ slug: p.slug, claudeMdSize, artifactCount });
+        } else {
+          drop.push({ slug: p.slug, reason: `claudeMd=${claudeMdSize}B artifacts=${artifactCount}` });
+        }
+      }
+      let summary = `📦 Registry: ${registry.projects.length} projets total\n` +
+                    `  ✅ Keep: ${keep.length}\n` +
+                    `  🗑️  Drop: ${drop.length}\n\n`;
+      summary += "**Drop list (top 30):**\n";
+      summary += drop.slice(0, 30).map(d => `  • ${d.slug} — ${d.reason}`).join("\n");
+      if (drop.length > 30) summary += `\n  …et ${drop.length - 30} autres.`;
+      if (dry_run) {
+        summary = `🔍 **DRY RUN** — registry non modifié. Re-appelle avec dry_run=false pour appliquer.\n\n` + summary;
+        return txt(summary);
+      }
+      // Apply : keep only the kept slugs.
+      const keepSet = new Set(keep.map(k => k.slug));
+      registry.projects = registry.projects.filter(p => keepSet.has(p.slug));
+      saveRegistry(registry);
+      sysMsg("coordination", `🗑️ ${getSessionName(sessionId)} a purgé le registry : ${drop.length} projets retirés (kept ${keep.length}).`);
+      notify("coordination", sessionId);
+      return txt(`✅ **APPLIQUÉ** — ${drop.length} projets retirés du registry, ${keep.length} conservés.\n\n` + summary);
+    }
+  );
+
+  server.tool(
+    "search_knowledge",
+    "Cherche en full-text dans la KB : ~/.wikichat/knowledge/*.md (Compiled Truth transverse) + <projet>/.wikichat/knowledge/*.md (par projet du registry). " +
+    "Scoring : termes dans titre (×3), headers (×2), corps (×1). Retourne top-K avec extrait contexte.",
+    {
+      query: z.string().describe("Requête en mots-clés (ex: 'grist widget standalone', 'mcp tools consolidés')"),
+      scope: z.enum(["central", "projects", "all"]).default("all").describe("'central' = ~/.wikichat/knowledge/ uniquement, 'projects' = par-projet uniquement, 'all' = les deux"),
+      limit: z.number().default(5).describe("Top-K résultats à retourner"),
+    },
+    async ({ query, scope, limit }) => {
+      const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+      if (terms.length === 0) return txt("⚠️ Query vide ou trop courte.");
+
+      const candidates = [];
+      const seenPaths = new Set(); // dedup by absolute path (e.g. project="Omen" with path=~ collides with central)
+      const addCandidate = (source, p) => {
+        let abs;
+        try { abs = fs.realpathSync(p); } catch { abs = path.resolve(p); }
+        if (seenPaths.has(abs)) return;
+        seenPaths.add(abs);
+        candidates.push({ source, path: abs });
+      };
+      // 1. Central knowledge dir
+      const homeDir = process.env.USERPROFILE || process.env.HOME || ".";
+      const centralDir = path.join(homeDir, ".wikichat", "knowledge");
+      if (scope === "central" || scope === "all") {
+        try {
+          for (const entry of fs.readdirSync(centralDir, { withFileTypes: true })) {
+            if (entry.isFile() && entry.name.endsWith(".md")) {
+              addCandidate("central", path.join(centralDir, entry.name));
+            }
+          }
+        } catch { /* central dir absent */ }
+      }
+      // 2. Per-project knowledge dirs (via registry)
+      if (scope === "projects" || scope === "all") {
+        try {
+          const reg = loadRegistry();
+          for (const p of reg.projects) {
+            if (!p.path) continue;
+            const projKb = path.join(p.path, ".wikichat", "knowledge");
+            try {
+              for (const entry of fs.readdirSync(projKb, { withFileTypes: true })) {
+                if (entry.isFile() && entry.name.endsWith(".md")) {
+                  addCandidate(p.slug || p.name, path.join(projKb, entry.name));
+                }
+              }
+            } catch { /* project has no knowledge/ */ }
+          }
+        } catch { /* registry empty */ }
+      }
+
+      if (candidates.length === 0) return txt(`📭 Aucun fichier de connaissance trouvé (scope=${scope}).\n💡 Vérifier ~/.wikichat/knowledge/ ou les .wikichat/knowledge/ des projets du registry.`);
+
+      // 3. Score each candidate
+      const results = [];
+      for (const c of candidates) {
+        let content;
+        try { content = fs.readFileSync(c.path, "utf8"); } catch { continue; }
+        const lower = content.toLowerCase();
+        // Extract title (first H1 or filename)
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        const title = titleMatch ? titleMatch[1].trim() : path.basename(c.path, ".md");
+        // Score
+        let score = 0;
+        const headers = [...content.matchAll(/^#{1,3}\s+(.+)$/gm)].map(m => m[1].toLowerCase());
+        for (const term of terms) {
+          // Title weight ×3
+          if (title.toLowerCase().includes(term)) score += 3;
+          // Headers weight ×2
+          for (const h of headers) if (h.includes(term)) score += 2;
+          // Body weight ×1 (count occurrences, capped to 10 per term to avoid spam)
+          const matches = lower.split(term).length - 1;
+          score += Math.min(matches, 10);
+        }
+        if (score === 0) continue;
+        // Build excerpt around first match
+        let excerptStart = -1;
+        for (const term of terms) {
+          const idx = lower.indexOf(term);
+          if (idx >= 0 && (excerptStart < 0 || idx < excerptStart)) excerptStart = idx;
+        }
+        const excerptFrom = Math.max(0, excerptStart - 80);
+        const excerpt = content.slice(excerptFrom, excerptFrom + 280).replace(/\s+/g, " ").trim();
+        results.push({ source: c.source, path: c.path, title, score, excerpt });
+      }
+
+      results.sort((a, b) => b.score - a.score);
+      const top = results.slice(0, limit);
+
+      if (top.length === 0) return txt(`🔍 Aucun match pour "${query}" (scope=${scope}, ${candidates.length} fichier(s) scannés).`);
+
+      const lines = top.map((r, i) =>
+        `**${i + 1}. ${r.title}** (score=${r.score})\n   📁 [${r.source}] ${r.path}\n   📄 …${r.excerpt}…`
+      );
+      return txt(`🔍 ${top.length}/${results.length} match(s) pour "${query}" (${candidates.length} fichier(s) KB scannés) :\n\n${lines.join("\n\n")}`);
+    }
+  );
 
   // ══ SPAWN ═════════════════════════════════════════════════════════════════════
 
@@ -1300,13 +1558,16 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "register_trigger",
-    "Enregistre un trigger (cron, lifecycle, …) qui exécutera une action quand son événement survient. Persisté dans ~/.wikichat/triggers.json.",
+    "Enregistre un trigger qui exécutera une action quand son événement survient. " +
+    "Types : cron (schedule cron), lifecycle (au boot), file_watch (chokidar sur paths), " +
+    "mention (@Name dans message), channel_match (regex sur message d'un canal), webhook (POST endpoint). " +
+    "Actions : spawn_session, broadcast, run_routine. Persisté dans ~/.wikichat/triggers.json.",
     {
       id: z.string().optional().describe("ID stable (sinon UUID auto)"),
-      type: z.enum(["cron", "lifecycle"]).describe("Type d'événement"),
-      config: z.any().optional().describe("Config spécifique au type (ex: {schedule: '0 22 * * *'})"),
-      action_type: z.enum(["spawn_session", "broadcast"]).describe("Type d'action à exécuter"),
-      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast)"),
+      type: z.enum(["cron", "lifecycle", "file_watch", "mention", "channel_match", "webhook"]).describe("Type d'événement"),
+      config: z.any().optional().describe("Config spécifique : cron→{schedule}, file_watch→{paths,debounce_ms,depth}, mention→{target_name}, channel_match→{channel,pattern,flags}"),
+      action_type: z.enum(["spawn_session", "broadcast", "run_routine"]).describe("Type d'action à exécuter"),
+      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast, {id} pour run_routine)"),
       cooldown_s: z.number().optional().describe("Délai minimum entre 2 fires (défaut 30s)"),
       max_per_day: z.number().optional().describe("Cap quotidien (défaut 100)"),
       description: z.string().optional(),

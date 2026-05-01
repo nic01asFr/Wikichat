@@ -7,13 +7,69 @@
 ## Commands
 
 ```bash
-npm start                    # Start server (localhost:3777)
+npm start                    # Start server (localhost:3777, dormant team)
+npm run start:team           # Start server + autonomous team (Sentinel/Librarian/Orchestrator daemons)
 npm run dev                  # Start with auto-reload
 node test-e2e.mjs            # E2E tests (server must be running)
 PORT=3777 HOST=127.0.0.1 npm start  # Override defaults
 ```
 
 Dashboard: `http://localhost:3777/dashboard`
+
+## Background service (recommandé)
+
+Le service est conçu pour tourner en tâche de fond, **dormant à 0% CPU** quand
+personne ne l'utilise, et qui s'éveille automatiquement quand tu ouvres Claude
+Code. Le boot est géré par l'OS (logon Windows / launchd macOS / systemd-user
+Linux).
+
+```bash
+node scripts/install-service.mjs --with-team   # auto-start au logon, team activée
+node scripts/uninstall-service.mjs             # désinstaller
+```
+
+Cycle de vie automatique :
+1. **Allumage machine** → service démarré, dormant (0% CPU, triggers cron schedulés mais ne firent pas)
+2. **Tu ouvres Claude Code** → register de toi-même → `dormant_gate` s'ouvre → résidents spawn → background work démarre
+3. **Tu fermes Claude Code** → 5min grace period → résidents tués → idle gate kicks in → 0% CPU
+4. **22h sans agent ouvert** → digest skip (dormant). Avec agent ouvert → Librarian fait son boulot.
+
+### Variables d'environnement utiles
+
+- `WIKICHAT_AUTONOMOUS_TEAM=1` : active la team (sinon triggers décoratifs)
+- `WIKICHAT_PRINCIPAL_GATE` : `any-named` (défaut) | `strict` | `0`
+  - `any-named` : tout session non-anonyme registered active la team
+  - `strict` : seul `WIKICHAT_PRINCIPAL_AGENT` (défaut "Claude-Code") compte
+  - `0` : pas de gate principal (registry seul décide)
+- `WIKICHAT_DORMANT_DISABLED=1` : toujours actif (legacy, déconseillé)
+- `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant kill des résidents (défaut 5min)
+
+## Distribution principle
+
+**Le contenu vit dans les projets, WikiChat ne fait que pointer.**
+
+- `<projet>/.wikichat/artifacts/` — artefacts produits par les agents
+- `<projet>/.wikichat/queue/` — actions offline (recovery au boot)
+- `<projet>/.wikichat/state-snapshot.json` — git/files snapshot
+- `<projet>/.wikichat/project-state.json` — **state du projet** : tasks, decisions, blockers, closure (anciennement centralisé dans `wikichat/projects/<slug>.json`, migré local automatiquement à la 1ère save)
+- `<projet>/.wikichat/instructions.md` + `context.json` — boilerplate par projet
+- `<projet>/.wikichat/roles/` — overrides locaux des rôles
+
+Côté wikichat (mairie, légitimement central) :
+- `~/.wikichat/registry.json` — index des paths projet, **enrichi avec `github` field** (URL remote, owner, repo, visibility) détecté par scanner via `git remote`
+- `~/.wikichat/triggers.json` — config triggers
+- `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
+- `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse), markdown plain
+- `wikichat-repo/.wikichat/messages.json` — last 200 messages (fabric coordination, transitoire)
+- `wikichat-repo/projects/` — fallback pour projets déclarés sans repo réel
+
+### Sources externes (GitHub, APIs) — DÉLÉGATION aux agents
+
+WikiChat ne fetche jamais GitHub/GitLab/APIs lui-même. Le scanner enrichit le registry avec `github.url` détecté localement, et les prompts d'agents (Librarian-Compiler, Librarian-Absorber) mentionnent "si tu as des tools GitHub MCP disponibles, sers-t'en". Cela évite de gérer auth/rate-limiting/cache côté wikichat — l'utilisateur a déjà son tooling MCP configuré, les agents l'utilisent à la demande.
+
+Pattern : `wikichat orchestre + state local`, `agents exécutent + tool use`. Les sources externes deviennent des capacités d'agents, pas des features wikichat.
+
+Bénéfice : `git add .wikichat/` dans chaque projet sauvegarde naturellement la connaissance projet. Tu peux déplacer un projet entre machines, sa state suit.
 
 ## Architecture
 
@@ -44,15 +100,20 @@ src/map-generator.mjs — Thematic island map generation from registry
 - **daemon**: Persistent agent using `claude -p` with poll_messages loop prompt. Auto-respawn with exponential backoff (max 5 attempts, 3 concurrent). Uses Haiku by default for speed.
 - **interactive**: Opens a terminal window with `claude` in interactive mode.
 
-## MCP Tools (20 total)
+## MCP Tools (41 total)
 
-**Identity:** register, set_status, get_context
+**Identity:** register, set_status, get_context, get_briefing, remember, recall, forget
 **Messaging:** send_message, read_messages, poll_messages, broadcast, share_artifact
 **Channels:** list_sessions, list_channels, create_channel
 **Coordination:** declare_capabilities, declare_delay
 **Tasks:** claim_task, release_task
-**Projects:** declare_project, list_projects, scan_projects
-**Spawning:** spawn_session, list_spawned
+**Projects:** declare_project, list_projects, close_project, purge_registry, scan_projects
+**Knowledge:** search_knowledge
+**Spawning:** spawn_session, list_spawned, kill_spawn, poll_ticket
+**Dispatch:** dispatch, explain_dispatch, report_dispatch_outcome
+**Routines:** register_routine, list_routines, run_routine, delete_routine
+**Triggers:** register_trigger, list_triggers, fire_trigger, set_trigger_enabled, delete_trigger
+**Background jobs:** run_cartography, run_clustering
 
 ## REST API
 

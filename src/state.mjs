@@ -22,15 +22,20 @@ export const state = {
   projects: new Map(),
   /** Map<ticketId, SpawnTicket> — tracks spawned agent lifecycle */
   spawnTickets: new Map(),
+  /** Last user-relevant activity (push message, named session register, MCP tool call). */
+  lastActivityAt: Date.now(),
 };
+
+/** Mark user-relevant activity. Used by idle-gating to skip cleanup cycles when nothing is happening. */
+export function markActivity() { state.lastActivityAt = Date.now(); }
+/** Has there been activity in the last `windowMs`? */
+export function recentlyActive(windowMs = 5 * 60 * 1000) { return (Date.now() - state.lastActivityAt) < windowMs; }
 
 // Default channels
 for (const [name, description] of [
   ["general", "Canal par défaut pour les discussions générales"],
   ["coordination", "Canal pour la coordination de tâches entre agents"],
   ["system", "Événements système : connexions, déconnexions, statuts"],
-  ["museum-updates", "Donations et nouveaux exhibits du Musée (Blathers)"],
-  ["roost", "The Roost — conversations libres, tables thématiques, événements Brewster"],
 ]) {
   state.channels.set(name, {
     name, description, createdBy: "system",
@@ -53,12 +58,19 @@ export function rebuildChannelCounts() {
 /** Hook for persistence — set by persistence.mjs at boot */
 let _onMessagePush = null;
 export function setOnMessagePush(fn) { _onMessagePush = fn; }
+/** Listeners notified with each new message (msg) — used by triggers (channel_match, mention). */
+const _messageListeners = [];
+export function addMessageListener(fn) { _messageListeners.push(fn); }
 
 /** Add a message and evict oldest if over cap */
 export function pushMessage(msg) {
   // Update channel count cache
   const ch = msg.channel;
   if (ch) _channelCounts.set(ch, (_channelCounts.get(ch) || 0) + 1);
+
+  // Mark activity — but skip pure system noise (queue/artifact recovery, dashboard pings)
+  // to avoid keeping the service "active" forever just because background jobs poke channels.
+  if (msg.from !== "system") state.lastActivityAt = Date.now();
 
   state.messages.push(msg);
   if (state.messages.length > MAX_MESSAGES) {
@@ -75,6 +87,9 @@ export function pushMessage(msg) {
     }
   }
   if (_onMessagePush) _onMessagePush();
+  for (const fn of _messageListeners) {
+    try { fn(msg); } catch { /* listener errors must not break the message bus */ }
+  }
   return msg;
 }
 

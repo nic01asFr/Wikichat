@@ -25,21 +25,37 @@ Pas d'API externe, pas de cloud : tout s'exécute sur ta machine et consomme ton
 git clone https://github.com/nic01asFr/Wikichat.git
 cd Wikichat
 npm install
-npm start
 ```
 
-Le serveur écoute sur `http://localhost:3777`. Dashboard : `http://localhost:3777/dashboard`.
+### Mode 1 — Service de fond (recommandé)
+
+Auto-start au logon, dormant à 0% CPU au repos, s'éveille quand tu ouvres Claude Code :
+
+```bash
+node scripts/install-service.mjs --with-team   # Windows / macOS / Linux
+node scripts/uninstall-service.mjs             # désinstaller
+```
+
+### Mode 2 — Foreground
+
+```bash
+npm start              # serveur seul
+npm run start:team     # serveur + team autonome (Sentinel/Librarian/Orchestrator au boot)
+```
+
+Le serveur écoute sur `http://localhost:3777`. Dashboard : `http://localhost:3777/dashboard`. Cockpit (5 panneaux + drill-downs) : `http://localhost:3777/cockpit`.
 
 ### Variables d'environnement
 
 | Variable | Défaut | Description |
-|----------|--------|-------------|
-| `PORT`   | `3777` | Port d'écoute |
-| `HOST`   | `0.0.0.0` | Interface d'écoute |
-
-```bash
-PORT=4000 HOST=127.0.0.1 npm start
-```
+|---|---|---|
+| `PORT` | `3777` | Port HTTP/SSE |
+| `HOST` | `127.0.0.1` | Bind address |
+| `WIKICHAT_AUTONOMOUS_TEAM` | (off) | `1` active la team résidente |
+| `WIKICHAT_PRINCIPAL_GATE` | `any-named` | `any-named` / `strict` / `0` |
+| `WIKICHAT_DORMANT_GRACE_MS` | `300000` | Grace avant kill résidents |
+| `MAX_MESSAGES` | `2000` | Cap messages mémoire |
+| `WIKICHAT_MAX_SESSIONS` | `10` | Spawn budget concurrent |
 
 ### Brancher Claude Code
 
@@ -90,17 +106,36 @@ src/snapshot.mjs        — snapshots d'état et détection de changements
 
 ---
 
-## Outils MCP (20)
+## Modèle de stockage (distribution)
 
-| Catégorie      | Outils |
-|----------------|--------|
-| Identité       | `register`, `set_status`, `get_context` |
-| Messagerie     | `send_message`, `read_messages`, `poll_messages`, `broadcast`, `share_artifact` |
-| Canaux         | `list_sessions`, `list_channels`, `create_channel` |
-| Coordination   | `declare_capabilities`, `declare_delay` |
-| Tâches         | `claim_task`, `release_task` |
-| Projets        | `declare_project`, `list_projects`, `scan_projects` |
-| Spawning       | `spawn_session`, `list_spawned` |
+**Le contenu vit dans les projets, WikiChat ne fait que pointer.**
+
+- `<projet>/.wikichat/artifacts/` — artefacts produits par les agents
+- `<projet>/.wikichat/project-state.json` — tasks, decisions, blockers, **closure**
+- `<projet>/.wikichat/queue/` — actions offline (recovery au boot)
+- `<projet>/.wikichat/state-snapshot.json` — git/files snapshot
+- `~/.wikichat/registry.json` — index des paths projet (côté wikichat)
+- `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse)
+- `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
+
+`git add .wikichat/` dans chaque projet sauvegarde la connaissance projet naturellement. Tu peux déplacer un projet entre machines, sa state suit.
+
+## Outils MCP (42)
+
+| Catégorie | Outils |
+|---|---|
+| Identité (7) | `register`, `set_status`, `get_context`, `get_briefing`, `remember`, `recall`, `forget` |
+| Messagerie (5) | `send_message`, `read_messages`, `poll_messages`, `broadcast`, `share_artifact` |
+| Canaux (3) | `list_sessions`, `list_channels`, `create_channel` |
+| Coordination (2) | `declare_capabilities`, `declare_delay` |
+| Tâches (2) | `claim_task`, `release_task` |
+| Projets (5) | `declare_project`, `list_projects`, `close_project`, `purge_registry`, `scan_projects` |
+| Knowledge (1) | `search_knowledge` |
+| Spawning (4) | `spawn_session`, `list_spawned`, `kill_spawn`, `poll_ticket` |
+| Dispatch (3) | `dispatch`, `explain_dispatch`, `report_dispatch_outcome` |
+| Routines (4) | `register_routine`, `list_routines`, `run_routine`, `delete_routine` |
+| Triggers (5) | `register_trigger`, `list_triggers`, `fire_trigger`, `set_trigger_enabled`, `delete_trigger` |
+| Background jobs (2) | `run_cartography`, `run_clustering` |
 
 ### Workflow conversationnel recommandé
 
@@ -142,11 +177,22 @@ src/snapshot.mjs        — snapshots d'état et détection de changements
 
 ## Comportements automatiques
 
+- **Idle gate** : les 3 intervals (cleanup 5min / pickup 2min / dispatch 5s) skip leur body si aucune activité réelle (= push de message non-système OU MCP tool/resource call) depuis 5 min. Service à 0% CPU au repos.
+- **Dormant gate** : les triggers cron + lifecycle ne firent que si une session non-anonyme est registered (mode `any-named` par défaut). Sans agent humain, le service est passif.
 - **Watchdog** (60 s) : détection des sessions stales (>15 min), auto-respawn des daemons.
 - **Queue pickup** (2 min) : récupération des actions d'agents offline depuis `.wikichat/queue/`.
 - **Artifact recovery** (2 min) : récupération d'artifacts locaux depuis `.wikichat/artifacts/`.
-- **Cleanup** (5 min) : TTL de tâches expirées, GC des canaux DM, rotation de snapshots >7 j.
-- **Graceful shutdown** : SIGINT/SIGTERM → flush de tout l'état sur disque.
+- **Cleanup** (5 min, idle-gated, overlap-protected) : TTL tâches, GC DM, rotation snapshots >7j, change detection (par batch de 30 projets max via curseur round-robin).
+- **Graceful shutdown** : SIGINT/SIGTERM → flush state, kill résidents, ferme watchers chokidar.
+
+## Triggers
+
+- **cron** : `register_trigger(type:"cron", schedule:"0 22 * * *", action:{...})`
+- **lifecycle** : fire au boot du serveur (e.g. spawn des résidents)
+- **file_watch** : `chokidar` sur des paths, debounced
+- **mention** : pattern `@Name` dans un message
+- **channel_match** : regex sur le contenu d'un message d'un canal
+- **webhook** : `POST /api/triggers/webhook/<id>` depuis n'importe quel HTTP client
 
 ---
 

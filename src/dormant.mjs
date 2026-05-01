@@ -15,16 +15,24 @@
  * Tools `set_active(true/false)` allow manual override (admin only).
  *
  * Env :
- *   WIKICHAT_DORMANT_DISABLED=1  → always active (legacy behavior)
- *   WIKICHAT_PRINCIPAL_GATE=0    → don't require principal
- *   WIKICHAT_REGISTRY_GATE=0     → don't require ≥1 project
- *   WIKICHAT_PRINCIPAL_AGENT     → name of the principal (default "Claude-Code")
+ *   WIKICHAT_DORMANT_DISABLED=1     → always active (legacy behavior)
+ *   WIKICHAT_PRINCIPAL_GATE         → "any-named" (default) | "strict" | "0" (off).
+ *                                     any-named : tout session non-anonyme registered active la team.
+ *                                     strict    : seul le nom WIKICHAT_PRINCIPAL_AGENT compte (legacy).
+ *                                     0         : pas de gate principal (registry seul décide).
+ *   WIKICHAT_REGISTRY_GATE=0        → don't require ≥1 project
+ *   WIKICHAT_PRINCIPAL_AGENT        → name of the strict-mode principal (default "Claude-Code")
  */
 
 import { state } from "./state.mjs";
 
 const PRINCIPAL_NAME = process.env.WIKICHAT_PRINCIPAL_AGENT || "Claude-Code";
-const PRINCIPAL_GATE = process.env.WIKICHAT_PRINCIPAL_GATE !== "0";
+// Mode "any-named" (défaut depuis 2026-05) : tout session non-anonyme registered
+// fait office de principal. Le mode strict (nom exact) reste accessible via
+// WIKICHAT_PRINCIPAL_GATE=strict. "0" désactive complètement.
+const PRINCIPAL_GATE_MODE = process.env.WIKICHAT_PRINCIPAL_GATE === "strict"
+  ? "strict"
+  : (process.env.WIKICHAT_PRINCIPAL_GATE === "0" ? "off" : "any-named");
 const REGISTRY_GATE = process.env.WIKICHAT_REGISTRY_GATE !== "0";
 const DORMANT_DISABLED = process.env.WIKICHAT_DORMANT_DISABLED === "1";
 const GRACE_PERIOD_MS = parseInt(process.env.WIKICHAT_DORMANT_GRACE_MS || `${5 * 60 * 1000}`);
@@ -37,10 +45,16 @@ let _onSleep = [];
 
 export function principalIsLive() {
   for (const s of state.sessions.values()) {
-    if (s.name === PRINCIPAL_NAME && !s.name.startsWith("session-")) {
-      _principalLastSeen = Date.now();
-      return true;
+    // Skip anonymous sessions (the IDE's auto-reconnects).
+    if (!s.name || s.name.startsWith("session-")) continue;
+    // Strict mode : exact name match (legacy behavior).
+    if (PRINCIPAL_GATE_MODE === "strict") {
+      if (s.name === PRINCIPAL_NAME) { _principalLastSeen = Date.now(); return true; }
+      continue;
     }
+    // any-named mode : any registered, non-anonymous session counts.
+    _principalLastSeen = Date.now();
+    return true;
   }
   return false;
 }
@@ -53,10 +67,11 @@ export function registryHasProjects() {
 export function isActive() {
   if (DORMANT_DISABLED) return true;
   if (_manualOverride !== null) return _manualOverride;
-  const principalOk = !PRINCIPAL_GATE || principalIsLive() ||
-    (_principalLastSeen && (Date.now() - _principalLastSeen) < GRACE_PERIOD_MS);
+  const principalGated = PRINCIPAL_GATE_MODE !== "off";
+  const inGrace = !!_principalLastSeen && (Date.now() - _principalLastSeen) < GRACE_PERIOD_MS;
+  const principalOk = !principalGated || principalIsLive() || inGrace;
   const registryOk = !REGISTRY_GATE || registryHasProjects();
-  return principalOk && registryOk;
+  return Boolean(principalOk && registryOk);
 }
 
 /** Detail of why we're active or dormant — used by the resource. */
@@ -73,7 +88,7 @@ export function status() {
     gracePeriodMs: GRACE_PERIOD_MS,
     secondsSincePrincipal: _principalLastSeen ? Math.round((Date.now() - _principalLastSeen) / 1000) : null,
     registryHasProjects: registryHasProjects(),
-    gates: { principal: PRINCIPAL_GATE, registry: REGISTRY_GATE },
+    gates: { principal: PRINCIPAL_GATE_MODE, registry: REGISTRY_GATE },
     dormantDisabled: DORMANT_DISABLED,
   };
 }
