@@ -81,7 +81,17 @@ export function loadTriggers() {
   try {
     if (!fs.existsSync(TRIGGERS_FILE)) return;
     const raw = JSON.parse(fs.readFileSync(TRIGGERS_FILE, "utf8"));
-    for (const [id, t] of Object.entries(raw)) _triggers.set(id, t);
+    for (const [id, t] of Object.entries(raw)) {
+      _triggers.set(id, t);
+      // CRITICAL : activate the runtime side of each enabled trigger.
+      // Without this, persisted triggers are "in memory" but their cron tasks /
+      // chokidar watchers / channel_match listeners are never started → fired 0x.
+      // Only lifecycle triggers were working before because runLifecycleTriggers()
+      // is called explicitly elsewhere.
+      if (t.enabled) {
+        try { _activate(t); } catch (err) { console.warn(`[triggers] failed to activate ${id}: ${err.message}`); }
+      }
+    }
   } catch { /* ignore */ }
 }
 

@@ -597,7 +597,15 @@ export function registerTools(server, sessionId) {
         targetChannel = res.channel;
         isDM = true;
       } else if (!state.channels.has(channel)) {
-        return txt(`❌ Canal "#${channel}" inexistant.`);
+        // Auto-create channel : un share_artifact sur un canal libre/topic-driven
+        // ne doit pas échouer (sinon les triggers channel_match sur des canaux
+        // pas-encore-créés ne firent jamais).
+        state.channels.set(channel, {
+          name: channel,
+          description: `Canal auto-créé par share_artifact (${senderName})`,
+          createdBy: senderName,
+          createdAt: new Date(),
+        });
       }
 
       const msg = pushMessage({
@@ -1550,13 +1558,16 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "register_trigger",
-    "Enregistre un trigger (cron, lifecycle, …) qui exécutera une action quand son événement survient. Persisté dans ~/.wikichat/triggers.json.",
+    "Enregistre un trigger qui exécutera une action quand son événement survient. " +
+    "Types : cron (schedule cron), lifecycle (au boot), file_watch (chokidar sur paths), " +
+    "mention (@Name dans message), channel_match (regex sur message d'un canal), webhook (POST endpoint). " +
+    "Actions : spawn_session, broadcast, run_routine. Persisté dans ~/.wikichat/triggers.json.",
     {
       id: z.string().optional().describe("ID stable (sinon UUID auto)"),
-      type: z.enum(["cron", "lifecycle"]).describe("Type d'événement"),
-      config: z.any().optional().describe("Config spécifique au type (ex: {schedule: '0 22 * * *'})"),
-      action_type: z.enum(["spawn_session", "broadcast"]).describe("Type d'action à exécuter"),
-      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast)"),
+      type: z.enum(["cron", "lifecycle", "file_watch", "mention", "channel_match", "webhook"]).describe("Type d'événement"),
+      config: z.any().optional().describe("Config spécifique : cron→{schedule}, file_watch→{paths,debounce_ms,depth}, mention→{target_name}, channel_match→{channel,pattern,flags}"),
+      action_type: z.enum(["spawn_session", "broadcast", "run_routine"]).describe("Type d'action à exécuter"),
+      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast, {id} pour run_routine)"),
       cooldown_s: z.number().optional().describe("Délai minimum entre 2 fires (défaut 30s)"),
       max_per_day: z.number().optional().describe("Cap quotidien (défaut 100)"),
       description: z.string().optional(),
