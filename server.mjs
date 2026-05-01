@@ -41,9 +41,16 @@ import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daem
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
+import { ensureUserOverlay } from "./src/overlay-installer.mjs";
 
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+
+// Auto-install Claude Code overlay (skill + slash commands + ~/.claude/CLAUDE.md
+// section) so any session that opens with wikichat MCP attached uses it
+// naturally. Idempotent — skips if already installed. Disable via
+// WIKICHAT_NO_OVERLAY_INSTALL=1.
+ensureUserOverlay();
 
 loadChannels();   // Restore persisted channels
 loadMessages();   // Restore recent messages
