@@ -56,7 +56,7 @@ const RESIDENTS = [
 const KNOWLEDGE_ROUTINES = [
   {
     id: "team:knowledge-compile-axis",
-    description: "Spawne un Librarian-Compiler headless qui produit ~/.wikichat/knowledge/{topic}-axis.md à partir des projets du registry tagués sur ce topic",
+    description: "Spawne un Librarian-Compiler headless qui produit ~/.wikichat/knowledge/{topic}-axis.md. Travail séquencé en 3 phases bornées pour éviter le hang sur gros registry.",
     steps: [
       {
         action: "spawn",
@@ -65,14 +65,36 @@ const KNOWLEDGE_ROUTINES = [
           role: "librarian-compiler",
           mode: "headless",
           model: "sonnet",
-          task: "Tu es Librarian-Compiler. Mission : compiler ~/.wikichat/knowledge/{topic}-axis.md selon le format de référence (cf. grist-axis.md déjà compilé). " +
-            "1. register(name='LibrarianCompiler-{topic}', role='librarian-compiler', agent_type='headless'). " +
-            "2. list_projects() + scan_projects() pour identifier les projets liés au topic '{topic}' (par nom, slug, path, ou stack). " +
-            "3. Pour chaque projet pertinent : lire son CLAUDE.md, README.md, .wikichat/project-state.json, .wikichat/closure.md (si présents). " +
-            "4. Synthétiser selon les sections : TL;DR, trajectoire historique (dates de commit), briques disponibles, patterns récurrents validés, anti-patterns observés, liens inattendus, schéma de positionnement. " +
-            "5. share_artifact(channel='library', title='Compiled axis: {topic}', artifact_type='text', content=<le markdown complet>). " +
-            "6. Écrire le fichier dans ~/.wikichat/knowledge/{topic}-axis.md (utiliser write file tool si dispo). " +
-            "7. Sors. Pas de boucle, pas d'attente.",
+          task: "Tu es Librarian-Compiler. Mission : produire ~/.wikichat/knowledge/{topic}-axis.md, format inspiré de grist-axis.md.\n\n" +
+            "TRAVAIL EN 3 PHASES SÉQUENTIELLES, STRICTEMENT BORNÉES :\n\n" +
+            "**PHASE 1 — Discovery (max 60s)**\n" +
+            "1. register(name='LibrarianCompiler-{topic}-{ts}', role='librarian-compiler', agent_type='headless')\n" +
+            "2. list_projects() pour récupérer la liste\n" +
+            "3. Filtre : garde uniquement les projets dont le name OU slug OU path OU stack contient '{topic}' (case-insensitive)\n" +
+            "4. **CAP À 10 PROJETS MAX** — si plus, garde les 10 plus pertinents (priorité : match exact name > stack > path)\n" +
+            "5. Note la liste des 10 paths sélectionnés. Si 0 projet trouvé : poste sur #insights et sors immédiatement.\n\n" +
+            "**PHASE 2 — Read (max 90s, lecture minimale)**\n" +
+            "6. Pour chaque projet sélectionné, lis UNIQUEMENT :\n" +
+            "   - Les 50 PREMIÈRES LIGNES du CLAUDE.md (pas plus, pas le README, pas le project-state.json)\n" +
+            "   - Si CLAUDE.md absent : les 30 premières lignes du README.md\n" +
+            "7. Pour chaque projet, extrais 1 phrase de description et 1 ligne de stack/keywords\n\n" +
+            "**PHASE 3 — Synthesis (max 120s, écriture finale)**\n" +
+            "8. Produis le markdown avec ces sections (chacune ≤30 lignes) :\n" +
+            "   - Frontmatter YAML : type=axis, topic, last_compiled=2026-05-01, producer, status=DRAFT\n" +
+            "   - # Axe {topic} — synthèse transverse\n" +
+            "   - ## TL;DR (3-5 lignes)\n" +
+            "   - ## Briques disponibles (tableau projet | path | description courte)\n" +
+            "   - ## Patterns observés (3-5 patterns max, avec source)\n" +
+            "   - ## Pour démarrer un nouveau projet {topic} (3 conseils max)\n" +
+            "9. share_artifact(channel='library', title='Compiled axis: {topic}', artifact_type='text', content=<markdown>)\n" +
+            "10. Écris le fichier dans ~/.wikichat/knowledge/{topic}-axis.md\n" +
+            "11. Sors immédiatement.\n\n" +
+            "**RÈGLES CRITIQUES** :\n" +
+            "- NE LIS JAMAIS plus de 10 fichiers projets au total\n" +
+            "- NE LIS JAMAIS plus de 50 lignes par fichier\n" +
+            "- Si une phase dépasse son budget, passe à la suivante avec ce que tu as\n" +
+            "- Markdown final ≤ 200 lignes total\n" +
+            "- Sors propre, pas de boucle.",
         },
       },
     ],

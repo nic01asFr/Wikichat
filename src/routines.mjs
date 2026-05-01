@@ -175,6 +175,11 @@ export async function runRoutine(id, params = {}, opts = {}) {
 /** Replace `{name}` in any string field of step.params with values from
  *  params or previous step outputs. Returns a new step. */
 function _resolveStep(step, params, prevResults) {
+  // Auto-inject {ts} (Unix timestamp) so all spawned agents have a unique
+  // suffix without the caller having to provide it. Allows agents named
+  // "FooAgent-{ts}" to all get distinct names per spawn.
+  const enrichedParams = { ts: Math.floor(Date.now() / 1000), ...params };
+  params = enrichedParams;
   const interpolated = JSON.parse(JSON.stringify(step));
   function walk(obj) {
     if (typeof obj === "string") {
