@@ -48,6 +48,107 @@ const RESIDENTS = [
   },
 ];
 
+// Knowledge layer : 3 routines + 2 triggers pour entretenir la KB transverse
+// (~/.wikichat/knowledge/<topic>-axis.md) de manière automatique. S'appuie sur :
+//   - search_knowledge (MCP tool) pour cross-référencer
+//   - close_project broadcast sur #library (déjà existant)
+//   - channel_match trigger (Phase 6 récent)
+const KNOWLEDGE_ROUTINES = [
+  {
+    id: "team:knowledge-compile-axis",
+    description: "Spawne un Librarian-Compiler headless qui produit ~/.wikichat/knowledge/{topic}-axis.md à partir des projets du registry tagués sur ce topic",
+    steps: [
+      {
+        action: "spawn",
+        params: {
+          name: "LibrarianCompiler-{topic}-{ts}",
+          role: "librarian-compiler",
+          mode: "headless",
+          model: "sonnet",
+          task: "Tu es Librarian-Compiler. Mission : compiler ~/.wikichat/knowledge/{topic}-axis.md selon le format de référence (cf. grist-axis.md déjà compilé). " +
+            "1. register(name='LibrarianCompiler-{topic}', role='librarian-compiler', agent_type='headless'). " +
+            "2. list_projects() + scan_projects() pour identifier les projets liés au topic '{topic}' (par nom, slug, path, ou stack). " +
+            "3. Pour chaque projet pertinent : lire son CLAUDE.md, README.md, .wikichat/project-state.json, .wikichat/closure.md (si présents). " +
+            "4. Synthétiser selon les sections : TL;DR, trajectoire historique (dates de commit), briques disponibles, patterns récurrents validés, anti-patterns observés, liens inattendus, schéma de positionnement. " +
+            "5. share_artifact(channel='library', title='Compiled axis: {topic}', artifact_type='text', content=<le markdown complet>). " +
+            "6. Écrire le fichier dans ~/.wikichat/knowledge/{topic}-axis.md (utiliser write file tool si dispo). " +
+            "7. Sors. Pas de boucle, pas d'attente.",
+        },
+      },
+    ],
+  },
+  {
+    id: "team:knowledge-absorb-closure",
+    description: "Spawne un Librarian-Absorber qui ingère un artifact de closure dans l'axe pertinent",
+    steps: [
+      {
+        action: "spawn",
+        params: {
+          name: "LibrarianAbsorber-{ts}",
+          role: "librarian-absorber",
+          mode: "headless",
+          model: "haiku",
+          task: "Tu es Librarian-Absorber. Mission : ingérer le dernier artifact de closure de #library dans le bon axe de connaissance. " +
+            "1. register(name='LibrarianAbsorber-{ts}', role='librarian-absorber', agent_type='headless'). " +
+            "2. read_messages(channel='library', limit=5) pour trouver le dernier artifact 'Closure: <slug>'. " +
+            "3. search_knowledge(query=<topic principal du projet>, scope='central') pour identifier l'axe pertinent (ex: grist-axis.md). " +
+            "4. Si axe trouvé : lire l'axe, identifier la section pertinente (Briques disponibles, Patterns, Anti-patterns), append le contenu de la closure mappé. " +
+            "5. Si pas d'axe correspondant : créer un brouillon ~/.wikichat/knowledge/<topic>-axis.draft.md avec la closure et alerter sur #insights. " +
+            "6. Sors.",
+        },
+      },
+    ],
+  },
+  {
+    id: "team:knowledge-axis-discovery",
+    description: "Spawne un Discoverer qui scan le registry et propose des nouveaux axes orphelins",
+    steps: [
+      {
+        action: "spawn",
+        params: {
+          name: "AxisDiscoverer-{ts}",
+          role: "axis-discoverer",
+          mode: "headless",
+          model: "haiku",
+          task: "Tu es AxisDiscoverer. Mission : détecter les topics récurrents dans le registry qui n'ont pas encore d'axe compilé. " +
+            "1. register(name='AxisDiscoverer-{ts}', role='axis-discoverer', agent_type='headless'). " +
+            "2. list_projects() pour récupérer la liste. " +
+            "3. Pour chaque projet, extraire les keywords du nom + path + description. " +
+            "4. Compter les keywords récurrents (apparaissent dans 3+ projets). " +
+            "5. Lister les fichiers existants dans ~/.wikichat/knowledge/*-axis.md. " +
+            "6. Pour chaque keyword récurrent SANS axe existant : poster sur #insights 'Axe candidat : <keyword> (N projets concernés). Lance team:knowledge-compile-axis avec topic=<keyword> pour compiler.' " +
+            "7. Sors.",
+        },
+      },
+    ],
+  },
+];
+
+const KNOWLEDGE_TRIGGERS = [
+  {
+    id: "team-channel-library-closure",
+    description: "Quand un artifact de closure est posté sur #library, déclencher l'absorption automatique",
+    type: "channel_match",
+    config: {
+      channel: "library",
+      pattern: "^📎 Closure:",
+      flags: "m",
+    },
+    routine: "team:knowledge-absorb-closure",
+    cooldown_s: 30,
+    max_per_day: 50,
+  },
+  {
+    id: "team-cron-axis-discovery",
+    description: "Discover potential new axes — Monday 08:00",
+    type: "cron",
+    config: { schedule: "0 8 * * 1" },
+    routine: "team:knowledge-axis-discovery",
+    cooldown_s: 3600,
+    max_per_day: 1,
+  },
+];
+
 const RECURRING_JOBS = [
   {
     id: "team-cron-cartography",
@@ -177,5 +278,33 @@ export function bootstrapAutonomousTeam() {
     provisioned++;
   }
 
-  return { provisioned, residents: RESIDENTS.length, jobs: RECURRING_JOBS.length };
+  // 4. Knowledge layer : routines (toujours enregistrées, déclenchables manuellement
+  //    via run_routine) + 2 triggers (1 channel_match auto + 1 cron weekly).
+  for (const routine of KNOWLEDGE_ROUTINES) {
+    registerRoutine(routine);
+  }
+  for (const tr of KNOWLEDGE_TRIGGERS) {
+    if (existing.has(tr.id) && !reset) continue;
+    registerTrigger({
+      id: tr.id,
+      type: tr.type,
+      config: tr.config,
+      action: {
+        type: "run_routine",
+        params: { id: tr.routine },
+      },
+      cooldown_s: tr.cooldown_s ?? 60,
+      max_per_day: tr.max_per_day ?? 24,
+      description: tr.description,
+    });
+    provisioned++;
+  }
+
+  return {
+    provisioned,
+    residents: RESIDENTS.length,
+    jobs: RECURRING_JOBS.length,
+    knowledge_routines: KNOWLEDGE_ROUTINES.length,
+    knowledge_triggers: KNOWLEDGE_TRIGGERS.length,
+  };
 }
