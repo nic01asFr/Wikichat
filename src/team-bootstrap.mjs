@@ -116,14 +116,21 @@ const KNOWLEDGE_ROUTINES = [
           role: "librarian-absorber",
           mode: "headless",
           model: "haiku",
-          task: "Tu es Librarian-Absorber. Mission : ingérer le dernier artifact de closure de #library dans le bon axe de connaissance. " +
-            "1. register(name='LibrarianAbsorber-{ts}', role='librarian-absorber', agent_type='headless'). " +
-            "2. read_messages(channel='library', limit=5) pour trouver le dernier artifact 'Closure: <slug>'. " +
-            "3. search_knowledge(query=<topic principal du projet>, scope='central') pour identifier l'axe pertinent (ex: grist-axis.md). " +
-            "4. Si axe trouvé : lire l'axe, identifier la section pertinente (Briques disponibles, Patterns, Anti-patterns), append le contenu de la closure mappé. " +
-            "5. Si pas d'axe correspondant : créer un brouillon ~/.wikichat/knowledge/<topic>-axis.draft.md avec la closure et alerter sur #insights. " +
-            "6. **Optionnel** : si tu as des tools GitHub MCP disponibles ET le projet a un `github.url` (cf. list_projects), tu peux poster un commentaire ou créer une issue sur le repo GitHub pour signaler la closure (best-effort, ignore si pas de tools ou si fetch échoue). " +
-            "7. Sors.",
+          task: "Tu es Librarian-Absorber. Mission : ingérer le dernier artifact de closure de #library dans le bon axe de connaissance.\n\n" +
+            "BASH-FIRST : utilise curl/bash pour les lectures, MCP seulement pour les actions qui nécessitent le serveur.\n\n" +
+            "1. register(name='LibrarianAbsorber-{ts}', role='librarian-absorber', agent_type='headless') — seul appel MCP obligatoire au départ.\n\n" +
+            "2. [BASH] Lire les closures récentes de #library (0 token) :\n" +
+            "   CLOSURES=$(curl -s 'http://localhost:3777/api/messages?channel=library&since_minutes=60' | python -c \"import json,sys; msgs=[m for m in json.load(sys.stdin) if '📎 Closure:' in m.get('content','')]; print(msgs[-1]['content'][:3000] if msgs else '')\")\n" +
+            "   Si CLOSURES est vide → sors immédiatement sans action.\n\n" +
+            "3. [MCP] Identifier l'axe pertinent :\n" +
+            "   search_knowledge(query=<topic du projet extrait de la closure>, scope='central')\n" +
+            "   Utilise MCP ici car le scoring sémantique est nécessaire.\n\n" +
+            "4. Si axe trouvé : lire l'axe depuis ~/.wikichat/knowledge/ via Read tool, identifier la section pertinente, append le contenu mappé.\n\n" +
+            "5. Si pas d'axe : créer ~/.wikichat/knowledge/<topic>-axis.draft.md avec la closure.\n" +
+            "   [BASH] Alerter sur #insights via queue (0 token) :\n" +
+            "   echo '{\"type\":\"message\",\"agent\":\"LibrarianAbsorber-{ts}\",\"channel\":\"insights\",\"content\":\"📚 Nouvel axe KB créé (DRAFT) : <topic>-axis.draft.md\",\"ts\":\"'$(date -Iseconds)'\"}' > ~/.wikichat/queue/$(date +%s)-absorber.json\n\n" +
+            "6. [MCP optionnel] Si tu as des tools GitHub MCP ET le projet a github.url : poster un commentaire sur le repo (best-effort, ignore si échec).\n\n" +
+            "7. Sors. Ne pas boucler.",
         },
       },
     ],
@@ -139,14 +146,19 @@ const KNOWLEDGE_ROUTINES = [
           role: "axis-discoverer",
           mode: "headless",
           model: "haiku",
-          task: "Tu es AxisDiscoverer. Mission : détecter les topics récurrents dans le registry qui n'ont pas encore d'axe compilé. " +
-            "1. register(name='AxisDiscoverer-{ts}', role='axis-discoverer', agent_type='headless'). " +
-            "2. list_projects() pour récupérer la liste. " +
-            "3. Pour chaque projet, extraire les keywords du nom + path + description. " +
-            "4. Compter les keywords récurrents (apparaissent dans 3+ projets). " +
-            "5. Lister les fichiers existants dans ~/.wikichat/knowledge/*-axis.md. " +
-            "6. Pour chaque keyword récurrent SANS axe existant : poster sur #insights 'Axe candidat : <keyword> (N projets concernés). Lance team:knowledge-compile-axis avec topic=<keyword> pour compiler.' " +
-            "7. Sors.",
+          task: "Tu es AxisDiscoverer. Mission : détecter les topics récurrents dans le registry sans axe compilé.\n\n" +
+            "BASH-FIRST : toutes les lectures en bash, 1 seul appel MCP (register) + queue pour les alertes.\n\n" +
+            "1. register(name='AxisDiscoverer-{ts}', role='axis-discoverer', agent_type='headless') — seul appel MCP.\n\n" +
+            "2. [BASH] Récupérer les projets (0 token) :\n" +
+            "   PROJECTS=$(curl -s 'http://localhost:3777/api/projects' | python -c \"import json,sys; [print(p['name'], p.get('description','')[:50]) for p in json.load(sys.stdin)['projects'][:80]]\")\n\n" +
+            "3. [BASH] Extraire les keywords et compter :\n" +
+            "   Analyse $PROJECTS en python/awk — keywords = mots de 4+ chars dans name+description, compter ceux qui apparaissent 3+ fois.\n\n" +
+            "4. [BASH] Lister les axes existants (0 token) :\n" +
+            "   AXES=$(ls ~/.wikichat/knowledge/*-axis.md 2>/dev/null | xargs -I{} basename {} -axis.md)\n\n" +
+            "5. Pour chaque keyword récurrent SANS axe correspondant dans $AXES :\n" +
+            "   [BASH] Poster alerte via queue (0 token) :\n" +
+            "   echo '{\"type\":\"message\",\"agent\":\"AxisDiscoverer-{ts}\",\"channel\":\"insights\",\"content\":\"Axe candidat : <keyword> (N projets). Lance run_routine(\\\"team:knowledge-compile-axis\\\", {topic:\\\"<keyword>\\\"})\",\"ts\":\"'$(date -Iseconds)'\",\"status\":\"done\"}' > ~/.wikichat/queue/$(date +%s)-discoverer.json\n\n" +
+            "6. Sors.",
         },
       },
     ],

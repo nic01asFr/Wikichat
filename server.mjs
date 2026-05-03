@@ -732,10 +732,23 @@ app.post("/api/chat", (req, res) => {
 
 // GET /api/messages — fetch messages filtered by channel
 app.get("/api/messages", (req, res) => {
-  const { channel, limit = "50" } = req.query;
+  const { channel, limit = "50", since_id, since_minutes } = req.query;
   let msgs = state.messages;
   if (channel && channel !== "__all__") {
     msgs = msgs.filter(m => m.channel === channel);
+  }
+  // since_id : return only messages AFTER this id (exclusive) — enables incremental polling.
+  // If the id is not found (server restart, eviction) → return empty so caller knows
+  // it needs to re-sync. The caller should fall back to since_minutes on empty response.
+  if (since_id) {
+    const idx = msgs.findIndex(m => m.id === since_id);
+    if (idx >= 0) msgs = msgs.slice(idx + 1);
+    else msgs = []; // id not in current buffer → caller must re-sync
+  }
+  // since_minutes : return only messages from last N minutes
+  if (since_minutes) {
+    const cutoff = Date.now() - parseFloat(since_minutes) * 60 * 1000;
+    msgs = msgs.filter(m => new Date(m.timestamp).getTime() >= cutoff);
   }
   const n = Math.min(parseInt(limit) || 50, 200);
   res.json(msgs.slice(-n));

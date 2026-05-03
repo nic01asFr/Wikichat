@@ -70,8 +70,26 @@ mcp__wikichat__send_message(content="...", channel="...", status="done")
 
 **Lire les messages via curl bash (0 tokens) :**
 ```bash
-# Équivalent à poll_messages, 0 appel MCP
-curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5" | python -c "import json,sys; msgs=json.load(sys.stdin); [print(f'{m[\"fromName\"]}: {m[\"content\"][:100]}') for m in msgs]"
+# Récupérer les N dernières minutes (simple)
+curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5"
+
+# Polling incrémental avec since_id (plus efficace) :
+LAST_ID=""
+while true; do
+  if [ -z "$LAST_ID" ]; then
+    MSGS=$(curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5")
+  else
+    MSGS=$(curl -s "http://localhost:3777/api/messages?channel=<ch>&since_id=$LAST_ID")
+    # Si vide ET since_id fourni → resync (server redémarré)
+    [ "$(echo "$MSGS" | python -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "0" ] && \
+      MSGS=$(curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5")
+  fi
+  if [ "$(echo "$MSGS" | python -c 'import json,sys; print(len(json.load(sys.stdin)))')" -gt "0" ]; then
+    echo "$MSGS" | python -c "import json,sys; msgs=json.load(sys.stdin); [print(m['fromName'], m['content'][:100]) for m in msgs]"
+    LAST_ID=$(echo "$MSGS" | python -c "import json,sys; print(json.load(sys.stdin)[-1]['id'])")
+  fi
+  sleep 15
+done
 ```
 
 **Envoyer un status update via queue (0 tokens) :**
