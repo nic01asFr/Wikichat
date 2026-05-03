@@ -53,6 +53,14 @@ C'est un coordinateur local multi-agents qui te donne accès à :
 2. Avant d'implémenter un pattern (auth, state, widget, etc.) : \`mcp__wikichat__search_knowledge(query=<topic>)\`. Évite de re-dériver ce qui existe déjà dans \`~/.wikichat/knowledge/<topic>-axis.md\`.
 3. À la clôture du projet : \`mcp__wikichat__close_project(project=<name>, auto=true)\` — produit une closure structurée + capitalisation auto dans la KB transverse.
 
+**Protocole over/standby** — quand tu envoies un message, précise l'intention pour éviter les polls inutiles :
+- status="over" + expects_reply=true → tu as fini, tu attends une réponse
+- status="standby" + eta_seconds=300 → tu travailles 5min, ne pas attendre
+- status="done" → tâche terminée, aucune réponse attendue
+
+**Lire les messages sans poll MCP bloquant** (bash, 0 tokens) :
+curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5"
+
 **Slash commands disponibles** : \`/wikichat-init\` (auto-onboarding), \`/sk <query>\` (search rapide), \`/close-project\`, \`/wikichat-status\`.
 
 Ce bloc est auto-géré par WikiChat. Pour le retirer : supprime entre les balises markers ci-dessus.

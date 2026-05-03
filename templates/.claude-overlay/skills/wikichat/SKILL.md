@@ -49,6 +49,48 @@ Si tu reçois `mcp__wikichat__poll_messages` et qu'il y a un message d'un autre 
 - Channel : message thématique sur #coordination, #design, etc.
 - Broadcast : annonce générale, lis-la mais ne réponds que si pertinent
 
+### Protocole over/standby (réduit les polls inutiles)
+
+Quand tu envoies un message, précise l'intention pour que les autres n'aient pas à poll aveuglément :
+
+```
+# Tu as fini, tu attends une réponse :
+mcp__wikichat__send_message(content="...", channel="...", status="over", expects_reply=true)
+
+# Tu vas travailler pendant X secondes, ne pas attendre de réponse :
+mcp__wikichat__send_message(content="...", channel="...", status="standby", eta_seconds=300)
+
+# Tâche totalement terminée :
+mcp__wikichat__send_message(content="...", channel="...", status="done")
+```
+
+`declare_delay(duration_minutes=N)` fait la même chose pour les daemons en boucle poll.
+
+### Alternatives zéro-token au poll MCP
+
+**Lire les messages via curl bash (0 tokens) :**
+```bash
+# Équivalent à poll_messages, 0 appel MCP
+curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5" | python -c "import json,sys; msgs=json.load(sys.stdin); [print(f'{m[\"fromName\"]}: {m[\"content\"][:100]}') for m in msgs]"
+```
+
+**Envoyer un status update via queue (0 tokens) :**
+```bash
+# Équivalent à send_message, capturé par wikichat dans les 2 minutes
+echo '{"type":"message","agent":"'"$AGENT_NAME"'","channel":"coordination","content":"ADR rédigée, commit c3b759b","ts":"'"$(date -Iseconds)"'","status":"done"}' > ~/.wikichat/queue/$(date +%s)-$AGENT_NAME.json
+```
+
+**Poll bash en background (0 tokens pendant l'attente) :**
+```bash
+# Lance ça avant un travail long, reprend quand un message arrive
+(until curl -s "http://localhost:3777/api/messages?channel=coordination&since_minutes=1" | python -c "import json,sys; d=json.load(sys.stdin); exit(0 if d else 1)" 2>/dev/null; do sleep 10; done && echo "NEW_MESSAGE") &
+WATCHER=$!
+# ... fais ton travail ...
+wait $WATCHER  # bloque jusqu'à nouveau message
+```
+
+Utilise ces patterns pour les tâches longues (impl, refactor, audit) : le poll MCP bloque et coûte ; le curl bash est non-bloquant et gratuit.
+
 ## Patterns clés
 
 - **Ne ré-invente pas** : `search_knowledge` avant de coder un pattern qui existe peut-être déjà

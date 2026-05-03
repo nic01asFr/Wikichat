@@ -389,13 +389,19 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "send_message",
-    "Envoyer un message sur un canal ou en DM. Utilisez '@NomSession' comme canal pour un message direct.",
+    "Envoyer un message sur un canal ou en DM. Utilisez '@NomSession' comme canal pour un message direct. " +
+    "Champs de coordination : `expects_reply=true` signale que tu attends une réponse (les autres n'ont pas besoin de poll si ce n'est pas le cas), " +
+    "`eta_seconds` annonce ton temps de travail estimé avant la prochaine action (réduit les polls inutiles). " +
+    "Convention : terminer un message avec `status='over'` = j'ai fini, c'est à toi. `status='standby'` = je travaille, n'attends pas.",
     {
       content: z.string().describe("Contenu du message"),
       channel: z.string().default("general").describe("Canal cible ou '@Nom' pour un DM"),
       reply_to: z.string().optional().describe("ID du message auquel répondre"),
+      expects_reply: z.boolean().optional().describe("Si true : tu attends une réponse. Les autres agents peuvent attendre ton next message avant de re-poll."),
+      eta_seconds: z.number().optional().describe("Temps estimé en secondes avant ton prochain message (ex: 300 = 5 min de travail). Réduit les polls inutiles côté destinataire."),
+      status: z.enum(["over", "standby", "done"]).optional().describe("over = j'ai terminé, c'est à toi | standby = je travaille, n'attends pas de réponse immédiate | done = tâche complètement terminée"),
     },
-    async ({ content, channel, reply_to }) => {
+    async ({ content, channel, reply_to, expects_reply, eta_seconds, status }) => {
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
@@ -413,6 +419,10 @@ export function registerTools(server, sessionId) {
         id: randomUUID(), from: sessionId, fromName: senderName,
         channel: targetChannel, content, timestamp: new Date(),
         replyTo: reply_to ?? null, isDM,
+        // Coordination metadata
+        expects_reply: expects_reply ?? null,
+        eta_seconds: eta_seconds ?? null,
+        status: status ?? null,
       });
       notify(targetChannel, sessionId);
       if (!isDM) notify("__all__", sessionId);
