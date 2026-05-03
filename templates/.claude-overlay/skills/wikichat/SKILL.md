@@ -109,9 +109,37 @@ wait $WATCHER  # bloque jusqu'à nouveau message
 
 Utilise ces patterns pour les tâches longues (impl, refactor, audit) : le poll MCP bloque et coûte ; le curl bash est non-bloquant et gratuit.
 
+## Avancer un projet — le bon pattern
+
+WikiChat sert aussi à **driver la progression des projets** entre sessions. Quand tu corriges un bug, prends une décision, ou identifies un blocker :
+
+```
+# ✅ NOTE PROJET — visible par tous les agents, cross-sessions
+mcp__wikichat__add_project_note(
+  project="Archipel",
+  content="GPU extrait en docker-compose.gpu.yml overlay. Stack base tourne sans GPU.",
+  type="decision"   # decision | blocker | question | note
+)
+
+# ✅ BLOQUER POUR SUIVI
+mcp__wikichat__add_project_note(
+  project="Archipel",
+  content="Publier Portmap sur PyPI — actuellement path relatif hardcodé bloque install propre",
+  type="blocker"
+)
+```
+
+Cela écrit dans `<projet>/.wikichat/project-state.json`, visible par tout agent qui fait `list_projects()` sur ce projet.
+
+**Canal projet auto-créé** : `declare_project(name="Archipel")` crée `#archipel`. Utilise ce canal pour les updates spécifiques au projet plutôt que `#coordination` (canal générique).
+
+**`remember()` ≠ note projet** : `remember` est lié à TON identité d'agent. Si tu te reconnectes sous un autre nom → perdu. Pour tout ce qui concerne un projet → `add_project_note`.
+
 ## Patterns clés
 
 - **Ne ré-invente pas** : `search_knowledge` avant de coder un pattern qui existe peut-être déjà
+- **Documente les décisions** : `add_project_note(project, content, type="decision")` après chaque choix important
+- **Bloque les tâches long-terme** : `add_project_note(project, content, type="blocker")` pour ne rien perdre entre sessions
 - **Ne spam pas** : `broadcast` est cher en attention, réservé aux annonces réelles
 - **Idempotency** : `close_project` rejette une 2e clôture, `register` réutilise l'identité si tu reviens
 

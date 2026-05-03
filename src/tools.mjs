@@ -316,9 +316,12 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "remember",
-    "Mémoriser une donnée persistante associée à ton identité (clé/valeur). Survit aux sessions et redémarrages.",
+    "Mémoriser une donnée persistante associée à TON identité d'agent (clé/valeur). Survit aux sessions. " +
+    "⚠️ LIÉ À TON NOM — pas au projet. Un autre agent ne peut pas lire ta mémoire. " +
+    "Pour des notes PROJECT-LEVEL visibles par tous les agents : utilise add_project_note(project, content, type). " +
+    "Usages légitimes de remember : tes préférences, ton état courant, tes config perso.",
     {
-      key: z.string().describe("Clé courte (ex: 'preferred_stack', 'current_pr')"),
+      key: z.string().describe("Clé courte (ex: 'preferred_branch', 'last_review'). Évite les infos projet — utilise add_project_note() pour ça."),
       value: z.string().describe("Valeur à mémoriser (texte libre)"),
     },
     async ({ key, value }) => {
@@ -836,9 +839,75 @@ export function registerTools(server, sessionId) {
       Object.assign(proj, { description, repo: repo ?? proj.repo, stack: stack ?? proj.stack ?? [], relations: relations ?? proj.relations ?? [], status: status ?? proj.status, updatedAt: new Date(), updatedBy: ownerName });
       state.projects.set(name, proj);
       saveProject(proj);
+      // Auto-create a dedicated channel for the project (slug = lowercase, spaces → hyphens).
+      // Having a project channel means agents don't fallback to #coordination (which is generic
+      // and shared by all projects), and decisions/updates stay contextualised to the project.
+      const projectSlug = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      if (!state.channels.has(projectSlug)) {
+        state.channels.set(projectSlug, {
+          name: projectSlug,
+          description: `Canal dédié au projet ${name}`,
+          createdBy: ownerName,
+          createdAt: new Date(),
+        });
+      }
       sysMsg("coordination", `${existing ? "📝 Projet mis à jour" : "🆕 Nouveau projet"}: ${name} — ${description}`);
       notify("coordination", sessionId);
-      return txt(`${existing ? "📝 Mis à jour" : "✅ Déclaré"}: "${name}"\n${description}${repo ? `\n🔗 ${repo}` : ""}${stack?.length ? `\n🔧 ${stack.join(", ")}` : ""}`);
+      const channelHint = existing ? "" : `\n📢 Canal projet créé : #${projectSlug}`;
+      return txt(`${existing ? "📝 Mis à jour" : "✅ Déclaré"}: "${name}"\n${description}${repo ? `\n🔗 ${repo}` : ""}${stack?.length ? `\n🔧 ${stack.join(", ")}` : ""}${channelHint}`);
+    }
+  );
+
+  server.tool(
+    "add_project_note",
+    "Ajoute une note permanente à un projet (décision, blocker, question ouverte). " +
+    "Écrit dans project-state.json — cross-sessions, cross-agents. " +
+    "PRÉFÉRER À remember() pour tout ce qui concerne un projet car remember est lié à une identité d'agent. " +
+    "Types : 'decision' = choix acté, 'blocker' = bloquant à résoudre, 'question' = point ouvert, 'note' (défaut) = info utile.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      content: z.string().describe("Contenu de la note (une ligne suffisante, soyez précis)"),
+      type: z.enum(["decision", "blocker", "question", "note"]).default("note")
+        .describe("decision = choix acté | blocker = bloquant | question = point ouvert | note = information"),
+    },
+    async ({ project, content, type }) => {
+      const name = getSessionName(sessionId);
+      const date = `[${new Date().toLocaleDateString("fr-FR")}]`;
+      let proj = state.projects.get(project);
+      if (!proj) {
+        // Auto-create project if it doesn't exist yet — avoids friction
+        proj = { name: project, tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null, createdBy: name, createdAt: new Date() };
+        state.projects.set(project, proj);
+        // Auto-create channel
+        const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        if (!state.channels.has(slug)) {
+          state.channels.set(slug, { name: slug, description: `Canal dédié au projet ${project}`, createdBy: name, createdAt: new Date() });
+        }
+      }
+      const entry = `${date} ${name}: ${content}`;
+      // Route to the correct array based on type
+      if (type === "decision" || type === "note") {
+        proj.decisions.push(entry);
+      } else if (type === "blocker") {
+        proj.blockers.push(entry);
+      } else if (type === "question") {
+        proj.open_questions.push(entry);
+      }
+      proj.updatedAt = new Date();
+      proj.updatedBy = name;
+      saveProject(proj);
+      // Notify the project channel (auto-created above if needed) + coordination
+      const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const channelTarget = state.channels.has(slug) ? slug : "coordination";
+      const emoji = { decision: "✅", blocker: "🔴", question: "❓", note: "📌" }[type];
+      pushMessage({
+        id: randomUUID(), from: sessionId, fromName: name,
+        channel: channelTarget,
+        content: `${emoji} [${type.toUpperCase()}] ${project}: ${content}`,
+        timestamp: new Date(),
+      });
+      notify(channelTarget, sessionId);
+      return txt(`${emoji} Note ajoutée au projet "${project}" [${type}].\n📝 ${content}\n📁 Persisté dans project-state.json — visible par tous les agents sur ce projet.\n💡 À la prochaine session sur ${project} : recall via list_projects() ou close_project().`);
     }
   );
 
