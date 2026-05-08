@@ -33,6 +33,7 @@ import { dispatch as dispatchIntent, readDispatchLog, recordOutcome } from "./di
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, searchIdeas, ideaStats, deleteIdea } from "./ideas.mjs";
+import { auditProject, auditMany } from "./repo-audit.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1672,6 +1673,140 @@ export function registerTools(server, sessionId) {
       if (idea.related_projects?.length) lines.push(`🔗 Projets liés : ${idea.related_projects.join(", ")}`);
       if (idea.cluster_id) lines.push(`🧩 Cluster : ${idea.cluster_id}`);
       if (idea.similar_to?.length) lines.push(`🔄 Similaires : ${idea.similar_to.join(", ")}`);
+      return txt(lines.join("\n"));
+    }
+  );
+
+  // ══ REPO AUDIT (régie health) ════════════════════════════════════════════════
+  // Computes the project.health snapshot from filesystem + git. The score is a
+  // coarse 0-100 mix of doc completeness, hygiene, recent activity, and sync state.
+  // `set_project_meta` refuses the health field on purpose — it lives here.
+
+  server.tool(
+    "audit_project",
+    "Audite un projet : calcule sa health (README/LICENSE/.gitignore/tests/CI + git status/last commit/ahead-behind) et écrit le résultat dans project.health. " +
+    "Score 0-100 + warnings textuels. Pour batch (tout le registry), utiliser audit_all_projects.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      persist: z.boolean().default(true).describe("Si true (défaut), écrit le résultat dans project.health (saveProject). Si false, retourne juste l'audit."),
+    },
+    async ({ project, persist }) => {
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable.`);
+      // Resolve repo path : project.repo > registry path > agent's tracked path
+      let repoPath = proj.repo;
+      if (!repoPath) {
+        try {
+          const reg = loadRegistry();
+          const lower = project.toLowerCase();
+          const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+          const match = reg.projects.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
+          if (match?.path) repoPath = match.path;
+        } catch { /* */ }
+      }
+      if (!repoPath) return txt(`❌ Aucun repo_path connu pour "${project}". Set proj.repo via declare_project ou enregistre le projet dans le registry.`);
+
+      const audit = await auditProject(repoPath);
+      if (persist) {
+        proj.health = audit;
+        proj.updatedAt = new Date();
+        proj.updatedBy = getSessionName(sessionId);
+        saveProject(proj);
+      }
+
+      const lines = [
+        `🩺 Audit : "${project}"`,
+        `   📁 ${audit.repo_path}`,
+      ];
+      if (!audit.exists) {
+        lines.push(`   ❌ ${audit.error || "repo missing"}`);
+      } else {
+        lines.push(`   📊 Score : ${audit.score}/100`);
+        const docBits = [];
+        docBits.push(audit.readme_present ? `README (${audit.readme_age_days}d)` : "no README");
+        docBits.push(audit.claude_md_present ? "CLAUDE.md ✓" : "no CLAUDE.md");
+        if (audit.license) docBits.push(`license=${audit.license}`);
+        lines.push(`   📚 ${docBits.join(" · ")}`);
+        const hygBits = [];
+        hygBits.push(audit.gitignore_present ? ".gitignore ✓" : "no .gitignore");
+        hygBits.push(audit.has_tests ? "tests ✓" : "no tests");
+        if (audit.ci) hygBits.push(`ci=${audit.ci}`);
+        lines.push(`   🧹 ${hygBits.join(" · ")}`);
+        if (audit.is_git_repo) {
+          const gitBits = [];
+          if (audit.branch) gitBits.push(`branch=${audit.branch}`);
+          if (audit.last_commit_age_days !== null) gitBits.push(`last_commit=${audit.last_commit_age_days}d ago`);
+          if (audit.uncommitted) gitBits.push(`${audit.uncommitted} uncommitted`);
+          if (audit.ahead_of_remote) gitBits.push(`+${audit.ahead_of_remote} ahead`);
+          if (audit.behind_remote) gitBits.push(`-${audit.behind_remote} behind`);
+          lines.push(`   🌳 ${gitBits.join(" · ")}`);
+        }
+        if (audit.warnings?.length) {
+          lines.push(`   ⚠️ ${audit.warnings.join(" · ")}`);
+        }
+      }
+      if (persist) lines.push(`\n💾 Persisté dans project-state.json (project.health).`);
+      return txt(lines.join("\n"));
+    }
+  );
+
+  server.tool(
+    "audit_all_projects",
+    "Audite tous les projets du registry en batch (concurrence cap=4). Persistance optionnelle. " +
+    "Coûteux — ~50-200ms par projet. Pour 132 projets, attendre ~5-10s. Préférer audit_project pour les check ponctuels.",
+    {
+      persist: z.boolean().default(false).describe("Si true, écrit chaque audit dans project-state.json. Défaut false (read-only)."),
+      concurrency: z.number().default(4).describe("Nombre d'audits parallèles. 4 = bon équilibre."),
+      min_score: z.number().optional().describe("Filtrer la sortie aux projets dont le score est ≤ ce seuil"),
+      limit: z.number().default(20).describe("Cap du résultat affiché"),
+    },
+    async ({ persist, concurrency, min_score, limit }) => {
+      const reg = loadRegistry();
+      const projects = reg.projects.filter(p => p.path && p.name).map(p => ({ name: p.name, path: p.path }));
+      if (projects.length === 0) return txt(`📭 Aucun projet avec path dans le registry.`);
+
+      const startedAt = Date.now();
+      const audits = await auditMany(projects, concurrency);
+      const elapsed = Date.now() - startedAt;
+
+      // Persist to project-state if requested
+      if (persist) {
+        for (const [name, audit] of audits) {
+          const proj = state.projects.get(name);
+          if (proj && audit.exists) {
+            proj.health = audit;
+            proj.updatedAt = new Date();
+            proj.updatedBy = getSessionName(sessionId);
+            saveProject(proj);
+          }
+        }
+      }
+
+      // Build summary, optionally filtered by min_score
+      const rows = [...audits.entries()]
+        .filter(([, a]) => a.exists)
+        .map(([name, a]) => ({ name, score: a.score, warnings: a.warnings, last_commit_age_days: a.last_commit_age_days }))
+        .filter(r => min_score === undefined || r.score <= min_score)
+        .sort((a, b) => a.score - b.score);
+
+      const missing = [...audits.entries()].filter(([, a]) => !a.exists).map(([n]) => n);
+      const top = rows.slice(0, limit);
+
+      const lines = [
+        `🩺 Audit batch terminé : ${audits.size} projets en ${elapsed}ms${persist ? " (persisté)" : " (read-only)"}`,
+        `   📊 Scores : min=${rows[0]?.score ?? "—"} max=${rows[rows.length - 1]?.score ?? "—"} avg=${rows.length ? Math.round(rows.reduce((s, r) => s + r.score, 0) / rows.length) : "—"}`,
+      ];
+      if (missing.length) lines.push(`   ⚠️ ${missing.length} projet(s) avec path manquant : ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}`);
+      if (top.length === 0) {
+        lines.push(`\n📭 Aucun projet ne matche le filtre (min_score=${min_score}).`);
+      } else {
+        lines.push(`\n${min_score !== undefined ? `Top ${top.length} avec score ≤ ${min_score}` : `Top ${top.length} (par score croissant) :`}\n`);
+        for (const r of top) {
+          const w = r.warnings?.length ? ` — ${r.warnings.slice(0, 3).join(" · ")}${r.warnings.length > 3 ? "…" : ""}` : "";
+          lines.push(`  ${r.score < 30 ? "🔴" : r.score < 60 ? "🟡" : "🟢"} ${r.score}/100  ${r.name}${w}`);
+        }
+      }
+      lines.push(`\n💡 audit_project("<name>") pour le détail · set_project_meta() pour enrichir purpose/axes/lifecycle.`);
       return txt(lines.join("\n"));
     }
   );
