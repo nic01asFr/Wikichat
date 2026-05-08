@@ -921,6 +921,113 @@ export function registerTools(server, sessionId) {
     }
   );
 
+  // ── Project meta (régie schema) ─────────────────────────────────────────────
+  // Enriches a project with the régie fields :
+  //   purpose   : free-text "why this exists"
+  //   axes      : KB axes this project contributes to / draws from
+  //   lifecycle : ideation | mvp | active | maintenance | archived | closed
+  //   publish   : { github, package, deployed, license } — visibility / release state
+  //   relations : structured links to other projects (depends-on / provides-to / sibling-of / superseded-by)
+  // All fields optional ; partial updates merged into existing meta (deep for `publish`).
+  // `health` is deliberately NOT settable here — populated by RepoAuditor.
+
+  server.tool(
+    "set_project_meta",
+    "Enrichit un projet avec les champs de régie : purpose, axes, lifecycle, publish, relations. " +
+    "Mise à jour partielle — seuls les champs fournis sont écrasés. publish est mergé en deep. " +
+    "Utilise pour structurer un projet : pourquoi il existe, à quels axes KB il contribue, son stade de vie, " +
+    "son état de publication (GitHub / package registry / déploiement / licence), et ses relations avec d'autres projets. " +
+    "Le champ `health` est calculé automatiquement par RepoAuditor — non settable ici.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      purpose: z.string().optional().describe("Pourquoi ce projet existe — phrase ou paragraphe"),
+      axes: z.array(z.string()).optional().describe("Axes KB ('grist', 'auth', 'wikichat-triggers', etc.)"),
+      lifecycle: z.enum(["ideation", "mvp", "active", "maintenance", "archived", "closed"]).optional()
+        .describe("Stade de vie : ideation = idée brute, mvp = scope MVP en cours, active = dev courant, maintenance = stable + patches, archived = inactif mais préservé, closed = clôturé via close_project"),
+      publish: z.object({
+        github: z.object({
+          visibility: z.enum(["public", "private", "none"]).optional(),
+          url: z.string().optional(),
+        }).optional(),
+        package: z.object({
+          registry: z.enum(["npm", "pypi", "cargo", "other"]).optional(),
+          status: z.enum(["unpublished", "draft", "published"]).optional(),
+          name: z.string().optional(),
+          version: z.string().optional(),
+        }).optional(),
+        deployed: z.object({
+          url: z.string().optional(),
+          env: z.enum(["prod", "staging", "preview"]).optional(),
+        }).optional(),
+        license: z.string().optional().describe("Identifiant SPDX ('MIT', 'Apache-2.0', ...) ou 'proprietary'"),
+      }).optional(),
+      relations: z.array(z.object({
+        type: z.enum(["depends-on", "provides-to", "sibling-of", "superseded-by", "fork-of"]),
+        project: z.string(),
+        note: z.string().optional(),
+      })).optional().describe("Liens typés vers d'autres projets — remplace l'ancien array de strings non structuré"),
+    },
+    async ({ project, purpose, axes, lifecycle, publish, relations }) => {
+      const name = getSessionName(sessionId);
+      let proj = state.projects.get(project);
+      if (!proj) {
+        return txt(`❌ Projet "${project}" introuvable. Crée-le via declare_project() d'abord.`);
+      }
+      const before = {
+        purpose: proj.purpose, lifecycle: proj.lifecycle,
+        axes: proj.axes ? [...proj.axes] : [], publish: proj.publish,
+      };
+      const changes = [];
+      if (purpose !== undefined) { proj.purpose = purpose; changes.push("purpose"); }
+      if (axes !== undefined) { proj.axes = axes; changes.push("axes"); }
+      if (lifecycle !== undefined) { proj.lifecycle = lifecycle; changes.push("lifecycle"); }
+      if (publish !== undefined) {
+        // Deep-merge publish so a partial update doesn't wipe sibling subfields
+        proj.publish = proj.publish || {};
+        for (const k of Object.keys(publish)) {
+          if (publish[k] === null) { delete proj.publish[k]; continue; }
+          if (typeof publish[k] === "object" && !Array.isArray(publish[k])) {
+            proj.publish[k] = { ...(proj.publish[k] || {}), ...publish[k] };
+          } else {
+            proj.publish[k] = publish[k];
+          }
+        }
+        changes.push("publish");
+      }
+      if (relations !== undefined) { proj.relations = relations; changes.push("relations"); }
+      if (changes.length === 0) {
+        return txt(`⚠️ set_project_meta("${project}") — aucun champ fourni, rien à mettre à jour.`);
+      }
+      proj.updatedAt = new Date();
+      proj.updatedBy = name;
+      trackAgentOnProject(sessionId, project, `meta:${changes.join(",")}`);
+      saveProject(proj);
+
+      // Surface the change on the project channel — the régie is a transparent system
+      const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const channelTarget = state.channels.has(slug) ? slug : "coordination";
+      sysMsg(channelTarget, `📐 ${name} a mis à jour la meta de ${project} : ${changes.join(", ")}${lifecycle && lifecycle !== before.lifecycle ? ` (lifecycle: ${before.lifecycle || "—"} → ${lifecycle})` : ""}`);
+      notify(channelTarget, sessionId);
+
+      const lines = [`📐 Meta mise à jour : "${project}"`];
+      if (purpose !== undefined) lines.push(`  Purpose : ${purpose}`);
+      if (axes !== undefined) lines.push(`  Axes : ${axes.length ? axes.join(", ") : "(none)"}`);
+      if (lifecycle !== undefined) lines.push(`  Lifecycle : ${lifecycle}`);
+      if (publish !== undefined) {
+        const p = proj.publish || {};
+        const pub = [];
+        if (p.github?.visibility) pub.push(`github=${p.github.visibility}${p.github.url ? ` (${p.github.url})` : ""}`);
+        if (p.package?.status) pub.push(`${p.package.registry || "package"}=${p.package.status}${p.package.version ? `@${p.package.version}` : ""}`);
+        if (p.deployed?.url) pub.push(`deployed=${p.deployed.env || "?"} ${p.deployed.url}`);
+        if (p.license) pub.push(`license=${p.license}`);
+        if (pub.length) lines.push(`  Publish : ${pub.join(" · ")}`);
+      }
+      if (relations !== undefined) lines.push(`  Relations : ${relations.length} link(s)`);
+      lines.push(`\n💡 list_projects() pour voir le projet enrichi.`);
+      return txt(lines.join("\n"));
+    }
+  );
+
   server.tool(
     "add_project_note",
     "Ajoute une note permanente à un projet (décision, blocker, question ouverte). " +
@@ -975,15 +1082,31 @@ export function registerTools(server, sessionId) {
     }
   );
 
-  server.tool("list_projects", "Lister tous les projets.", {}, async () => {
+  server.tool("list_projects", "Lister tous les projets — affiche meta de régie (lifecycle, axes, publish) si présentes.", {}, async () => {
     if (!state.projects.size) return txt("📭 Aucun projet.\n💡 declare_project() pour en créer un.");
+    const lifecycleEmoji = {
+      ideation: "💡", mvp: "🌱", active: "🟢", maintenance: "🔧", archived: "📦", closed: "🏁",
+    };
     const lines = [...state.projects.values()].map(p => {
       const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
       const active = [...p.tasks.values()].filter(t => t.status === "active").length;
       const closedFlag = p.closure ? " | 🏁 closed" : "";
-      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${p.status ? `\n    📊 ${p.status}` : ""}${closedFlag}`;
+      const lifecycleFlag = p.lifecycle ? ` | ${lifecycleEmoji[p.lifecycle] || ""} ${p.lifecycle}` : "";
+      const axesFlag = p.axes?.length ? ` | 🏷️ ${p.axes.slice(0, 4).join(", ")}${p.axes.length > 4 ? "+" : ""}` : "";
+      // Publish summary : github visibility + package status + deployed url
+      const pubBits = [];
+      if (p.publish?.github?.visibility && p.publish.github.visibility !== "none") {
+        pubBits.push(`gh:${p.publish.github.visibility}`);
+      }
+      if (p.publish?.package?.status === "published") {
+        pubBits.push(`${p.publish.package.registry || "pkg"}@${p.publish.package.version || "?"}`);
+      }
+      if (p.publish?.deployed?.url) pubBits.push(`🚀${p.publish.deployed.env || "deployed"}`);
+      const pubFlag = pubBits.length ? ` | 📡 ${pubBits.join(" ")}` : "";
+      const purposeLine = p.purpose ? `\n    🎯 ${p.purpose}` : "";
+      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${lifecycleFlag}${axesFlag}${pubFlag}${closedFlag}${purposeLine}${p.status && !p.lifecycle ? `\n    📊 ${p.status}` : ""}`;
     });
-    return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail`);
+    return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail · set_project_meta() pour enrichir un projet`);
   });
 
   server.tool(
