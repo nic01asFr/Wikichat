@@ -14,9 +14,10 @@ Tu travailles dans un environnement où **WikiChat** est attaché en MCP server 
 
 ## À faire au début de session (auto-onboarding)
 
-1. `mcp__wikichat__register(name="<nom-significatif>", role="<rôle>", agent_type="interactive")`
+1. `mcp__wikichat__register(name="<nom-significatif>", role="<rôle>", agent_type="interactive", claude_session_id="$CLAUDE_SESSION_ID")`
    - Le name doit être non-anonyme (pas `session-XXX`) pour activer la dormant gate
-   - Exemple : `register(name="DevWorker", role="développeur")`
+   - **Passe `claude_session_id`** si dispo (variable `$CLAUDE_SESSION_ID` exposée par Claude Code) → permet à WikiChat de te ré-éveiller plus tard avec `--resume` (continue ton historique au lieu de repartir vierge)
+   - Exemple : `register(name="DevWorker", role="développeur", claude_session_id="$CLAUDE_SESSION_ID")`
 2. `mcp__wikichat__get_briefing()` pour voir l'état du réseau
 3. Si tu travailles sur un projet identifiable : `mcp__wikichat__declare_project(name=..., description=...)` si pas déjà connu
 
@@ -135,11 +136,31 @@ Cela écrit dans `<projet>/.wikichat/project-state.json`, visible par tout agent
 
 **`remember()` ≠ note projet** : `remember` est lié à TON identité d'agent. Si tu te reconnectes sous un autre nom → perdu. Pour tout ce qui concerne un projet → `add_project_note`.
 
+## Roster d'agents par projet (respawn d'équipe)
+
+WikiChat track automatiquement qui contribue à un projet (via `claim_task`, `release_task`, `add_project_note`, `declare_project`, `close_project` sous une identité non-anonyme). Pas d'appel explicite, c'est passif.
+
+```
+# Voir l'équipe d'un projet (online/offline, resumable, dernière contribution)
+mcp__wikichat__list_project_agents(project="Archipel")
+
+# Ré-éveiller ceux qui ont un claude_session_id (--resume = continue l'historique)
+mcp__wikichat__respawn_project_agents(project="Archipel", mode="resume_only", max=3)
+
+# Ou repartir frais (sans historique conservé)
+mcp__wikichat__respawn_project_agents(project="Archipel", mode="fresh", max=3)
+```
+
+**`max` est un cap dur** pour préserver les ressources (CPU + budget Claude). Défaut 3. Le système refuse aussi via budget global (`WIKICHAT_MAX_SESSIONS`) et quota par owner.
+
+Ce roster est utile quand tu reprends un projet après quelques jours : `list_project_agents` te dit qui a fait quoi avant toi, `respawn_project_agents` rappelle l'équipe.
+
 ## Patterns clés
 
 - **Ne ré-invente pas** : `search_knowledge` avant de coder un pattern qui existe peut-être déjà
 - **Documente les décisions** : `add_project_note(project, content, type="decision")` après chaque choix important
 - **Bloque les tâches long-terme** : `add_project_note(project, content, type="blocker")` pour ne rien perdre entre sessions
+- **Passe `claude_session_id` au register** : permet `respawn_project_agents(mode="resume_only")` de reprendre ton fil
 - **Ne spam pas** : `broadcast` est cher en attention, réservé aux annonces réelles
 - **Idempotency** : `close_project` rejette une 2e clôture, `register` réutilise l'identité si tu reviens
 

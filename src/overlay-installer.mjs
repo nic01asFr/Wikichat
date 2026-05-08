@@ -49,9 +49,10 @@ C'est un coordinateur local multi-agents qui te donne accès à :
 - **Persistance** : tasks, decisions, closures par projet
 
 **Réflexes attendus** :
-1. Au début de session : \`mcp__wikichat__register(name=<nom>, role=<rôle>)\` puis \`mcp__wikichat__get_briefing()\`. Le name doit être non-anonyme pour activer la dormant gate.
+1. Au début de session : \`mcp__wikichat__register(name=<nom>, role=<rôle>, claude_session_id="$CLAUDE_SESSION_ID")\` puis \`mcp__wikichat__get_briefing()\`. Le name doit être non-anonyme pour activer la dormant gate. Passer \`claude_session_id\` permet \`respawn_project_agents(mode="resume_only")\` plus tard.
 2. Avant d'implémenter un pattern (auth, state, widget, etc.) : \`mcp__wikichat__search_knowledge(query=<topic>)\`. Évite de re-dériver ce qui existe déjà dans \`~/.wikichat/knowledge/<topic>-axis.md\`.
 3. À la clôture du projet : \`mcp__wikichat__close_project(project=<name>, auto=true)\` — produit une closure structurée + capitalisation auto dans la KB transverse.
+4. Reprendre une équipe sur un projet : \`mcp__wikichat__list_project_agents(project=...)\` pour voir qui a contribué, puis \`mcp__wikichat__respawn_project_agents(project=..., mode="resume_only", max=3)\` pour ré-éveiller les resumables.
 
 **Protocole over/standby** — quand tu envoies un message, précise l'intention pour éviter les polls inutiles :
 - status="over" + expects_reply=true → tu as fini, tu attends une réponse

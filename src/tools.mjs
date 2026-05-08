@@ -210,6 +210,44 @@ function resolveDMChannel(sessionId, targetName) {
   return { channel: key };
 }
 
+/**
+ * Track the current agent's contribution to a project. Called passively from
+ * claim_task / release_task / add_project_note / close_project / declare_project.
+ *
+ * Maintains <project>/.wikichat/project-state.json#agents{} — a roster of all
+ * agents who ever worked on the project, with their last_seen, role, agent_type,
+ * claude_session_id (if known), and contributions trail.
+ *
+ * Enables list_project_agents() + respawn_project_agents() — bringing the whole
+ * team back when revisiting a project later.
+ */
+function trackAgentOnProject(sessionId, project, contribution) {
+  const session = state.sessions.get(sessionId);
+  if (!session) return;
+  const name = session.name;
+  if (!name || name.startsWith("session-")) return; // anonymous, skip
+  const proj = state.projects.get(project);
+  if (!proj) return;
+  proj.agents = proj.agents || {};
+  const now = new Date().toISOString();
+  const entry = proj.agents[name] || {
+    role: session.role || null,
+    agent_type: session.agent_type || "interactive",
+    claude_session_id: session.claude_session_id || null,
+    first_seen: now,
+    contributions: [],
+    repo_path: session.storage_path ? session.storage_path.replace(/[\\/]\.wikichat[\\/]?$/, "") : null,
+  };
+  entry.last_seen = now;
+  // Keep claude_session_id fresh if session has it now
+  if (session.claude_session_id) entry.claude_session_id = session.claude_session_id;
+  if (contribution && !entry.contributions.includes(contribution)) {
+    entry.contributions.push(contribution);
+    if (entry.contributions.length > 20) entry.contributions = entry.contributions.slice(-20);
+  }
+  proj.agents[name] = entry;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -794,6 +832,7 @@ export function registerTools(server, sessionId) {
       const expiresAt = new Date(Date.now() + 90 * 60 * 1000);
       proj.tasks.set(task, { id: task, description, claimedBy: name, claimedAt: new Date(), status: "active", outcome: null, claim_expires_at: expiresAt });
       proj.updatedAt = new Date();
+      trackAgentOnProject(sessionId, project, `claim:${task}`);
       saveProject(proj);
 
       const sp = getAgentStoragePath(sessionId);
@@ -825,6 +864,7 @@ export function registerTools(server, sessionId) {
       if (status === "done") proj.decisions.push(`[${new Date().toLocaleDateString("fr-FR")}] ${task}: ${outcome}`);
       else if (status === "blocked") proj.blockers.push(`${task}: ${outcome}`);
       proj.updatedAt = new Date();
+      trackAgentOnProject(sessionId, project, `release:${task}:${status}`);
       saveProject(proj);
 
       const sp = getAgentStoragePath(sessionId);
@@ -860,6 +900,7 @@ export function registerTools(server, sessionId) {
       const proj = existing ?? { name, tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null, createdBy: ownerName, createdAt: new Date() };
       Object.assign(proj, { description, repo: repo ?? proj.repo, stack: stack ?? proj.stack ?? [], relations: relations ?? proj.relations ?? [], status: status ?? proj.status, updatedAt: new Date(), updatedBy: ownerName });
       state.projects.set(name, proj);
+      trackAgentOnProject(sessionId, name, existing ? "update_project" : "declare_project");
       saveProject(proj);
       // Auto-create a dedicated channel for the project (slug = lowercase, spaces → hyphens).
       // Having a project channel means agents don't fallback to #coordination (which is generic
@@ -917,6 +958,7 @@ export function registerTools(server, sessionId) {
       }
       proj.updatedAt = new Date();
       proj.updatedBy = name;
+      trackAgentOnProject(sessionId, project, `note:${type}`);
       saveProject(proj);
       // Notify the project channel (auto-created above if needed) + coordination
       const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
@@ -1016,6 +1058,7 @@ export function registerTools(server, sessionId) {
       proj.status = "closed";
       proj.updatedAt = new Date();
       proj.updatedBy = name;
+      trackAgentOnProject(sessionId, project, "close");
       saveProject(proj);
 
       // Broadcast sur #library pour que le Librarian absorbe la capitalisation.
@@ -1041,6 +1084,167 @@ export function registerTools(server, sessionId) {
       sysMsg("coordination", `🏁 ${name} a clôturé le projet "${project}".`);
       notify("coordination", sessionId);
       return txt(`🏁 Projet "${project}" clôturé.\n📚 Closure persistée dans projects/${project}.json.\n📡 Artifact partagé sur #library — le Librarian l'absorbera dans la KB transverse au prochain digest.`);
+    }
+  );
+
+  // ══ PROJECT AGENT ROSTER ═════════════════════════════════════════════════════
+  // Per-project list of agents who have contributed (auto-tracked via
+  // trackAgentOnProject). Enables bringing the team back when revisiting
+  // a project later, even after machine reboots.
+
+  server.tool(
+    "list_project_agents",
+    "Liste les agents qui ont contribué à un projet (auto-trackés via claim_task / release_task / add_project_note / declare_project / close_project). " +
+    "Affiche pour chacun : online/offline, rôle, type, claude_session_id (pour --resume), dernière contribution. " +
+    "Sert à savoir qui a travaillé sur quoi avant un respawn.",
+    {
+      project: z.string().describe("Nom du projet"),
+    },
+    async ({ project }) => {
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable. list_projects() pour voir la liste.`);
+      const agents = proj.agents || {};
+      const names = Object.keys(agents);
+      if (names.length === 0) return txt(`📭 Aucun agent tracké pour "${project}".\n💡 Les agents sont auto-trackés au premier claim_task/release_task/add_project_note/declare_project sous une identité non-anonyme.`);
+      const liveByName = new Map();
+      for (const s of state.sessions.values()) liveByName.set(s.name?.toLowerCase(), s);
+      const lines = names.map(n => {
+        const e = agents[n];
+        const live = liveByName.get(n.toLowerCase());
+        const onlineFlag = live ? "🟢 online" : "⚪ offline";
+        const role = e.role ? ` (${e.role})` : "";
+        const type = e.agent_type || "interactive";
+        const resumable = e.claude_session_id ? " 🔁resumable" : "";
+        const lastSeen = e.last_seen ? timeSince(e.last_seen) : "?";
+        const contribCount = (e.contributions || []).length;
+        const lastContrib = (e.contributions || []).slice(-1)[0] || "—";
+        return `  • **${n}**${role} [${type}] — ${onlineFlag}${resumable}\n    📅 ${lastSeen} · ${contribCount} contribution(s) · last: ${lastContrib}`;
+      });
+      const onlineCount = names.filter(n => liveByName.has(n.toLowerCase())).length;
+      const resumableCount = names.filter(n => agents[n].claude_session_id).length;
+      return txt(
+        `👥 ${names.length} agent(s) sur "${project}" — 🟢 ${onlineCount} online, ⚪ ${names.length - onlineCount} offline, 🔁 ${resumableCount} resumable\n\n` +
+        lines.join("\n\n") +
+        `\n\n💡 respawn_project_agents("${project}", mode="resume_only") pour ré-éveiller les agents resumables.`
+      );
+    }
+  );
+
+  server.tool(
+    "respawn_project_agents",
+    "Ré-spawne les agents offline d'un projet, capé pour préserver les ressources. " +
+    "mode='resume_only' (défaut) : seulement ceux avec claude_session_id, en --resume (continue leur historique). " +
+    "mode='fresh' : tous, headless one-shot avec contexte projet. " +
+    "mode='daemon' : daemon persistant (réservé principal/service). " +
+    "max=3 par défaut. names=[...] filtre la liste. Respecte budget global + quota owner.",
+    {
+      project: z.string().describe("Nom du projet"),
+      mode: z.enum(["resume_only", "fresh", "daemon"]).default("resume_only")
+        .describe("resume_only = headless --resume si claude_session_id ; fresh = headless one-shot ; daemon = persistant (principal/service uniquement)"),
+      names: z.array(z.string()).optional().describe("Filtrer aux noms listés (défaut : tous les agents offline)"),
+      max: z.number().default(3).describe("Cap dur de respawns simultanés pour préserver les ressources"),
+    },
+    async ({ project, mode, names: filterNames, max }) => {
+      const requester = getSessionName(sessionId);
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable.`);
+      const agents = proj.agents || {};
+      const allNames = Object.keys(agents);
+      if (allNames.length === 0) return txt(`📭 Aucun agent tracké sur "${project}".`);
+
+      // Online check (current sessions)
+      const liveByName = new Map();
+      for (const s of state.sessions.values()) liveByName.set(s.name?.toLowerCase(), s);
+
+      // Build candidate list (offline only — never re-spawn already-online agents)
+      let candidates = allNames.filter(n => !liveByName.has(n.toLowerCase()));
+      if (filterNames && filterNames.length > 0) {
+        const wanted = new Set(filterNames.map(s => s.toLowerCase()));
+        candidates = candidates.filter(n => wanted.has(n.toLowerCase()));
+      }
+      if (candidates.length === 0) {
+        return txt(`📭 Aucun agent offline à ré-spawner sur "${project}" (filtre appliqué : ${filterNames?.length ? filterNames.join(",") : "tous offline"}).`);
+      }
+
+      // Resource preservation : hard cap, prioritise resumables for resume_only mode
+      if (mode === "resume_only") {
+        candidates = candidates.filter(n => agents[n].claude_session_id);
+        if (candidates.length === 0) {
+          return txt(`📭 Aucun agent resumable (avec claude_session_id) offline sur "${project}". Essaie mode="fresh".`);
+        }
+      }
+      const batch = candidates.slice(0, max);
+      const skipped = candidates.slice(max);
+
+      // Resolve canonical repo path : registry > project.repo > agent's tracked path.
+      // The registry is authoritative ; tracked agent paths can point to wikichat's own
+      // storage dir for service-spawned agents.
+      let projectRepo = null;
+      try {
+        const reg = loadRegistry();
+        const lower = project.toLowerCase();
+        const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        const match = reg.projects.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
+        if (match?.path && fs.existsSync(match.path)) projectRepo = match.path;
+      } catch { /* registry optional */ }
+      if (!projectRepo && proj.repo && fs.existsSync(proj.repo)) projectRepo = proj.repo;
+
+      const spawned = [];
+      const failed = [];
+      for (const n of batch) {
+        const e = agents[n];
+        const repoPath = projectRepo || (e.repo_path && fs.existsSync(e.repo_path) ? e.repo_path : null);
+        if (!repoPath) {
+          failed.push({ name: n, reason: `repo_path indisponible (registry/proj.repo/agent.repo_path tous absents)` });
+          continue;
+        }
+        try {
+          if (mode === "daemon") {
+            const r = spawnDaemon(repoPath, {
+              name: n, role: e.role || "agent",
+              port: parseInt(process.env.PORT || "3777"),
+              spawnedBy: requester,
+              sessionId: e.claude_session_id || undefined,
+            });
+            if (r.success) spawned.push({ name: n, mode: "daemon", pid: r.pid });
+            else failed.push({ name: n, reason: r.error });
+          } else {
+            // resume_only or fresh : both headless. resume_only passes resumeSessionId.
+            const prompt = mode === "resume_only"
+              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, attends instructions via poll_messages(timeout_seconds=60).`
+              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll_messages(timeout_seconds=30) pour les messages en attente, puis sors si rien d'urgent.`;
+            // Fire-and-forget — don't block on the headless spawn
+            spawnHeadless(repoPath, prompt, {
+              name: n, role: e.role || "agent",
+              port: parseInt(process.env.PORT || "3777"),
+              spawnedBy: requester,
+              resumeSessionId: mode === "resume_only" ? e.claude_session_id : null,
+            }).catch(() => { /* logged in registry */ });
+            spawned.push({ name: n, mode, resumed: mode === "resume_only" });
+          }
+        } catch (err) {
+          failed.push({ name: n, reason: err.message });
+        }
+      }
+
+      sysMsg("coordination", `🔁 ${requester} ré-spawne ${spawned.length}/${candidates.length} agent(s) sur "${project}" (mode=${mode}).`);
+      notify("coordination", sessionId);
+
+      const lines = [
+        `🔁 Respawn sur "${project}" (mode=${mode}, max=${max})`,
+        `  ✅ Spawned : ${spawned.length}`,
+        ...spawned.map(s => `    • ${s.name}${s.resumed ? " 🔁" : ""}${s.pid ? ` (PID ${s.pid})` : ""}`),
+      ];
+      if (failed.length) {
+        lines.push(`  ❌ Failed : ${failed.length}`);
+        lines.push(...failed.map(f => `    • ${f.name} — ${f.reason}`));
+      }
+      if (skipped.length) {
+        lines.push(`  ⏭  Skipped (cap max=${max}) : ${skipped.length}`);
+        lines.push(`    ${skipped.join(", ")}`);
+      }
+      lines.push(`\n💡 list_project_agents("${project}") dans ~30s pour voir qui est revenu en ligne.`);
+      return txt(lines.join("\n"));
     }
   );
 
