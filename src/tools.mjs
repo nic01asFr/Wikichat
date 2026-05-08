@@ -32,6 +32,7 @@ import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./rout
 import { dispatch as dispatchIntent, readDispatchLog, recordOutcome } from "./dispatch.mjs";
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
+import { createIdea, updateIdea, listIdeas, getIdea, searchIdeas, ideaStats, deleteIdea } from "./ideas.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1517,6 +1518,161 @@ export function registerTools(server, sessionId) {
         `**${i + 1}. ${r.title}** (score=${r.score})\n   📁 [${r.source}] ${r.path}\n   📄 …${r.excerpt}…`
       );
       return txt(`🔍 ${top.length}/${results.length} match(s) pour "${query}" (${candidates.length} fichier(s) KB scannés) :\n\n${lines.join("\n\n")}`);
+    }
+  );
+
+  // ══ IDEAS (régie idea pool) ══════════════════════════════════════════════════
+  // Ideas are first-class objects living outside projects (~/.wikichat/ideas/).
+  // Capture them as you have them ; the Harmonizer routine clusters them later ;
+  // the Bootstrapper agent (next phase) turns scoped ideas into project skeletons.
+  // Status flow : raw → clustered → scoped → started | shelved.
+
+  server.tool(
+    "add_idea",
+    "Capture une idée dans le idea pool. Stocké dans ~/.wikichat/ideas/<id>.json (cross-projet, persistant). " +
+    "Tag avec axes (mots-clés KB) + related_projects (projets connectés). Statut initial 'raw'. " +
+    "À utiliser dès qu'une intuition apparaît — pas besoin de la scoper. La Harmonizer routine la clustera plus tard. " +
+    "PRÉFÉRER À remember() pour les idées : remember est lié à l'identité d'agent ; idea pool est partagé.",
+    {
+      title: z.string().describe("Headline court (1 phrase) — phrase active de préférence"),
+      body: z.string().optional().describe("Description plus longue ; libre"),
+      axes: z.array(z.string()).optional().describe("Axes KB ('grist', 'auth', 'wikichat-triggers'…). Aide la harmonisation."),
+      related_projects: z.array(z.string()).optional().describe("Noms de projets existants connectés à l'idée"),
+      source: z.enum(["user", "channel", "closure", "git-signal", "harmonizer"]).optional()
+        .describe("D'où vient l'idée — par défaut 'user'"),
+    },
+    async ({ title, body, axes, related_projects, source }) => {
+      const name = getSessionName(sessionId);
+      try {
+        const idea = createIdea({ title, body, axes, related_projects, source, created_by: name });
+        // Surface on #ideation if it exists (channel auto-created in J5)
+        if (state.channels.has("ideation")) {
+          pushMessage({
+            id: randomUUID(), from: sessionId, fromName: name,
+            channel: "ideation",
+            content: `💡 Nouvelle idée [${idea.id}] : ${idea.title}${idea.axes.length ? ` · 🏷️ ${idea.axes.join(", ")}` : ""}${idea.related_projects.length ? ` · 🔗 ${idea.related_projects.join(", ")}` : ""}`,
+            timestamp: new Date(),
+          });
+          notify("ideation", sessionId);
+        }
+        const lines = [
+          `💡 Idée capturée [${idea.id}]`,
+          `   ${idea.title}`,
+        ];
+        if (idea.body) lines.push(`   ${idea.body.slice(0, 120)}${idea.body.length > 120 ? "…" : ""}`);
+        if (idea.axes.length) lines.push(`   🏷️ ${idea.axes.join(", ")}`);
+        if (idea.related_projects.length) lines.push(`   🔗 ${idea.related_projects.join(", ")}`);
+        lines.push(`\n💡 list_ideas() pour voir le pool · update_idea("${idea.id}", status="scoped") quand prête à devenir projet.`);
+        return txt(lines.join("\n"));
+      } catch (err) {
+        return txt(`❌ add_idea échoué : ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "list_ideas",
+    "Liste les idées du pool, filtres optionnels. Trié par updated_at desc. " +
+    "Sans filtre, affiche les 20 plus récentes + stats globales (par status, par axis).",
+    {
+      status: z.enum(["raw", "clustered", "scoped", "started", "shelved"]).optional()
+        .describe("Filtrer par status"),
+      axis: z.string().optional().describe("Filtrer aux idées qui touchent cet axe"),
+      project: z.string().optional().describe("Filtrer aux idées liées à ce projet"),
+      since_days: z.number().optional().describe("Seulement les idées modifiées dans les N derniers jours"),
+      limit: z.number().default(20).describe("Cap résultats (défaut 20)"),
+      query: z.string().optional().describe("Recherche keyword sur title+body+axes (court-circuite les autres filtres)"),
+    },
+    async ({ status, axis, project, since_days, limit, query }) => {
+      const stats = ideaStats();
+      if (stats.total === 0) {
+        return txt(`💡 Idea pool vide.\n   add_idea(title="...", axes=[...], related_projects=[...]) pour capturer une idée.`);
+      }
+      let out;
+      if (query) {
+        out = searchIdeas(query, { limit });
+      } else {
+        out = listIdeas({ status, axis, project, since_days, limit });
+      }
+      if (out.length === 0) {
+        return txt(`📭 Aucune idée ne matche le filtre.\n   Pool total : ${stats.total} (${Object.entries(stats.by_status).map(([k,v]) => `${k}=${v}`).join(", ")})`);
+      }
+      const statusEmoji = { raw: "📥", clustered: "🧩", scoped: "🎯", started: "🚀", shelved: "📦" };
+      const lines = out.map(i => {
+        const e = statusEmoji[i.status] || "•";
+        const tagsBits = [];
+        if (i.axes?.length) tagsBits.push(`🏷️ ${i.axes.slice(0, 3).join(", ")}`);
+        if (i.related_projects?.length) tagsBits.push(`🔗 ${i.related_projects.slice(0, 2).join(", ")}`);
+        if (i.cluster_id) tagsBits.push(`🧩 cluster=${i.cluster_id.slice(0, 6)}`);
+        const tags = tagsBits.length ? `\n    ${tagsBits.join(" · ")}` : "";
+        return `  ${e} **[${i.id}]** ${i.title} _(${timeSince(i.updated_at)} · ${i.created_by})_${tags}`;
+      });
+      const statsLine = `📊 Pool : ${stats.total} idée(s) — ${Object.entries(stats.by_status).map(([k,v]) => `${k}:${v}`).join(", ")}`;
+      const filterDesc = [
+        query && `query="${query}"`,
+        status && `status=${status}`,
+        axis && `axis=${axis}`,
+        project && `project=${project}`,
+        since_days && `since_days=${since_days}`,
+      ].filter(Boolean).join(", ");
+      const filterHint = filterDesc ? ` (filtre : ${filterDesc})` : "";
+      return txt(`💡 ${out.length} idée(s)${filterHint} :\n\n${lines.join("\n\n")}\n\n${statsLine}\n💡 update_idea(id, status="...") · get_idea(id) pour le détail`);
+    }
+  );
+
+  server.tool(
+    "update_idea",
+    "Met à jour une idée existante. Champs partiels — seuls ceux fournis sont écrasés. " +
+    "Statuts : raw (initial) → clustered (Harmonizer l'a regroupée) → scoped (prête à devenir projet) → started (projet créé) | shelved (mise au placard, pas de projet).",
+    {
+      id: z.string().describe("ID de l'idée (12 chars, retourné par add_idea / list_ideas)"),
+      title: z.string().optional(),
+      body: z.string().optional(),
+      axes: z.array(z.string()).optional(),
+      related_projects: z.array(z.string()).optional(),
+      status: z.enum(["raw", "clustered", "scoped", "started", "shelved"]).optional(),
+    },
+    async ({ id, ...patch }) => {
+      const name = getSessionName(sessionId);
+      try {
+        const updated = updateIdea(id, patch);
+        if (!updated) return txt(`❌ Idée [${id}] introuvable.`);
+        if (state.channels.has("ideation") && patch.status) {
+          const statusEmoji = { raw: "📥", clustered: "🧩", scoped: "🎯", started: "🚀", shelved: "📦" };
+          pushMessage({
+            id: randomUUID(), from: sessionId, fromName: name,
+            channel: "ideation",
+            content: `${statusEmoji[patch.status] || "•"} ${name} a marqué [${id}] comme ${patch.status} : ${updated.title}`,
+            timestamp: new Date(),
+          });
+          notify("ideation", sessionId);
+        }
+        const changed = Object.keys(patch).filter(k => patch[k] !== undefined);
+        return txt(`✅ Idée [${id}] mise à jour (${changed.join(", ")}).\n   ${updated.title}\n   Status : ${updated.status}`);
+      } catch (err) {
+        return txt(`❌ update_idea échoué : ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "get_idea",
+    "Récupère le détail complet d'une idée par id.",
+    { id: z.string().describe("ID de l'idée (12 chars)") },
+    async ({ id }) => {
+      const idea = getIdea(id);
+      if (!idea) return txt(`❌ Idée [${id}] introuvable.`);
+      const lines = [
+        `💡 **[${idea.id}] ${idea.title}**`,
+        `   Status : ${idea.status} · Source : ${idea.source} · Auteur : ${idea.created_by}`,
+        `   Créée : ${timeSince(idea.created_at)} · Mise à jour : ${timeSince(idea.updated_at)}`,
+      ];
+      if (idea.body) lines.push(`\n${idea.body}`);
+      if (idea.axes?.length) lines.push(`\n🏷️ Axes : ${idea.axes.join(", ")}`);
+      if (idea.related_projects?.length) lines.push(`🔗 Projets liés : ${idea.related_projects.join(", ")}`);
+      if (idea.cluster_id) lines.push(`🧩 Cluster : ${idea.cluster_id}`);
+      if (idea.similar_to?.length) lines.push(`🔄 Similaires : ${idea.similar_to.join(", ")}`);
+      return txt(lines.join("\n"));
     }
   );
 
