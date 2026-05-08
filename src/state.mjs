@@ -114,10 +114,40 @@ export function getSessionName(sessionId) {
   return state.sessions.get(sessionId)?.name ?? `session-${sessionId.slice(0, 6)}`;
 }
 
-/** Build or get a DM channel key between two session IDs */
-export function dmChannelKey(idA, idB) {
-  const [a, b] = [idA, idB].sort();
-  return `dm:${a.slice(0, 8)}-${b.slice(0, 8)}`;
+/** Build a stable DM channel key between two AGENTS (by name).
+ *
+ * IMPORTANT : we key by AGENT NAME, not session-id. An agent that disconnects
+ * and reconnects keeps the same DM history because the channel name is derived
+ * from the agent's stable identity, not its ephemeral session-id.
+ *
+ * Format : `dm:alice__bob` (sorted, double-underscore separator to avoid
+ * ambiguity when names contain hyphens like "claude-code").
+ *
+ * Anonymous sessions (`session-XXX`) fall back to id-based keying since they
+ * have no stable identity.
+ */
+export function dmChannelKey(idOrNameA, idOrNameB) {
+  function nameOf(idOrName) {
+    if (!idOrName) return idOrName;
+    const session = state.sessions.get(idOrName);
+    if (session && session.name && !session.name.startsWith("session-")) {
+      return session.name.toLowerCase();
+    }
+    return String(idOrName).toLowerCase();
+  }
+  const [a, b] = [nameOf(idOrNameA), nameOf(idOrNameB)].sort();
+  // Sanitize : keep only alphanum + hyphen, max 32 chars per side. Separator is __
+  const safe = (s) => String(s).replace(/[^a-z0-9-]/g, "").slice(0, 32);
+  return `dm:${safe(a)}__${safe(b)}`;
+}
+
+/** Returns true if the given agent name is one of the participants in the DM channel.
+ *  E.g. "alice" is in "dm:alice__bob" but not in "dm:carol__dave". */
+export function isAgentInDMChannel(channelName, agentName) {
+  if (!channelName?.startsWith("dm:") || !agentName) return false;
+  const safe = String(agentName).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+  const parts = channelName.slice(3).split("__");
+  return parts.includes(safe);
 }
 
 /** Time helpers */

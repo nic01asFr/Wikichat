@@ -11,7 +11,7 @@ import { spawn } from "child_process";
 
 import {
   state, pushMessage, sysMsg, getSessionByName, getSessionName,
-  dmChannelKey, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
+  dmChannelKey, isAgentInDMChannel, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
   getChannelCount,
 } from "./state.mjs";
 import { scanForProjects } from "./scanner.mjs";
@@ -190,15 +190,21 @@ function buildBriefing(sessionId, { since, mission } = {}) {
 
 /** Resolve or create a DM channel, return channel key */
 function resolveDMChannel(sessionId, targetName) {
-  const target = getSessionByName(targetName);
-  if (!target) return { error: `Session "${targetName}" introuvable. Sessions: ${[...state.sessions.values()].map(s => s.name).join(", ")}` };
-  const key = dmChannelKey(sessionId, target.id);
+  const senderName = getSessionName(sessionId);
+  // The DM channel is keyed by AGENT NAMES (stable across reconnections).
+  // Even if the target is currently offline, we can still create the DM
+  // channel — the target will see the message when they reconnect under
+  // the same name. This makes async DMs work correctly.
+  const key = dmChannelKey(senderName, targetName);
   if (!state.channels.has(key)) {
-    const senderName = getSessionName(sessionId);
     state.channels.set(key, {
-      name: key, description: `DM entre ${senderName} et ${targetName}`,
-      createdBy: "system", createdAt: new Date(),
-      isDM: true, participants: [sessionId, target.id],
+      name: key,
+      description: `DM entre ${senderName} et ${targetName}`,
+      createdBy: "system",
+      createdAt: new Date(),
+      isDM: true,
+      // Participants stored by NAME, not session-id, so reconnections preserve membership
+      participants: [senderName.toLowerCase(), targetName.toLowerCase()],
     });
   }
   return { channel: key };
@@ -224,7 +230,20 @@ export function registerTools(server, sessionId) {
     async ({ name, role, agent_type, claude_session_id }) => {
       const conflict = getSessionByName(name);
       if (conflict && conflict.id !== sessionId) {
-        return txt(`❌ Le nom "${name}" est déjà pris.`);
+        // If the conflicting session is stale or disconnected for >5min, release the name.
+        // This handles the common case : agent disconnects, reconnects under same name.
+        // Without this, the agent had to pick a new name → DM history lost.
+        const lastSeenAge = Date.now() - new Date(conflict.lastSeen || conflict.connectedAt).getTime();
+        const stale = lastSeenAge > 5 * 60 * 1000 || conflict.availability === "stale";
+        if (stale) {
+          // Liberate the name : revert old session to anonymous, transfer identity
+          const oldSession = state.sessions.get(conflict.id);
+          if (oldSession) oldSession.name = `session-${conflict.id.slice(0, 6)}`;
+          sysMsg("system", `Identité "${name}" transférée (session précédente stale depuis ${Math.floor(lastSeenAge/60000)}min)`);
+        } else {
+          const ageMin = Math.floor(lastSeenAge / 60000);
+          return txt(`❌ Le nom "${name}" est déjà pris par une session active (vue il y a ${ageMin}min). Choisis un autre nom ou attends qu'elle expire (5min).`);
+        }
       }
 
       const session = state.sessions.get(sessionId);
@@ -472,8 +491,11 @@ export function registerTools(server, sessionId) {
         if (new Date(msg.timestamp) < cutoff) return false;
         if (channel && channel !== "__all__" && msg.channel !== channel) return false;
         if (msg.isDM) {
-          const ci = state.channels.get(msg.channel);
-          if (ci?.participants && !ci.participants.includes(sessionId)) return false;
+          // DM channels are keyed by agent name (dm:alice__bob). Membership is
+          // derived from the channel name itself — survives session-id changes.
+          const myName = getSessionName(sessionId);
+          if (myName.startsWith("session-")) return false; // anonymous can't see DMs
+          if (!isAgentInDMChannel(msg.channel, myName)) return false;
         }
         if (from_session && msg.fromName.toLowerCase() !== from_session.toLowerCase()) return false;
         return true;
