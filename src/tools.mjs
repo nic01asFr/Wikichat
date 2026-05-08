@@ -34,6 +34,7 @@ import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, searchIdeas, ideaStats, deleteIdea } from "./ideas.mjs";
 import { auditProject, auditMany } from "./repo-audit.mjs";
+import { runHarmonizer, formatHarmonizerSummary } from "./harmonizer.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1747,6 +1748,37 @@ export function registerTools(server, sessionId) {
       }
       if (persist) lines.push(`\n💾 Persisté dans project-state.json (project.health).`);
       return txt(lines.join("\n"));
+    }
+  );
+
+  server.tool(
+    "harmonize_ideas",
+    "Lance une passe de harmonisation : cluster les idées par similarité (Jaccard sur title+body+axes+related_projects), " +
+    "met à jour cluster_id + similar_to sur chaque idée, et propose des syntheses sur #ideation. " +
+    "Idempotent : re-rouler stabilise les clusters tant que les idées n'ont pas changé. " +
+    "À déclencher manuellement ou via cron (register_trigger type=cron).",
+    {
+      threshold: z.number().default(0.25).describe("Seuil Jaccard min pour lier deux idées (0.0-1.0). Défaut 0.25."),
+      min_cluster_size: z.number().default(2).describe("Taille min d'un cluster pour être reporté. Défaut 2."),
+      post_to_channel: z.boolean().default(true).describe("Si true (défaut), poste un summary sur #ideation."),
+      statuses: z.array(z.enum(["raw", "clustered", "scoped", "started", "shelved"])).optional()
+        .describe("Statuses à inclure dans le scan. Défaut : raw + clustered."),
+    },
+    async ({ threshold, min_cluster_size, post_to_channel, statuses }) => {
+      const name = getSessionName(sessionId);
+      const report = await runHarmonizer({ threshold, min_cluster_size, statuses });
+      const summary = formatHarmonizerSummary(report);
+      if (post_to_channel && state.channels.has("ideation") && report.clusters.length > 0) {
+        pushMessage({
+          id: randomUUID(), from: sessionId, fromName: name,
+          channel: "ideation",
+          content: summary,
+          timestamp: new Date(),
+        });
+        notify("ideation", sessionId);
+      }
+      const meta = `\n📊 ${report.total_ideas} idée(s) scannée(s) · ${report.links_found} lien(s) au seuil ${report.threshold} · ${report.clusters.length} cluster(s) ≥ ${report.min_cluster_size}`;
+      return txt(summary + meta);
     }
   );
 
