@@ -16,12 +16,19 @@ function ok(msg) { console.log(`✅ ${msg}`); }
 function warn(msg) { console.warn(`⚠️  ${msg}`); }
 
 function uninstallWindows() {
-  try {
-    execSync(`schtasks /Delete /TN "${TASK_NAME}" /F`, { stdio: "inherit", shell: "cmd.exe" });
-    ok(`Task Scheduler "${TASK_NAME}" removed.`);
-  } catch (err) {
-    warn(`schtasks delete failed (task may not exist): ${err.message}`);
+  // 1. Remove startup folder VBS (current install method)
+  const vbsPath = path.join(os.homedir(), "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "WikiChat.vbs");
+  if (fs.existsSync(vbsPath)) {
+    fs.unlinkSync(vbsPath);
+    ok(`Startup VBS removed: ${vbsPath}`);
+  } else {
+    warn(`No VBS at ${vbsPath}`);
   }
+  // 2. Remove legacy schtasks entry (for users who installed via the old script)
+  try {
+    execSync(`schtasks /Delete /TN "${TASK_NAME}" /F 2>nul`, { stdio: "inherit", shell: "cmd.exe" });
+    ok(`Legacy Task Scheduler "${TASK_NAME}" removed.`);
+  } catch { /* legacy task didn't exist, ignore */ }
 }
 
 function uninstallMacOS() {

@@ -34,20 +34,38 @@ function fail(msg) { console.error(`❌ ${msg}`); process.exit(1); }
 function ok(msg) { console.log(`✅ ${msg}`); }
 
 function installWindows() {
-  // schtasks /Create /TN <name> /TR "<cmd>" /SC ONLOGON /RL HIGHEST /F
-  // /F overwrites if exists (idempotent).
-  // --with-team : prepend `cmd /c set WIKICHAT_AUTONOMOUS_TEAM=1 && ...`
-  const tr = WITH_TEAM
-    ? `cmd /c set WIKICHAT_AUTONOMOUS_TEAM=1 ^&^& \\"${NODE_BIN}\\" \\"${SERVER_ENTRY}\\"`
-    : `\\"${NODE_BIN}\\" \\"${SERVER_ENTRY}\\"`;
-  const cmd = `schtasks /Create /TN "${TASK_NAME}" /TR "${tr}" /SC ONLOGON /RL HIGHEST /F`;
+  // Startup folder approach — per-user, no admin required, runs at every user logon.
+  // We drop a .vbs file that launches node in hidden mode (no visible cmd window).
+  // Output is redirected to ~/.wikichat/stdout.log for inspection.
+  const startupDir = path.join(os.homedir(), "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
+  if (!fs.existsSync(startupDir)) {
+    fail(`Startup folder not found: ${startupDir}`);
+  }
+  const vbsPath = path.join(startupDir, "WikiChat.vbs");
+  const stdout = path.join(os.homedir(), ".wikichat", "stdout.log");
+  const stderr = path.join(os.homedir(), ".wikichat", "stderr.log");
+  // Build the inner cmd command. Escape backslashes and quotes for VBS string literal.
+  const innerCmd = WITH_TEAM
+    ? `set WIKICHAT_AUTONOMOUS_TEAM=1 && "${NODE_BIN}" "${SERVER_ENTRY}" > "${stdout}" 2> "${stderr}"`
+    : `"${NODE_BIN}" "${SERVER_ENTRY}" > "${stdout}" 2> "${stderr}"`;
+  // VBS escapes : double-quote → "" inside string literal
+  const vbsEscaped = innerCmd.replace(/"/g, '""');
+  const vbs = `' WikiChat auto-start — runs node server.mjs at user logon, hidden window.
+' Idempotent : delete this file to disable. Edit by re-running install-service.
+Dim WshShell
+Set WshShell = CreateObject("WScript.Shell")
+' Run cmd /c <innerCmd>, WindowStyle=0 (hidden), WaitOnReturn=False (background)
+WshShell.Run "cmd /c ${vbsEscaped}", 0, False
+`;
   try {
-    execSync(cmd, { stdio: "inherit", shell: "cmd.exe" });
-    ok(`Task Scheduler "${TASK_NAME}" installed (runs at user logon).`);
-    console.log(`  Edit/disable via: taskschd.msc`);
-    console.log(`  Or:               schtasks /Run  /TN ${TASK_NAME}`);
+    fs.writeFileSync(vbsPath, vbs, "utf8");
+    ok(`Startup entry installed: ${vbsPath}`);
+    console.log(`  WikiChat will auto-start at every user logon.`);
+    console.log(`  Logs:    ${stdout} (and stderr.log)`);
+    console.log(`  Disable: delete the .vbs file, or via Task Manager → Startup tab`);
+    console.log(`  Test:    cscript //nologo "${vbsPath}"`);
   } catch (err) {
-    fail(`schtasks failed: ${err.message}`);
+    fail(`Failed to write startup VBS: ${err.message}`);
   }
 }
 
