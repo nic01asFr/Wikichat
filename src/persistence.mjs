@@ -272,10 +272,68 @@ export function loadSpawnRegistry() {
   return _spawnCache;
 }
 
+/**
+ * One-shot GC at boot : drop legacy entries with no status field, mark
+ * "starting" entries older than 24h as failed, drop entries older than 30 days.
+ * Called from the boot sequence (server.mjs) — keeps the registry from growing
+ * indefinitely while preserving recent run history.
+ */
+export function gcSpawnRegistry() {
+  const reg = loadSpawnRegistry();
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  let dropped = 0, fixed = 0;
+  const kept = [];
+  for (const e of reg) {
+    if (!e || typeof e !== "object") { dropped++; continue; }
+    // Drop entries with no status field (legacy bad data)
+    if (!e.status) { dropped++; continue; }
+    // Drop very old entries (>30 days) regardless of status
+    const ts = e.spawned_at || e.started_at;
+    if (ts) {
+      const age = now - new Date(ts).getTime();
+      if (age > 30 * DAY) { dropped++; continue; }
+      // Stuck "starting" >24h → mark failed instead of dropping (keeps history)
+      if ((e.status === "starting" || e.status === "running") && age > 24 * 60 * 60 * 1000) {
+        // Heuristic : daemon "running" entries are refreshed by team-lifecycle, so
+        // anything >24h running without refresh is stuck. Headless "starting" >24h
+        // never started successfully.
+        if (e.mode === "headless" || e.status === "starting") {
+          e.status = "failed";
+          e.failed_at = new Date().toISOString();
+          e.gc_reason = "stale >24h";
+          fixed++;
+        }
+      }
+    }
+    kept.push(e);
+  }
+  if (dropped > 0 || fixed > 0) {
+    _spawnCache = kept;
+    _spawnDirty = true;
+    flushSpawnRegistry();
+  }
+  return { dropped, fixed, total: kept.length };
+}
+
 export function upsertSpawnRegistry(entry) {
   const reg = loadSpawnRegistry();
   const idx = reg.findIndex(e => e.name === entry.name);
-  if (idx >= 0) reg[idx] = { ...reg[idx], ...entry }; else reg.push(entry);
+  if (idx >= 0) {
+    // When a daemon is freshly (re)spawned, clear terminal fields from any
+    // previous run so spawned_at reflects the actual current spawn rather than
+    // an old timestamp lingering from before a server restart.
+    const merged = { ...reg[idx], ...entry };
+    if (entry.status === "running" || entry.status === "starting") {
+      merged.ended_at = null;
+      merged.ended_reason = null;
+      merged.failed_at = null;
+      merged.gc_reason = null;
+    }
+    reg[idx] = merged;
+  } else {
+    reg.push(entry);
+  }
   _spawnDirty = true;
   // Debounced write — max once per 2 seconds
   if (!_spawnFlushTimer) {

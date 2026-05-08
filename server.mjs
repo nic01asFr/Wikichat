@@ -20,7 +20,7 @@ import { join, extname } from "path";
 import { homedir } from "os";
 
 import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
-import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
+import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
 import { loadMemories, flushMemories } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
@@ -58,6 +58,10 @@ rebuildChannelCounts(); // Build O(1) channel count cache
 setOnMessagePush(saveMessagesDebounced); // Auto-persist on new messages
 loadProjects();
 loadMemories();   // Restore persistent agent memories (remember/recall)
+const _spawnGc = gcSpawnRegistry(); // Drop legacy/stale entries from spawn_registry
+if (_spawnGc.dropped || _spawnGc.fixed) {
+  console.log(`[boot] spawn_registry GC : dropped=${_spawnGc.dropped} fixed=${_spawnGc.fixed} kept=${_spawnGc.total}`);
+}
 
 // Configure trigger engine (Phase 5) — wire spawn handler + budget guard
 configureTriggers({
