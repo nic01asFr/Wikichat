@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WikiChat — Console</title>
+<style>
+  :root {
+    --bg: #0D1117;
+    --bg2: #161B22;
+    --bg3: #1C2128;
+    --border: #30363D;
+    --teal: #45B8B0;
+    --teal-dim: #2d7a75;
+    --text: #E6EDF3;
+    --text-dim: #8B949E;
+    --green: #3FB950;
+    --red: #F85149;
+    --yellow: #D29922;
+    --purple: #A371F7;
+    --orange: #E3832D;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+  /* ── Header ───────────────────────────────────────────── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 18px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    height: 48px;
+  }
+  header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--teal);
+    letter-spacing: 0.02em;
+  }
+  .status-badge {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .status-badge .v { color: var(--text); font-weight: 600; }
+  .status-badge.healthy { border-color: var(--teal-dim); }
+  .grow { flex: 1; }
+  header a { color: var(--text-dim); font-size: 11px; text-decoration: none; padding: 4px 8px; }
+  header a:hover { color: var(--teal); }
+
+  /* ── Main grid ──────────────────────────────────────────── */
+  main {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    height: calc(100vh - 48px);
+  }
+
+  /* ── Left rail ──────────────────────────────────────────── */
+  aside {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 12px 0;
+  }
+  .rail-section {
+    padding: 0 14px;
+    margin-bottom: 18px;
+  }
+  .rail-section h3 {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .rail-section h3 .count {
+    background: var(--bg3);
+    color: var(--text-dim);
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+  }
+  .rail-item {
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 2px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .rail-item:hover { background: var(--bg3); }
+  .rail-item.active { background: var(--bg3); border-left: 2px solid var(--teal); padding-left: 6px; }
+  .rail-item.anonymous { color: var(--text-dim); font-style: italic; }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot.online { background: var(--green); }
+  .dot.offline { background: var(--text-dim); }
+  .role-tag {
+    color: var(--text-dim);
+    font-size: 10px;
+    margin-left: auto;
+  }
+  .spawn-btn {
+    background: var(--teal-dim);
+    color: var(--text);
+    border: none;
+    padding: 7px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .spawn-btn:hover { background: var(--teal); }
+
+  /* ── Center : tabs ─────────────────────────────────────── */
+  section {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .tabs {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    padding: 0 16px;
+  }
+  .tab {
+    padding: 12px 16px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+
+  .tab-panel { flex: 1; overflow: hidden; display: none; flex-direction: column; }
+  .tab-panel.active { display: flex; }
+
+  /* ── Chat panel ─────────────────────────────────────── */
+  .chat-header {
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .chat-header .channel-name { color: var(--teal); font-weight: 600; }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .msg {
+    background: var(--bg2);
+    border-left: 2px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 0 4px 4px 0;
+  }
+  .msg.system { border-left-color: var(--purple); background: var(--bg3); }
+  .msg.dm { border-left-color: var(--orange); }
+  .msg .msg-meta {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+  }
+  .msg .msg-from { color: var(--teal); font-weight: 600; }
+  .msg .msg-content { white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+  .chat-input {
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    padding: 10px;
+    display: flex;
+    gap: 8px;
+  }
+  .chat-input input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .chat-input input:focus { border-color: var(--teal); outline: none; }
+  .chat-input button {
+    background: var(--teal-dim);
+    color: var(--text);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .chat-input button:hover { background: var(--teal); }
+
+  /* ── Régie panel ─────────────────────────────────────── */
+  .regie-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    flex: 1;
+    overflow: hidden;
+  }
+  .regie-col {
+    background: var(--bg);
+    overflow-y: auto;
+    padding: 14px 18px;
+  }
+  .regie-col h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--teal);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .regie-col h2 button {
+    margin-left: auto;
+    background: var(--bg3);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .regie-col h2 button:hover { color: var(--teal); border-color: var(--teal-dim); }
+  .add-form {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+  .add-form input, .add-form textarea, .add-form select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: inherit;
+    margin-bottom: 6px;
+  }
+  .add-form textarea { min-height: 50px; resize: vertical; }
+  .add-form button {
+    background: var(--teal-dim);
+    color: var(--text);
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .add-form button:hover { background: var(--teal); }
+  .idea, .project {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .idea-title, .project-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .idea-body, .project-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .badge {
+    background: var(--bg3);
+    color: var(--text-dim);
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .badge.lifecycle-ideation { color: var(--yellow); }
+  .badge.lifecycle-mvp { color: var(--green); }
+  .badge.lifecycle-active { color: var(--teal); }
+  .badge.lifecycle-maintenance { color: var(--purple); }
+  .badge.lifecycle-archived { color: var(--text-dim); }
+  .badge.lifecycle-closed { color: var(--text-dim); text-decoration: line-through; }
+  .badge.status-raw { color: var(--text-dim); }
+  .badge.status-clustered { color: var(--purple); }
+  .badge.status-scoped { color: var(--green); }
+  .badge.status-started { color: var(--teal); }
+  .badge.status-shelved { color: var(--text-dim); }
+  .badge.score-low { color: var(--red); }
+  .badge.score-mid { color: var(--yellow); }
+  .badge.score-high { color: var(--green); }
+  .idea-actions, .project-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .idea-actions button, .project-actions button {
+    background: var(--bg3);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 10px;
+  }
+  .idea-actions button:hover, .project-actions button:hover { color: var(--teal); border-color: var(--teal-dim); }
+
+  /* ── Spawns panel ─────────────────────────────────────── */
+  .spawns-list { padding: 14px 18px; overflow-y: auto; flex: 1; }
+  .spawn-row {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .spawn-row .spawn-name { font-weight: 600; }
+  .spawn-row .spawn-meta { color: var(--text-dim); font-size: 11px; flex: 1; }
+  .spawn-row .spawn-status { padding: 2px 8px; border-radius: 3px; font-size: 10px; }
+  .spawn-row .spawn-status.running { background: var(--teal-dim); color: var(--text); }
+  .spawn-row .spawn-status.completed { background: var(--bg3); color: var(--green); }
+  .spawn-row .spawn-status.failed { background: var(--bg3); color: var(--red); }
+  .spawn-row .spawn-status.starting { background: var(--bg3); color: var(--yellow); }
+
+  /* ── Modal ──────────────────────────────────────────── */
+  .modal-bg {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    width: 480px;
+    max-width: 92vw;
+  }
+  .modal h2 { font-size: 16px; color: var(--teal); margin-bottom: 14px; }
+  .modal label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; margin-top: 10px; }
+  .modal input, .modal select, .modal textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .modal textarea { min-height: 60px; resize: vertical; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+  .modal-actions button {
+    padding: 8px 16px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .modal-actions button.primary { background: var(--teal-dim); border-color: var(--teal-dim); }
+  .modal-actions button.primary:hover { background: var(--teal); }
+
+  /* ── Empty / loading states ──────────────────────────── */
+  .empty {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 12px;
+  }
+  .toast {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--teal-dim);
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 12px;
+    z-index: 200;
+    max-width: 400px;
+    display: none;
+  }
+  .toast.show { display: block; }
+  .toast.error { border-color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WikiChat Console</h1>
+  <span class="status-badge healthy" id="status-badge">
+    <span class="v" id="status-uptime">…</span> uptime
+  </span>
+  <span class="status-badge">
+    <span class="v" id="status-budget">…</span> budget
+  </span>
+  <span class="status-badge">
+    <span class="v" id="status-sessions">…</span> sessions
+  </span>
+  <span class="status-badge" id="dormant-badge">…</span>
+  <div class="grow"></div>
+  <a href="/dashboard">→ dashboard</a>
+  <a href="/cockpit">→ cockpit</a>
+</header>
+
+<main>
+  <aside>
+    <div class="rail-section">
+      <button class="spawn-btn" onclick="openSpawnModal()">+ Spawn agent</button>
+    </div>
+    <div class="rail-section">
+      <h3>Sessions <span class="count" id="rail-sessions-count">0</span></h3>
+      <div id="rail-sessions"></div>
+    </div>
+    <div class="rail-section">
+      <h3>Channels <span class="count" id="rail-channels-count">0</span></h3>
+      <div id="rail-channels"></div>
+    </div>
+  </aside>
+
+  <section>
+    <div class="tabs">
+      <div class="tab active" data-tab="chat">Chat</div>
+      <div class="tab" data-tab="regie">Régie</div>
+      <div class="tab" data-tab="spawns">Spawns</div>
+    </div>
+
+    <!-- Chat tab -->
+    <div class="tab-panel active" data-panel="chat">
+      <div class="chat-header">Canal courant : <span class="channel-name" id="chat-channel">general</span></div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input">
+        <input type="text" id="chat-as" placeholder="As (display name)" value="Console" style="max-width: 140px;" />
+        <input type="text" id="chat-text" placeholder="Tape un message + Entrée pour envoyer" />
+        <button onclick="sendChat()">Send</button>
+      </div>
+    </div>
+
+    <!-- Régie tab -->
+    <div class="tab-panel" data-panel="regie">
+      <div class="regie-grid">
+        <div class="regie-col">
+          <h2>💡 Ideas <span class="count" id="ideas-count" style="font-size:10px;color:var(--text-dim);font-weight:normal">0</span>
+            <button onclick="harmonize()">🧩 Harmonize</button>
+          </h2>
+          <div class="add-form">
+            <input type="text" id="idea-title" placeholder="Titre court de l'idée" />
+            <textarea id="idea-body" placeholder="Description (optionnel)"></textarea>
+            <input type="text" id="idea-axes" placeholder="Axes : grist, auth, ui (séparés par virgule)" />
+            <input type="text" id="idea-projects" placeholder="Projets liés (séparés par virgule)" />
+            <button onclick="addIdea()">+ Capter</button>
+          </div>
+          <div id="ideas-list"></div>
+        </div>
+        <div class="regie-col">
+          <h2>🗺️ Projects <span class="count" id="projects-count" style="font-size:10px;color:var(--text-dim);font-weight:normal">0</span>
+            <button onclick="auditAll()">🩺 Audit all</button>
+          </h2>
+          <div id="projects-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Spawns tab -->
+    <div class="tab-panel" data-panel="spawns">
+      <div class="spawns-list" id="spawns-list">
+        <div class="empty">Pas de spawn pour l'instant. Clic sur <strong>+ Spawn agent</strong> en haut à gauche.</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Spawn modal -->
+<div class="modal-bg" id="spawn-modal">
+  <div class="modal">
+    <h2>Spawn un agent</h2>
+    <label>Nom</label>
+    <input type="text" id="spawn-name" placeholder="ex: ReviewerAlice" />
+    <label>Repo path (absolu)</label>
+    <input type="text" id="spawn-repo" placeholder="C:\\Users\\Omen\\Desktop\\..." />
+    <label>Rôle (optionnel)</label>
+    <input type="text" id="spawn-role" placeholder="ex: reviewer, dev, auditor" />
+    <label>Tâche initiale</label>
+    <textarea id="spawn-task" placeholder="Décris l'action à effectuer (commence par un verbe)"></textarea>
+    <label>Mode</label>
+    <select id="spawn-mode">
+      <option value="headless">headless (one-shot, recommandé)</option>
+      <option value="daemon">daemon (persistant en background)</option>
+    </select>
+    <div class="modal-actions">
+      <button onclick="closeSpawnModal()">Annuler</button>
+      <button class="primary" onclick="submitSpawn()">Spawn</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────
+const ui = {
+  currentChannel: "general",
+  pollTimer: null,
+  pollIdeas: null,
+  pollSpawns: null,
+};
+
+// ─────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────
+function $(sel) { return document.querySelector(sel); }
+function $$(sel) { return [...document.querySelectorAll(sel)]; }
+function el(tag, attrs = {}, children = []) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v;
+    else if (k === "onclick") e.onclick = v;
+    else if (k === "html") e.innerHTML = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of (Array.isArray(children) ? children : [children])) {
+    if (typeof c === "string") e.appendChild(document.createTextNode(c));
+    else if (c) e.appendChild(c);
+  }
+  return e;
+}
+function toast(msg, isError) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast show" + (isError ? " error" : "");
+  setTimeout(() => t.className = "toast", 3500);
+}
+function fmtAge(iso) {
+  if (!iso) return "?";
+  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+async function api(method, url, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`${r.status}: ${txt.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────
+// Tabs
+// ─────────────────────────────────────────────────────────
+$$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+function switchTab(name) {
+  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+  $$(".tab-panel").forEach(p => p.classList.toggle("active", p.dataset.panel === name));
+  if (name === "regie") refreshRegie();
+  if (name === "spawns") refreshSpawns();
+}
+
+// ─────────────────────────────────────────────────────────
+// Header status
+// ─────────────────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const h = await api("GET", "/api/health");
+    $("#status-uptime").textContent = (h.uptime < 3600) ? Math.round(h.uptime / 60) + "m" : Math.round(h.uptime / 3600) + "h";
+    $("#status-budget").textContent = h.budget.current + "/" + h.budget.max;
+    $("#status-sessions").textContent = h.registeredSessions + "/" + h.sessions;
+    $("#status-badge").className = "status-badge healthy";
+    const dorm = await api("GET", "/api/admin/dormant").catch(() => null);
+    if (dorm) {
+      $("#dormant-badge").innerHTML = `<span class="v">${dorm.active ? "AWAKE" : "DORMANT"}</span>`;
+      $("#dormant-badge").style.color = dorm.active ? "var(--green)" : "var(--text-dim)";
+    }
+  } catch (err) {
+    $("#status-badge").className = "status-badge";
+    $("#status-uptime").textContent = "?";
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// Left rail : sessions + channels
+// ─────────────────────────────────────────────────────────
+async function refreshRail() {
+  try {
+    const [{ sessions }, { channels }] = await Promise.all([
+      api("GET", "/api/regie/sessions"),
+      api("GET", "/api/regie/channels"),
+    ]);
+    const railS = $("#rail-sessions");
+    railS.innerHTML = "";
+    $("#rail-sessions-count").textContent = sessions.filter(s => !s.anonymous).length;
+    sessions.filter(s => !s.anonymous).forEach(s => {
+      const item = el("div", { class: "rail-item" }, [
+        el("span", { class: "dot online" }),
+        el("span", {}, s.name),
+        el("span", { class: "role-tag" }, s.role || s.agent_type || ""),
+      ]);
+      item.onclick = () => openDM(s.name);
+      railS.appendChild(item);
+    });
+    sessions.filter(s => s.anonymous).forEach(s => {
+      const item = el("div", { class: "rail-item anonymous" }, [
+        el("span", { class: "dot offline" }),
+        el("span", {}, s.name || s.id.slice(0, 6)),
+      ]);
+      railS.appendChild(item);
+    });
+
+    const railC = $("#rail-channels");
+    railC.innerHTML = "";
+    const visibleChannels = channels.filter(c => !c.isDM || c.name.includes("console"));
+    $("#rail-channels-count").textContent = visibleChannels.length;
+    visibleChannels.forEach(c => {
+      const cls = "rail-item" + (c.name === ui.currentChannel ? " active" : "");
+      const item = el("div", { class: cls }, "#" + c.name);
+      item.onclick = () => selectChannel(c.name);
+      railC.appendChild(item);
+    });
+  } catch (err) {
+    console.error("rail refresh", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// Chat
+// ─────────────────────────────────────────────────────────
+function selectChannel(name) {
+  ui.currentChannel = name;
+  $("#chat-channel").textContent = name;
+  $$(".rail-item").forEach(i => {
+    i.classList.toggle("active", i.textContent.replace(/^#/, "") === name);
+  });
+  refreshChat();
+}
+function openDM(agentName) {
+  // We don't know "our" agent name on the console side — use display name from input
+  const me = ($("#chat-as").value || "Console").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+  const them = String(agentName).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+  const [a, b] = [me, them].sort();
+  const ch = `dm:${a}__${b}`;
+  selectChannel(ch);
+}
+async function refreshChat() {
+  try {
+    const r = await fetch(`/api/messages?channel=${encodeURIComponent(ui.currentChannel)}&since_minutes=120`);
+    const msgs = await r.json();
+    const list = $("#chat-messages");
+    list.innerHTML = "";
+    if (!Array.isArray(msgs) || msgs.length === 0) {
+      list.appendChild(el("div", { class: "empty" }, "Aucun message dans ce canal sur les 2 dernières heures."));
+      return;
+    }
+    for (const m of msgs) {
+      const isSystem = m.from === "system";
+      const isDM = ui.currentChannel.startsWith("dm:");
+      const cls = "msg" + (isSystem ? " system" : "") + (isDM ? " dm" : "");
+      const div = el("div", { class: cls });
+      const meta = el("div", { class: "msg-meta" }, [
+        el("span", { class: "msg-from" }, m.fromName || m.from),
+        " · " + new Date(m.timestamp).toLocaleTimeString("fr-FR"),
+      ]);
+      const body = el("div", { class: "msg-content" }, m.content);
+      div.appendChild(meta);
+      div.appendChild(body);
+      list.appendChild(div);
+    }
+    list.scrollTop = list.scrollHeight;
+  } catch (err) {
+    console.error("chat refresh", err);
+  }
+}
+async function sendChat() {
+  const text = $("#chat-text").value.trim();
+  if (!text) return;
+  const from = $("#chat-as").value.trim() || "Console";
+  try {
+    await api("POST", "/api/chat", { from, channel: ui.currentChannel, content: text });
+    $("#chat-text").value = "";
+    refreshChat();
+  } catch (err) {
+    toast("Send failed: " + err.message, true);
+  }
+}
+$("#chat-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+// ─────────────────────────────────────────────────────────
+// Régie : ideas + projects
+// ─────────────────────────────────────────────────────────
+async function refreshRegie() {
+  refreshIdeas();
+  refreshProjects();
+}
+async function refreshIdeas() {
+  try {
+    const { ideas, stats } = await api("GET", "/api/regie/ideas?limit=50");
+    $("#ideas-count").textContent = stats.total;
+    const list = $("#ideas-list");
+    list.innerHTML = "";
+    if (ideas.length === 0) {
+      list.appendChild(el("div", { class: "empty" }, "Idea pool vide. Capte ta première au-dessus ↑"));
+      return;
+    }
+    for (const i of ideas) {
+      list.appendChild(renderIdea(i));
+    }
+  } catch (err) { console.error("ideas refresh", err); }
+}
+function renderIdea(i) {
+  const card = el("div", { class: "idea" });
+  card.appendChild(el("div", { class: "idea-title" }, `[${i.id}] ${i.title}`));
+  if (i.body) card.appendChild(el("div", { class: "idea-body" }, i.body.slice(0, 200) + (i.body.length > 200 ? "…" : "")));
+  const badges = el("div", { class: "badges" }, [
+    el("span", { class: `badge status-${i.status}` }, i.status),
+    el("span", { class: "badge" }, "↻ " + fmtAge(i.updated_at)),
+  ]);
+  for (const a of (i.axes || []).slice(0, 5)) badges.appendChild(el("span", { class: "badge" }, "🏷 " + a));
+  for (const p of (i.related_projects || []).slice(0, 4)) badges.appendChild(el("span", { class: "badge" }, "🔗 " + p));
+  if (i.cluster_id) badges.appendChild(el("span", { class: "badge status-clustered" }, "🧩 " + i.cluster_id.slice(0, 6)));
+  card.appendChild(badges);
+  const actions = el("div", { class: "idea-actions" });
+  for (const newStatus of ["raw", "scoped", "started", "shelved"]) {
+    if (newStatus === i.status) continue;
+    const b = el("button", { onclick: () => updateIdeaStatus(i.id, newStatus) }, "→ " + newStatus);
+    actions.appendChild(b);
+  }
+  actions.appendChild(el("button", { onclick: () => deleteIdea(i.id) }, "✕"));
+  card.appendChild(actions);
+  return card;
+}
+async function addIdea() {
+  const title = $("#idea-title").value.trim();
+  if (!title) return toast("Titre requis", true);
+  const body = $("#idea-body").value.trim();
+  const axes = $("#idea-axes").value.split(",").map(s => s.trim()).filter(Boolean);
+  const projects = $("#idea-projects").value.split(",").map(s => s.trim()).filter(Boolean);
+  try {
+    await api("POST", "/api/regie/ideas", { title, body, axes, related_projects: projects });
+    $("#idea-title").value = "";
+    $("#idea-body").value = "";
+    $("#idea-axes").value = "";
+    $("#idea-projects").value = "";
+    toast("Idée capturée");
+    refreshIdeas();
+  } catch (err) { toast("Échec: " + err.message, true); }
+}
+async function updateIdeaStatus(id, status) {
+  try {
+    await api("PATCH", "/api/regie/ideas/" + id, { status });
+    refreshIdeas();
+  } catch (err) { toast("Update failed: " + err.message, true); }
+}
+async function deleteIdea(id) {
+  if (!confirm("Supprimer définitivement [" + id + "] ?")) return;
+  try {
+    await api("DELETE", "/api/regie/ideas/" + id);
+    refreshIdeas();
+  } catch (err) { toast("Delete failed: " + err.message, true); }
+}
+async function harmonize() {
+  toast("Harmonisation en cours…");
+  try {
+    const { report } = await api("POST", "/api/regie/harmonize", { post_to_channel: true });
+    toast(`${report.clusters.length} cluster(s) sur ${report.total_ideas} idée(s).`);
+    refreshIdeas();
+  } catch (err) { toast("Harmonize failed: " + err.message, true); }
+}
+
+async function refreshProjects() {
+  try {
+    const { projects } = await api("GET", "/api/regie/projects");
+    $("#projects-count").textContent = projects.length;
+    const list = $("#projects-list");
+    list.innerHTML = "";
+    if (projects.length === 0) {
+      list.appendChild(el("div", { class: "empty" }, "Aucun projet déclaré."));
+      return;
+    }
+    for (const p of projects.slice(0, 60)) {
+      list.appendChild(renderProject(p));
+    }
+  } catch (err) { console.error("projects refresh", err); }
+}
+function renderProject(p) {
+  const card = el("div", { class: "project" });
+  card.appendChild(el("div", { class: "project-title" }, p.name));
+  if (p.description) card.appendChild(el("div", { class: "project-desc" }, p.description));
+  if (p.purpose) card.appendChild(el("div", { class: "project-desc" }, "🎯 " + p.purpose));
+  const badges = el("div", { class: "badges" });
+  if (p.lifecycle) badges.appendChild(el("span", { class: `badge lifecycle-${p.lifecycle}` }, p.lifecycle));
+  for (const a of (p.axes || []).slice(0, 4)) badges.appendChild(el("span", { class: "badge" }, "🏷 " + a));
+  if (p.health?.score !== undefined) {
+    const s = p.health.score;
+    const cls = s < 30 ? "score-low" : s < 60 ? "score-mid" : "score-high";
+    badges.appendChild(el("span", { class: "badge " + cls }, "🩺 " + s + "/100"));
+  }
+  if (p.tasks_active) badges.appendChild(el("span", { class: "badge" }, "📋 " + p.tasks_active));
+  if (p.blockers) badges.appendChild(el("span", { class: "badge score-low" }, "🔴 " + p.blockers));
+  if (p.live_agents.length) badges.appendChild(el("span", { class: "badge" }, "👥 " + p.live_agents.length));
+  if (p.publish?.github?.visibility && p.publish.github.visibility !== "none") {
+    badges.appendChild(el("span", { class: "badge" }, "gh:" + p.publish.github.visibility));
+  }
+  if (p.publish?.license) badges.appendChild(el("span", { class: "badge" }, "© " + p.publish.license));
+  card.appendChild(badges);
+  if (p.health?.warnings?.length) {
+    const w = el("div", { class: "project-desc", style: "color: var(--yellow)" }, "⚠ " + p.health.warnings.slice(0, 3).join(" · "));
+    card.appendChild(w);
+  }
+  const actions = el("div", { class: "project-actions" });
+  actions.appendChild(el("button", { onclick: () => auditOne(p.name) }, "🩺 Audit"));
+  actions.appendChild(el("button", { onclick: () => editLifecycle(p.name, p.lifecycle) }, "✎ Lifecycle"));
+  if (p.repo) actions.appendChild(el("button", { onclick: () => spawnFor(p.name, p.repo) }, "+ Spawn ici"));
+  card.appendChild(actions);
+  return card;
+}
+async function auditOne(project) {
+  toast("Audit " + project + "…");
+  try {
+    const { audit } = await api("POST", "/api/regie/audit", { project, persist: true });
+    toast(`${project}: score ${audit.score}/100`);
+    refreshProjects();
+  } catch (err) { toast("Audit failed: " + err.message, true); }
+}
+async function auditAll() {
+  toast("Audit batch en cours (jusqu'à ~10s)…");
+  try {
+    const r = await api("POST", "/api/regie/audit-all", { persist: true });
+    toast(`${r.count} projets audités en ${r.elapsed_ms}ms`);
+    refreshProjects();
+  } catch (err) { toast("Audit-all failed: " + err.message, true); }
+}
+function editLifecycle(name, current) {
+  const next = prompt("Lifecycle pour '" + name + "' (ideation, mvp, active, maintenance, archived, closed) :", current || "active");
+  if (!next) return;
+  api("PATCH", "/api/regie/projects/" + encodeURIComponent(name), { lifecycle: next })
+    .then(() => { toast("Lifecycle → " + next); refreshProjects(); })
+    .catch(err => toast("Edit failed: " + err.message, true));
+}
+function spawnFor(projectName, repoPath) {
+  $("#spawn-name").value = "Worker-" + projectName.slice(0, 8);
+  $("#spawn-repo").value = repoPath;
+  openSpawnModal();
+}
+
+// ─────────────────────────────────────────────────────────
+// Spawns
+// ─────────────────────────────────────────────────────────
+function openSpawnModal() { $("#spawn-modal").classList.add("show"); }
+function closeSpawnModal() { $("#spawn-modal").classList.remove("show"); }
+async function submitSpawn() {
+  const name = $("#spawn-name").value.trim();
+  const repo = $("#spawn-repo").value.trim();
+  const role = $("#spawn-role").value.trim();
+  const task = $("#spawn-task").value.trim();
+  const mode = $("#spawn-mode").value;
+  if (!name || !repo) return toast("name + repo requis", true);
+  const url = mode === "daemon" ? "/api/spawn/daemon" : "/api/spawn/headless";
+  const body = mode === "daemon"
+    ? { projectPath: repo, name, role: role || undefined, task: task || undefined }
+    : { projectPath: repo, name, role: role || undefined, prompt: task || undefined };
+  try {
+    const r = await api("POST", url, body);
+    toast("Spawn lancé : " + name);
+    closeSpawnModal();
+    $("#spawn-task").value = "";
+    switchTab("spawns");
+    refreshSpawns();
+  } catch (err) { toast("Spawn failed: " + err.message, true); }
+}
+async function refreshSpawns() {
+  try {
+    const r = await fetch("/api/agents");
+    const data = await r.json();
+    const agents = Array.isArray(data) ? data : (data.agents || []);
+    const list = $("#spawns-list");
+    list.innerHTML = "";
+    if (agents.length === 0) {
+      list.appendChild(el("div", { class: "empty" }, "Pas de spawn pour l'instant."));
+      return;
+    }
+    for (const a of agents.slice(0, 50)) {
+      const row = el("div", { class: "spawn-row" });
+      row.appendChild(el("div", { class: "spawn-name" }, a.name));
+      row.appendChild(el("div", { class: "spawn-meta" }, `${a.mode || "?"} · ${a.role || ""} · ${fmtAge(a.spawned_at || a.started_at)} ago`));
+      const status = a.status || "?";
+      row.appendChild(el("div", { class: "spawn-status " + status }, status));
+      list.appendChild(row);
+    }
+  } catch (err) { console.error("spawns refresh", err); }
+}
+
+// ─────────────────────────────────────────────────────────
+// Boot
+// ─────────────────────────────────────────────────────────
+async function boot() {
+  await refreshStatus();
+  await refreshRail();
+  await refreshChat();
+  setInterval(refreshStatus, 8000);
+  setInterval(refreshRail, 6000);
+  setInterval(refreshChat, 3000);
+}
+boot();
+</script>
+</body>
+</html>

@@ -42,6 +42,9 @@ import { startDormantWatch, status as dormantStatus, setManualOverride, isActive
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
+import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
+import { auditProject, auditMany } from "./src/repo-audit.mjs";
+import { runHarmonizer, formatHarmonizerSummary } from "./src/harmonizer.mjs";
 
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -468,6 +471,8 @@ app.post("/api/dispatch", express.json(), async (req, res) => {
 app.get("/style-guide.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "style-guide.html"))); });
 app.get("/concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "concepts.html"))); });
 app.get("/hybrid-concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "hybrid-concepts.html"))); });
+app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "console.html"))); });
+app.get("/regie", (_req, res) => res.redirect("/console"));
 
 // MCP SSE endpoint
 app.get("/sse", async (req, res) => {
@@ -936,6 +941,221 @@ app.get("/api/knowledge/:topic/:file", async (req, res) => {
   } catch (e) {
     res.status(404).json({ error: "File not found" });
   }
+});
+
+// ── REGIE / IDEATION REST API ──────────────────────────────────────────────────
+// Drives the /console UI : ideas + project meta + audit + harmonize, all
+// without going through the MCP layer. Read-mostly + a few targeted POSTs.
+
+// Projects with régie meta (lifecycle, axes, purpose, publish, health) and live agents
+app.get("/api/regie/projects", (_req, res) => {
+  const out = [];
+  for (const p of state.projects.values()) {
+    const liveAgents = [...state.sessions.values()]
+      .filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase())
+      .map(s => ({ id: s.sessionId, name: s.name, role: s.role }));
+    const trackedAgents = p.agents ? Object.keys(p.agents).length : 0;
+    out.push({
+      name: p.name,
+      description: p.description,
+      purpose: p.purpose || null,
+      axes: p.axes || [],
+      lifecycle: p.lifecycle || null,
+      publish: p.publish || null,
+      relations: p.relations || [],
+      health: p.health || null,
+      tasks_active: [...(p.tasks?.values() || [])].filter(t => t.status === "active").length,
+      blockers: (p.blockers || []).length,
+      decisions: (p.decisions || []).length,
+      open_questions: (p.open_questions || []).length,
+      closed: !!p.closure,
+      tracked_agents: trackedAgents,
+      live_agents: liveAgents,
+      updatedAt: p.updatedAt,
+      repo: p.repo || null,
+    });
+  }
+  out.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  res.json({ projects: out });
+});
+
+// PATCH a single project's meta — backs the "edit lifecycle / purpose / axes" UI inline edits
+app.patch("/api/regie/projects/:name", express.json(), (req, res) => {
+  const proj = state.projects.get(req.params.name);
+  if (!proj) return res.status(404).json({ error: "project not found" });
+  const { purpose, axes, lifecycle, publish, relations } = req.body || {};
+  if (purpose !== undefined) proj.purpose = purpose;
+  if (axes !== undefined) proj.axes = Array.isArray(axes) ? axes : [];
+  if (lifecycle !== undefined) {
+    const valid = ["ideation", "mvp", "active", "maintenance", "archived", "closed"];
+    if (!valid.includes(lifecycle)) return res.status(400).json({ error: "invalid lifecycle" });
+    proj.lifecycle = lifecycle;
+  }
+  if (publish !== undefined) {
+    proj.publish = proj.publish || {};
+    for (const k of Object.keys(publish)) {
+      if (publish[k] === null) { delete proj.publish[k]; continue; }
+      if (typeof publish[k] === "object" && !Array.isArray(publish[k])) {
+        proj.publish[k] = { ...(proj.publish[k] || {}), ...publish[k] };
+      } else {
+        proj.publish[k] = publish[k];
+      }
+    }
+  }
+  if (relations !== undefined) proj.relations = relations;
+  proj.updatedAt = new Date();
+  proj.updatedBy = "console";
+  saveProject(proj);
+  res.json({ ok: true, project: proj.name });
+});
+
+// Ideas — list with filters
+app.get("/api/regie/ideas", (req, res) => {
+  const { status, axis, project, since_days, limit, query } = req.query;
+  let out;
+  if (query) {
+    out = searchIdeas(String(query), { limit: parseInt(limit) || 20 });
+  } else {
+    out = listIdeas({
+      status: status || undefined,
+      axis: axis || undefined,
+      project: project || undefined,
+      since_days: since_days ? parseInt(since_days) : undefined,
+      limit: limit ? parseInt(limit) : 50,
+    });
+  }
+  res.json({ ideas: out, stats: ideaStats() });
+});
+
+// Ideas — create
+app.post("/api/regie/ideas", express.json(), (req, res) => {
+  const { title, body, axes, related_projects, source, created_by } = req.body || {};
+  if (!title) return res.status(400).json({ error: "title required" });
+  try {
+    const idea = createIdea({ title, body, axes, related_projects, source, created_by: created_by || "console" });
+    res.status(201).json({ idea });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Ideas — partial update
+app.patch("/api/regie/ideas/:id", express.json(), (req, res) => {
+  try {
+    const updated = updateIdea(req.params.id, req.body || {});
+    if (!updated) return res.status(404).json({ error: "idea not found" });
+    res.json({ idea: updated });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Ideas — hard delete
+app.delete("/api/regie/ideas/:id", (req, res) => {
+  const ok = deleteIdea(req.params.id);
+  if (!ok) return res.status(404).json({ error: "idea not found" });
+  res.json({ ok: true });
+});
+
+// Audit a single project (uses project.repo > registry path)
+app.post("/api/regie/audit", express.json(), async (req, res) => {
+  const { project, persist = true } = req.body || {};
+  if (!project) return res.status(400).json({ error: "project required" });
+  const proj = state.projects.get(project);
+  if (!proj) return res.status(404).json({ error: "project not found" });
+
+  // Resolve repo path : project.repo > registry path
+  let repoPath = proj.repo;
+  if (!repoPath) {
+    try {
+      const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
+      const lower = project.toLowerCase();
+      const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const match = reg.projects?.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
+      if (match?.path) repoPath = match.path;
+    } catch { /* */ }
+  }
+  if (!repoPath) return res.status(400).json({ error: "no repo_path known for this project" });
+
+  const audit = await auditProject(repoPath);
+  if (persist && audit.exists) {
+    proj.health = audit;
+    proj.updatedAt = new Date();
+    saveProject(proj);
+  }
+  res.json({ audit });
+});
+
+// Audit all projects in registry (batch, concurrency-capped)
+app.post("/api/regie/audit-all", express.json(), async (req, res) => {
+  const { persist = false, concurrency = 4 } = req.body || {};
+  try {
+    const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
+    const projects = (reg.projects || []).filter(p => p.path && p.name).map(p => ({ name: p.name, path: p.path }));
+    const startedAt = Date.now();
+    const audits = await auditMany(projects, concurrency);
+    if (persist) {
+      for (const [name, audit] of audits) {
+        const proj = state.projects.get(name);
+        if (proj && audit.exists) {
+          proj.health = audit;
+          proj.updatedAt = new Date();
+          saveProject(proj);
+        }
+      }
+    }
+    const out = [...audits.entries()].map(([name, audit]) => ({ name, ...audit }));
+    res.json({ audits: out, count: out.length, elapsed_ms: Date.now() - startedAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run a Harmonizer pass — clusters ideas, optionally posts a summary on #ideation
+app.post("/api/regie/harmonize", express.json(), async (req, res) => {
+  const { threshold, min_cluster_size, post_to_channel = true } = req.body || {};
+  const report = await runHarmonizer({ threshold, min_cluster_size });
+  const summary = formatHarmonizerSummary(report);
+  if (post_to_channel && state.channels.has("ideation") && report.clusters.length > 0) {
+    pushMessage({
+      id: randomUUID(), from: "system", fromName: "Harmonizer (console)",
+      channel: "ideation",
+      content: summary,
+      timestamp: new Date(),
+    });
+    notifyWaiters("ideation", null);
+  }
+  res.json({ report, summary });
+});
+
+// Live sessions snapshot — used by the console left rail
+app.get("/api/regie/sessions", (_req, res) => {
+  const out = [];
+  for (const s of state.sessions.values()) {
+    out.push({
+      id: s.sessionId,
+      name: s.name,
+      role: s.role,
+      agent_type: s.agent_type,
+      availability: s.availability,
+      current_project: s.current_project,
+      lastSeen: s.lastSeen,
+      anonymous: !s.name || s.name.startsWith("session-"),
+    });
+  }
+  out.sort((a, b) => Number(a.anonymous) - Number(b.anonymous) || a.name.localeCompare(b.name));
+  res.json({ sessions: out });
+});
+
+// Channels snapshot for the rail
+app.get("/api/regie/channels", (_req, res) => {
+  const out = [...state.channels.values()].map(c => ({
+    name: c.name,
+    description: c.description,
+    isSystem: !!c.isSystem,
+    isDM: c.name.startsWith("dm:"),
+  }));
+  res.json({ channels: out });
 });
 
 // Global artifacts (wikichat project itself)
