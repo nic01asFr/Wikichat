@@ -42,6 +42,7 @@ import { startDormantWatch, status as dormantStatus, setManualOverride, isActive
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
+import { startFileHooks, stopFileHooks } from "./src/file-hooks.mjs";
 
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ loadMessages();   // Restore recent messages
 rebuildChannelCounts(); // Build O(1) channel count cache
 setOnMessagePush(saveMessagesDebounced); // Auto-persist on new messages
 loadProjects();
+startFileHooks(); // Chokidar watchers for instant queue/artifact pickup (J1)
 loadMemories();   // Restore persistent agent memories (remember/recall)
 const _spawnGc = gcSpawnRegistry(); // Drop legacy/stale entries from spawn_registry
 if (_spawnGc.dropped || _spawnGc.fixed) {
@@ -258,6 +260,7 @@ const watchdogHandle = startWatchdog(
 function gracefulShutdown(signal) {
   console.log(`[WikiChat] ${signal} received — shutting down gracefully...`);
   try { clearInterval(watchdogHandle); } catch { /* */ }
+  try { stopFileHooks(); } catch { /* */ }
 
   // Save all registered sessions
   for (const [, session] of state.sessions) {
