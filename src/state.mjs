@@ -36,6 +36,7 @@ for (const [name, description] of [
   ["general", "Canal par défaut pour les discussions générales"],
   ["coordination", "Canal pour la coordination de tâches entre agents"],
   ["system", "Événements système : connexions, déconnexions, statuts"],
+  ["ideation", "Idea pool : capture (add_idea), harmonisation (harmonize_ideas), scoping vers projets"],
 ]) {
   state.channels.set(name, {
     name, description, createdBy: "system",

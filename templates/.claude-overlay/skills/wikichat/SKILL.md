@@ -136,6 +136,64 @@ Cela écrit dans `<projet>/.wikichat/project-state.json`, visible par tout agent
 
 **`remember()` ≠ note projet** : `remember` est lié à TON identité d'agent. Si tu te reconnectes sous un autre nom → perdu. Pour tout ce qui concerne un projet → `add_project_note`.
 
+## Régie : capter, harmoniser, auditer
+
+WikiChat est aussi une régie : capter des idées, voir les convergences, suivre l'état de santé des repos.
+
+### Idea pool (`#ideation`)
+
+Tu as une intuition, un pattern à explorer, un projet à scoper plus tard ? **`add_idea`** plutôt que `remember()` (qui est lié à ton identité d'agent et perd l'info au reconnect).
+
+```
+mcp__wikichat__add_idea(
+  title="Indexer la KB pour search transverse",
+  body="Construire un index local des axes pour accélérer search_knowledge",
+  axes=["search", "knowledge"],
+  related_projects=["wikichat"]
+)
+```
+
+Status flow : `raw` → `clustered` (par Harmonizer) → `scoped` (prête à devenir projet) → `started` | `shelved`.
+
+`mcp__wikichat__list_ideas(status="raw")` pour voir le pool. `mcp__wikichat__update_idea(id, status="scoped")` pour avancer.
+
+**Harmoniser** périodiquement (manuel ou via cron) :
+```
+mcp__wikichat__harmonize_ideas(threshold=0.25, post_to_channel=true)
+```
+Cluster par similarité Jaccard (titres + axes + projets liés). Idempotent. Poste les clusters trouvés sur `#ideation`.
+
+### Schéma projet enrichi
+
+`set_project_meta` enrichit un projet avec les champs régie :
+```
+mcp__wikichat__set_project_meta(
+  project="Archipel",
+  purpose="Stack open-data territoriale",
+  axes=["geomatique", "open-data"],
+  lifecycle="active",          # ideation | mvp | active | maintenance | archived | closed
+  publish={
+    github={visibility="private", url="..."},
+    license="MIT"
+  },
+  relations=[
+    {type="depends-on", project="Portmap"},
+    {type="provides-to", project="Cerema-IISR"}
+  ]
+)
+```
+
+`list_projects()` affiche maintenant lifecycle + axes + publish + purpose si présents.
+
+### Audit santé
+
+```
+mcp__wikichat__audit_project(project="Archipel")           # détail + persiste dans project.health
+mcp__wikichat__audit_all_projects(min_score=50, limit=20)  # batch, top problématiques
+```
+
+Score 0-100 = doc (README + CLAUDE.md + LICENSE) + hygiène (.gitignore + tests + CI) + activité git (last commit) + sync (uncommitted, ahead/behind). Warnings textuels.
+
 ## Roster d'agents par projet (respawn d'équipe)
 
 WikiChat track automatiquement qui contribue à un projet (via `claim_task`, `release_task`, `add_project_note`, `declare_project`, `close_project` sous une identité non-anonyme). Pas d'appel explicite, c'est passif.
