@@ -118,6 +118,91 @@
   .empty-hero .cta{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:13px;margin-top:8px;cursor:pointer;transition:background var(--motion-fast)}
   .empty-hero .cta:hover{background:var(--accent-strong)}
 
+  /* ── view 02 · Canvas ──────────────────────────────────────────────────── */
+  #v-canvas{padding:0;overflow:hidden;position:relative}
+  .canvas-world{position:absolute;inset:0;background:
+    radial-gradient(ellipse 70% 50% at 30% 20%,rgba(232,154,92,.06),transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 80%,rgba(201,166,232,.04),transparent 60%),
+    var(--bg-0)
+  }
+  .canvas-grid-bg{position:absolute;inset:0;background-image:radial-gradient(circle at 1px 1px,rgba(255,236,210,.04) 1px,transparent 0);background-size:36px 36px;pointer-events:none}
+  .canvas-pan{position:absolute;inset:0;overflow:auto;cursor:grab}
+  .canvas-pan:active{cursor:grabbing}
+  .canvas-pan.dragging{cursor:grabbing}
+  .scene{position:relative;width:2400px;height:1500px;transform-origin:0 0}
+
+  .cluster{position:absolute;border:1px dashed var(--border-strong);border-radius:36px;padding:24px;pointer-events:none}
+  .cluster .lab{position:absolute;top:-10px;left:28px;background:var(--bg-0);padding:0 10px;color:var(--fg-mute);font:600 10.5px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase}
+
+  .proj{position:absolute;width:248px;background:linear-gradient(180deg,var(--bg-1),var(--bg-2));border:1px solid var(--border);border-radius:14px;padding:14px 16px 12px;cursor:pointer;transition:transform var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);box-shadow:0 8px 22px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.03)}
+  .proj:hover{border-color:var(--border-strong);transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.04)}
+  .proj.selected{border-color:var(--accent);box-shadow:0 14px 32px rgba(0,0,0,.45),0 0 0 2px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,.04)}
+  .proj h4{margin:0 0 4px;font:500 17px/1.2 var(--font-serif);color:var(--fg-strong);letter-spacing:-.005em}
+  .proj .desc{margin:0 0 10px;color:var(--fg-mute);font-size:11.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:32px}
+  .proj .row{display:flex;align-items:center;gap:8px;font:500 10.5px/1 var(--font-mono);color:var(--fg-mute);margin-bottom:8px}
+  .proj .row .v{color:var(--fg)}
+  .proj .row .sep{width:2px;height:2px;background:var(--border-strong);border-radius:50%}
+  .proj .meter{height:3px;background:var(--bg-3);border-radius:2px;overflow:hidden;margin-bottom:8px}
+  .proj .meter .f{height:100%;border-radius:2px;transition:width var(--motion-slow)}
+  .proj .meter .f.ok{background:var(--ok)}.proj .meter .f.warn{background:var(--warn)}.proj .meter .f.bad{background:var(--bad)}
+  .proj .badges{display:flex;flex-wrap:wrap;gap:4px}
+  .proj.archived{opacity:.5}
+  .proj.archived h4{font-style:italic}
+
+  .idea-note{position:absolute;width:160px;background:linear-gradient(180deg,#F2E7D6,#E8DCC8);color:#2A2118;border-radius:6px;padding:9px 11px;cursor:pointer;transition:transform var(--motion-fast),box-shadow var(--motion-fast);box-shadow:0 4px 12px rgba(0,0,0,.28),0 1px 0 rgba(255,255,255,.5) inset;transform:rotate(-1.5deg)}
+  .idea-note.r2{transform:rotate(1.2deg)}
+  .idea-note.r3{transform:rotate(-.6deg)}
+  .idea-note:hover{transform:rotate(0deg) scale(1.05);box-shadow:0 8px 18px rgba(0,0,0,.4);z-index:5}
+  .idea-note .id{font:500 9px/1 var(--font-mono);color:#8B7355;margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em}
+  .idea-note .t{font:500 12px/1.3 var(--font-sans);color:#2A2118;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .idea-note.clustered{background:linear-gradient(180deg,#EDD9F0,#DEC7E5);border-left:3px solid var(--idea)}
+  .idea-note.clustered .id{color:#7A5A8E}
+
+  .agent-pin{position:absolute;display:inline-flex;align-items:center;gap:6px;background:rgba(15,13,17,.85);border:1px solid var(--border-strong);border-radius:16px;padding:3px 10px 3px 4px;cursor:pointer;backdrop-filter:blur(6px);transition:border-color var(--motion-fast)}
+  .agent-pin:hover{border-color:var(--accent)}
+  .agent-pin .ava{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 10px/1 var(--font-sans);color:#0F0D11;flex-shrink:0}
+  .agent-pin .n{font:500 11.5px/1 var(--font-sans);color:var(--fg-strong)}
+  .agent-pin .r{font:10.5px/1 var(--font-mono);color:var(--fg-mute);margin-left:2px}
+  .agent-pin.live::before{content:"";position:absolute;left:-3px;top:-3px;width:8px;height:8px;background:var(--ok);border-radius:50%;border:2px solid var(--bg-0);box-shadow:0 0 6px rgba(138,181,139,.6);animation:pulse 2s ease-in-out infinite}
+  .agent-pin.daemon::before{content:"";position:absolute;left:-3px;top:-3px;width:8px;height:8px;background:var(--accent);border-radius:50%;border:2px solid var(--bg-0)}
+
+  .canvas-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px}
+  .canvas-empty h3{margin:0;font:400 26px/1.1 var(--font-serif);color:var(--fg-strong)}
+  .canvas-empty p{margin:0;color:var(--fg-mute);font-size:13px;max-width:380px;line-height:1.55}
+
+  /* ── HUD canvas (zoom controls bottom-right) ────────────────────────────── */
+  .canvas-hud-tr{position:absolute;top:14px;right:14px;display:flex;gap:8px;z-index:5}
+  .zoom{display:flex;background:rgba(23,20,25,.85);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
+  .zoom button{height:28px;width:28px;color:var(--fg-mute);border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center}
+  .zoom button:last-child{border-right:0}
+  .zoom button:hover{background:var(--bg-3);color:var(--fg)}
+  .zoom .lvl{display:flex;align-items:center;padding:0 9px;font:500 11px/1 var(--font-mono);color:var(--fg-mute);border-right:1px solid var(--border)}
+
+  /* ── Peek panel (slides from right when project selected) ───────────────── */
+  .peek{position:absolute;top:14px;right:14px;width:320px;max-height:calc(100% - 28px);background:rgba(23,20,25,.96);border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(14px);z-index:8;display:none;flex-direction:column;box-shadow:0 24px 50px rgba(0,0,0,.5);overflow:hidden;animation:peekIn var(--motion) ease-out}
+  .peek.on{display:flex}
+  @keyframes peekIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+  .peek-head{padding:14px 16px 12px;border-bottom:1px solid var(--border)}
+  .peek-head .row{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  .peek-head .close{margin-left:auto;color:var(--fg-mute);width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px}
+  .peek-head .close:hover{background:var(--bg-3);color:var(--fg)}
+  .peek-head h2{margin:0 0 4px;font:500 22px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
+  .peek-head p{margin:0;color:var(--fg-mute);font-size:12px;line-height:1.5}
+  .peek-body{padding:12px 16px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+  .peek-section{padding-bottom:10px;border-bottom:1px solid var(--border)}
+  .peek-section:last-child{border-bottom:0;padding-bottom:0}
+  .peek-section h5{margin:0 0 7px;font:600 10px/1 var(--font-sans);letter-spacing:.1em;text-transform:uppercase;color:var(--fg-mute)}
+  .peek-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12px}
+  .peek-kv .k{color:var(--fg-mute)}
+  .peek-kv .v{color:var(--fg-strong);text-align:right;font-variant-numeric:tabular-nums}
+  .peek-action{display:flex;align-items:center;gap:8px;padding:7px 10px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;text-align:left;cursor:pointer;width:100%}
+  .peek-action:hover{background:var(--bg-3);border-color:var(--border-strong);color:var(--fg-strong)}
+  .peek-action.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent;font-weight:600}
+  .peek-action.primary:hover{background:var(--accent-strong)}
+  .peek-action .grow{flex:1}
+  .peek-action .k{color:var(--fg-disabled);font-family:var(--font-mono);font-size:10.5px}
+  .peek-action.primary .k{color:rgba(26,15,8,.5)}
+
   /* ── stub views ─────────────────────────────────────────────────────────── */
   .stub{display:flex;flex-direction:column;align-items:center;justify-content:center;height:80%;text-align:center;gap:14px;color:var(--fg-mute)}
   .stub h2{margin:0;font:400 32px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
@@ -209,13 +294,23 @@
   <!-- view: today -->
   <section class="view" id="v-today" data-view="today"></section>
 
-  <!-- view: canvas (Wave 3 stub) -->
+  <!-- view: canvas -->
   <section class="view" id="v-canvas" data-view="canvas">
-    <div class="stub">
-      <h2>Canvas</h2>
-      <p>L'écran de référence : projets posés dans des cluster zones, idées flottantes en post-it, agents vivants au-dessus, pan + drag, Ctrl+K en command bar, peek panel à droite sur sélection.</p>
-      <div class="wave">⏳ Wave 3 · à venir</div>
+    <div class="canvas-world">
+      <div class="canvas-grid-bg"></div>
     </div>
+    <div class="canvas-pan" id="canvas-pan">
+      <div class="scene" id="canvas-scene"></div>
+    </div>
+    <div class="canvas-hud-tr">
+      <div class="zoom" id="canvas-zoom">
+        <button data-z="-1" title="zoom out">−</button>
+        <span class="lvl" id="zoom-lvl">100%</span>
+        <button data-z="1" title="zoom in">+</button>
+        <button data-z="0" title="fit">⤢</button>
+      </div>
+    </div>
+    <aside class="peek" id="peek"></aside>
   </section>
 
   <!-- view: chat (Wave 4 stub) -->
@@ -366,7 +461,9 @@ async function refreshAll(){
     Store.agents = Array.isArray(a) ? a : (a.agents || []);
     Store.sessions = s.sessions || [];
     renderTopbar();
-    if (Router.parse().view === 'today') renderToday();
+    const v = Router.parse().view;
+    if (v === 'today') renderToday();
+    if (v === 'canvas') Canvas.render();
   } catch (err) {
     console.error('[refresh]', err);
   }
@@ -527,6 +624,311 @@ function escapeAttr(s){ return String(s ?? '').replace(/[<>"'&]/g, c => ({'&':'&
 /* ─────────────────────────────────────────────────────────────────────────
    View switching
    ──────────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────
+   Canvas — Wave 3
+   layout : grid auto par cluster (pas d'override draggable, Wave 5)
+   ──────────────────────────────────────────────────────────────────────── */
+
+const Canvas = {
+  zoom: 1,
+  selected: null,
+
+  hashId(s){
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  },
+
+  // Layout : group projects by cluster_id (default "main"), pack 2-col grid per cluster
+  // Place ideas radially around their related project.
+  // Place agents above their current_project (live sessions).
+  layout(){
+    const clusters = new Map();
+    for (const p of Store.projects) {
+      const cid = p.cluster_id || (p.lifecycle === 'archived' ? 'archives' : 'main');
+      if (!clusters.has(cid)) clusters.set(cid, []);
+      clusters.get(cid).push(p);
+    }
+    // sort projects within cluster by activity (updatedAt desc, pinned first via lifecycle 'active')
+    for (const arr of clusters.values()) {
+      arr.sort((a, b) => {
+        if ((a.lifecycle === 'active') !== (b.lifecycle === 'active')) return a.lifecycle === 'active' ? -1 : 1;
+        return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+      });
+    }
+    // cluster placement : main first (left), then others, archives last (right)
+    const order = ['main', ...[...clusters.keys()].filter(k => k !== 'main' && k !== 'archives'), 'archives'];
+    const positions = {};
+    let curX = 60, curY = 80;
+    const clusterCols = 2;
+    const projW = 248, projH = 168, gap = 20, padX = 28, padY = 36;
+    for (const cid of order) {
+      if (!clusters.has(cid)) continue;
+      const arr = clusters.get(cid);
+      const cols = Math.min(clusterCols, arr.length);
+      const rows = Math.ceil(arr.length / cols);
+      const w = cols * projW + (cols - 1) * gap + 2 * padX;
+      const h = rows * projH + (rows - 1) * gap + 2 * padY;
+      positions[cid] = { x: curX, y: curY, w, h, cluster: cid };
+      // place projects within this cluster
+      arr.forEach((p, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        positions['proj:' + p.name] = {
+          x: curX + padX + col * (projW + gap),
+          y: curY + padY + row * (projH + gap),
+          w: projW, h: projH,
+        };
+      });
+      curX += w + 60;
+      if (curX > 1900) { curX = 60; curY += h + 80; }
+    }
+    // place ideas near their related project
+    const ideaPositions = {};
+    for (const idea of Store.ideas.slice(0, 80)) {
+      let anchor = null;
+      if (idea.related_projects?.length) {
+        anchor = positions['proj:' + idea.related_projects[0]];
+      }
+      if (!anchor) {
+        // sandbox position bottom
+        const idx = this.hashId(idea.id) % 6;
+        anchor = { x: 80 + idx * 200, y: curY + 200, w: 0, h: 0 };
+      }
+      const h = this.hashId(idea.id);
+      const angle = (h % 360) * Math.PI / 180;
+      const radius = 110 + (h % 50);
+      ideaPositions[idea.id] = {
+        x: anchor.x + anchor.w + Math.cos(angle) * radius - 80,
+        y: anchor.y + anchor.h / 2 + Math.sin(angle) * radius - 30,
+      };
+    }
+    // place agents above their current_project
+    const agentPositions = {};
+    const liveByProject = {};
+    for (const s of Store.sessions) {
+      if (s.anonymous || !s.current_project) continue;
+      const key = s.current_project;
+      if (!liveByProject[key]) liveByProject[key] = [];
+      liveByProject[key].push(s);
+    }
+    for (const [proj, agents] of Object.entries(liveByProject)) {
+      const anchor = positions['proj:' + proj];
+      if (!anchor) continue;
+      agents.forEach((a, i) => {
+        agentPositions[a.id] = {
+          x: anchor.x + 8 + i * 24,
+          y: anchor.y - 18,
+        };
+      });
+    }
+    return { clusters: positions, projects: positions, ideas: ideaPositions, agents: agentPositions, order };
+  },
+
+  render(){
+    const scene = document.getElementById('canvas-scene');
+    if (!scene) return;
+    const total = Store.projects.length + Store.ideas.length;
+    if (total === 0) {
+      scene.innerHTML = `
+        <div class="canvas-empty">
+          <div class="glyph" style="width:64px;height:64px;border-radius:16px;background:var(--bg-1);border:1px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--fg-disabled);font:italic 400 32px/1 var(--font-serif);margin-bottom:8px">w</div>
+          <h3>Le canvas est vide.</h3>
+          <p>Capte ta première idée pour commencer à peupler ton espace.</p>
+        </div>`;
+      return;
+    }
+    const L = this.layout();
+    let html = '';
+    // clusters
+    for (const cid of L.order) {
+      const c = L.clusters[cid];
+      if (!c || !c.cluster) continue;
+      const label = cid === 'main' ? 'projets actifs' : cid === 'archives' ? 'archives' : cid;
+      html += `<div class="cluster" style="left:${c.x}px;top:${c.y}px;width:${c.w}px;height:${c.h}px"><span class="lab">${esc(label)}</span></div>`;
+    }
+    // projects
+    for (const p of Store.projects) {
+      const pos = L.projects['proj:' + p.name];
+      if (!pos) continue;
+      const score = p.health?.score;
+      const meterCls = score === undefined ? '' : (score < 40 ? 'bad' : score < 70 ? 'warn' : 'ok');
+      const meterPct = score !== undefined ? Math.max(5, Math.min(100, score)) : 0;
+      const archived = p.lifecycle === 'archived' || p.lifecycle === 'closed' ? 'archived' : '';
+      const sel = this.selected === p.name ? 'selected' : '';
+      const badges = [];
+      if (p.lifecycle && p.lifecycle !== 'active') badges.push(`<span class="badge muted">${esc(p.lifecycle)}</span>`);
+      if (p.blockers > 0) badges.push(`<span class="badge bad"><span class="dot"></span>${p.blockers}</span>`);
+      if (p.live_agents?.length) badges.push(`<span class="badge ok"><span class="dot"></span>${p.live_agents.length}</span>`);
+      if (score !== undefined) badges.push(`<span class="badge ${meterCls}"><span class="dot"></span>${score}</span>`);
+      html += `
+        <div class="proj ${archived} ${sel}" data-proj="${escapeAttr(p.name)}" style="left:${pos.x}px;top:${pos.y}px">
+          <h4>${esc(p.name)}</h4>
+          <p class="desc">${esc(p.description || p.purpose || '')}</p>
+          <div class="row">
+            ${p.tasks_active ? `tasks <span class="v">${p.tasks_active}</span>` : ''}
+            ${p.tasks_active && p.decisions ? '<span class="sep"></span>' : ''}
+            ${p.decisions ? `decisions <span class="v">${p.decisions}</span>` : ''}
+          </div>
+          ${score !== undefined ? `<div class="meter"><div class="f ${meterCls}" style="width:${meterPct}%"></div></div>` : ''}
+          ${badges.length ? `<div class="badges">${badges.join('')}</div>` : ''}
+        </div>`;
+    }
+    // ideas
+    for (const idea of Store.ideas.slice(0, 80)) {
+      const pos = L.ideas[idea.id];
+      if (!pos) continue;
+      const rotCls = ['', 'r2', 'r3'][this.hashId(idea.id) % 3];
+      const cls = idea.cluster_id ? 'clustered' : '';
+      html += `
+        <div class="idea-note ${rotCls} ${cls}" data-idea="${escapeAttr(idea.id)}" style="left:${pos.x}px;top:${pos.y}px" title="${escapeAttr(idea.title)}">
+          <div class="id">${esc(idea.id.slice(0, 8))}</div>
+          <div class="t">${esc(idea.title)}</div>
+        </div>`;
+    }
+    // agents
+    for (const a of Store.sessions) {
+      if (a.anonymous) continue;
+      const pos = L.agents[a.id];
+      if (!pos) continue;
+      const initial = (a.name || '?').charAt(0).toUpperCase();
+      const colors = ['#E89A5C,#C9A6E8', '#85B0CC,#8AB58B', '#D9AF5C,#C9A6E8', '#85B0CC,#E89A5C'];
+      const grad = colors[this.hashId(a.name) % colors.length];
+      const cls = a.agent_type === 'daemon' ? 'daemon' : 'live';
+      html += `
+        <div class="agent-pin ${cls}" data-agent="${escapeAttr(a.name)}" style="left:${pos.x}px;top:${pos.y}px">
+          <span class="ava" style="background:linear-gradient(135deg,${grad})">${esc(initial)}</span>
+          <span class="n">${esc(a.name)}</span>
+          ${a.role ? `<span class="r">${esc(a.role)}</span>` : ''}
+        </div>`;
+    }
+    scene.innerHTML = html;
+    // wire clicks
+    scene.querySelectorAll('.proj[data-proj]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        Router.navigate({ view: 'canvas', params: { proj: el.dataset.proj } }, { replace: true });
+      });
+    });
+  },
+
+  setZoom(z){
+    this.zoom = Math.max(0.3, Math.min(2, z));
+    const scene = document.getElementById('canvas-scene');
+    if (scene) scene.style.transform = `scale(${this.zoom})`;
+    const lvl = document.getElementById('zoom-lvl');
+    if (lvl) lvl.textContent = Math.round(this.zoom * 100) + '%';
+  },
+
+  centerOn(projName){
+    const pan = document.getElementById('canvas-pan');
+    const L = this.layout();
+    const pos = L.projects['proj:' + projName];
+    if (!pos || !pan) return;
+    const targetX = (pos.x + pos.w / 2) * this.zoom - pan.clientWidth / 2;
+    const targetY = (pos.y + pos.h / 2) * this.zoom - pan.clientHeight / 2;
+    pan.scrollTo({ left: targetX, top: targetY, behavior: 'smooth' });
+  },
+
+  showPeek(projName){
+    const peek = document.getElementById('peek');
+    const p = Store.projects.find(x => x.name === projName);
+    if (!p) { peek.classList.remove('on'); return; }
+    this.selected = projName;
+    const score = p.health?.score;
+    const scoreCls = score === undefined ? 'muted' : (score < 40 ? 'bad' : score < 70 ? 'warn' : 'ok');
+    peek.innerHTML = `
+      <div class="peek-head">
+        <div class="row">
+          ${score !== undefined ? `<span class="badge ${scoreCls}"><span class="dot"></span>santé ${score}</span>` : ''}
+          ${p.lifecycle ? `<span class="badge muted">${esc(p.lifecycle)}</span>` : ''}
+          ${p.publish?.github?.visibility ? `<span class="badge muted">gh:${esc(p.publish.github.visibility)}</span>` : ''}
+          <button class="close" id="peek-close" title="fermer"><svg class="ico"><use href="#i-x"></use></svg></button>
+        </div>
+        <h2>${esc(p.name)}</h2>
+        ${p.description || p.purpose ? `<p>${esc(p.description || p.purpose)}</p>` : ''}
+      </div>
+      <div class="peek-body">
+        <div class="peek-section">
+          <h5>État</h5>
+          <div class="peek-kv">
+            ${p.health?.branch ? `<span class="k">branche</span><span class="v" style="font-family:var(--font-mono);font-size:11.5px">${esc(p.health.branch)}</span>` : ''}
+            ${p.health?.last_commit_age_days !== undefined ? `<span class="k">last commit</span><span class="v">${p.health.last_commit_age_days}j</span>` : ''}
+            ${p.health?.uncommitted !== undefined ? `<span class="k">uncommitted</span><span class="v">${p.health.uncommitted}</span>` : ''}
+            ${p.health?.has_tests !== undefined ? `<span class="k">tests</span><span class="v" style="color:var(${p.health.has_tests ? '--ok' : '--bad'})">${p.health.has_tests ? 'présents' : 'absents'}</span>` : ''}
+            <span class="k">tâches actives</span><span class="v">${p.tasks_active || 0}</span>
+            <span class="k">blockers</span><span class="v" style="color:${p.blockers ? 'var(--bad)' : 'var(--fg)'}">${p.blockers || 0}</span>
+          </div>
+        </div>
+        <div class="peek-section">
+          <h5>Action rapide</h5>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="peek-action primary" data-act="capture"><svg class="ico"><use href="#i-bolt"></use></svg><span class="grow">Capter une idée ici</span><span class="k">Ctrl+K</span></button>
+            <button class="peek-action" data-act="chat"><svg class="ico"><use href="#i-msg"></use></svg><span class="grow">Ouvrir #${esc(p.name.toLowerCase().replace(/\s+/g, '-'))}</span></button>
+          </div>
+        </div>
+        ${p.live_agents?.length ? `
+          <div class="peek-section">
+            <h5>Agents en vol · ${p.live_agents.length}</h5>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              ${p.live_agents.map(a => `<div style="display:flex;align-items:center;gap:7px;font-size:12px"><span class="dot live"></span><span style="color:var(--fg-strong);font-weight:500">${esc(a.name)}</span>${a.role ? `<span style="color:var(--fg-mute);font-size:11px">${esc(a.role)}</span>` : ''}</div>`).join('')}
+            </div>
+          </div>` : ''}
+        ${p.tracked_agents > 0 ? `<div class="peek-section"><h5>Roster historique</h5><div style="color:var(--fg-mute);font-size:12px">${p.tracked_agents} agent(s) ont contribué</div></div>` : ''}
+      </div>`;
+    peek.classList.add('on');
+    peek.querySelector('#peek-close').onclick = () => {
+      this.selected = null;
+      Router.navigate({ view: 'canvas' }, { replace: true });
+    };
+    peek.querySelector('[data-act="capture"]').onclick = () => {
+      Router.navigate({ view: 'capture', params: { proj: projName, from: 'canvas' } });
+    };
+    // refresh selection styling
+    document.querySelectorAll('.proj').forEach(el => el.classList.toggle('selected', el.dataset.proj === projName));
+  },
+
+  hidePeek(){
+    document.getElementById('peek')?.classList.remove('on');
+    this.selected = null;
+    document.querySelectorAll('.proj.selected').forEach(el => el.classList.remove('selected'));
+  },
+};
+
+// pan
+(() => {
+  const pan = document.getElementById('canvas-pan');
+  if (!pan) return;
+  let down = false, sx = 0, sy = 0, lx = 0, ly = 0;
+  pan.addEventListener('mousedown', e => {
+    if (e.target.closest('.proj') || e.target.closest('.idea-note') || e.target.closest('.agent-pin') || e.target.closest('.peek')) return;
+    down = true; sx = e.clientX; sy = e.clientY; lx = pan.scrollLeft; ly = pan.scrollTop;
+    pan.classList.add('dragging');
+  });
+  window.addEventListener('mouseup', () => { down = false; pan.classList.remove('dragging'); });
+  window.addEventListener('mousemove', e => {
+    if (!down) return;
+    pan.scrollLeft = lx - (e.clientX - sx);
+    pan.scrollTop = ly - (e.clientY - sy);
+  });
+})();
+
+// zoom buttons
+document.getElementById('canvas-zoom').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const z = parseInt(b.dataset.z, 10);
+  if (z === 0) Canvas.setZoom(1);
+  else Canvas.setZoom(Canvas.zoom + z * 0.1);
+});
+
+// zoom on Ctrl+wheel
+document.getElementById('canvas-pan').addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  Canvas.setZoom(Canvas.zoom - Math.sign(e.deltaY) * 0.1);
+}, { passive: false });
+
 function applyRoute(route){
   // capture is an overlay : the underlying view stays
   if (route.view === 'capture') {
@@ -549,6 +951,16 @@ function applyRoute(route){
   });
   // render view-specific
   if (route.view === 'today') renderToday();
+  if (route.view === 'canvas') {
+    Canvas.render();
+    if (route.params.proj) {
+      Canvas.showPeek(route.params.proj);
+      // delay center so layout has DOM
+      setTimeout(() => Canvas.centerOn(route.params.proj), 50);
+    } else {
+      Canvas.hidePeek();
+    }
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
