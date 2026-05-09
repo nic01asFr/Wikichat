@@ -95,10 +95,11 @@ async function main() {
   );
   console.log("✓ Bob saw DM #2 after reconnect via read_messages");
 
-  // 7. poll_messages with channel="__all__" should also pick up a fresh DM
+  // 7. Long-poll mode (since_minutes=0) : poll waits for a NEW message only.
+  //    Use this when the caller has already drained the buffer and wants live.
   const dmKey = `dm:${[ALICE, BOB].map(s => s.toLowerCase()).sort().join("__")}`;
   const pollPromise = call(bob, "poll_messages", {
-    channel: "__all__", timeout_seconds: 6,
+    channel: "__all__", timeout_seconds: 6, since_minutes: 0,
   });
   await new Promise(r => setTimeout(r, 200));
   await call(alice, "send_message", {
@@ -108,9 +109,42 @@ async function main() {
   const pollResult = await pollPromise;
   assert.ok(
     pollResult.includes("third DM"),
-    `Bob's poll_messages should pick up DM #3 but didn't.\nDM channel was: ${dmKey}\nGot:\n${pollResult}`
+    `Bob's long-poll should pick up DM #3 (sent during the poll).\nDM channel was: ${dmKey}\nGot:\n${pollResult}`
   );
-  console.log("✓ Bob's poll_messages picked up DM #3");
+  console.log("✓ Bob's long-poll (since_minutes=0) picked up live DM #3");
+
+  // 8. THE REPORTED SCENARIO: DM queued while Bob is OFFLINE,
+  //    Bob reconnects + registers, then polls without since_id.
+  //    With the fix, poll_messages must look back N minutes by default.
+  await close(bob);
+  await new Promise(r => setTimeout(r, 200));
+  await call(alice, "send_message", {
+    content: "🟠 fourth DM while Bob is offline (queued)",
+    channel: "@" + BOB,
+  });
+  console.log("✓ Alice sent DM #4 while Bob was offline (queued)");
+
+  bob = await connect(BOB);
+  await call(bob, "register", { name: BOB, role: "tester" });
+  // No since_id, no special params — pure "I just connected, what do I have?"
+  const pollAfterReconnect = await call(bob, "poll_messages", {
+    channel: "__all__", timeout_seconds: 3,
+  });
+  assert.ok(
+    pollAfterReconnect.includes("fourth DM"),
+    `Bob's poll_messages after reconnect should retrieve queued DM #4.\nGot:\n${pollAfterReconnect}`
+  );
+  console.log("✓ Bob's poll_messages after reconnect retrieved queued DM #4");
+
+  // 9. Conversely, since_minutes=0 must keep the legacy behavior (long-poll only)
+  const pollLegacyMode = await call(bob, "poll_messages", {
+    channel: "__all__", timeout_seconds: 2, since_minutes: 0,
+  });
+  assert.ok(
+    pollLegacyMode.includes("Timeout") || pollLegacyMode.includes("Activité"),
+    `With since_minutes=0, Bob should not see buffered messages — must wait for new ones.\nGot:\n${pollLegacyMode}`
+  );
+  console.log("✓ since_minutes=0 keeps legacy long-poll-only behavior");
 
   // Cleanup
   await close(alice);

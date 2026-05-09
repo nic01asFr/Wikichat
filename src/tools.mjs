@@ -568,10 +568,11 @@ export function registerTools(server, sessionId) {
       channel: z.string().default("__all__").describe("Canal à surveiller (défaut: tous)"),
       timeout_seconds: z.number().default(30).describe("Timeout en secondes (max: 120)"),
       since_id: z.string().optional().describe("Attendre les messages après cet ID"),
+      since_minutes: z.number().default(5).describe("Sans since_id, fenêtre de lookback (défaut 5min) — livre les messages bufferés non lus avant de long-poll. Mettre 0 pour désactiver et n'attendre que du nouveau."),
       types: z.array(z.enum(["message", "direct_message", "system", "broadcast", "artifact"])).optional()
         .describe("Filtrer par types. Ex: ['direct_message','broadcast'] pour ignorer les events système."),
     },
-    async ({ channel, timeout_seconds, since_id, types }) => {
+    async ({ channel, timeout_seconds, since_id, since_minutes, types }) => {
       const timeout = Math.min(timeout_seconds, 120) * 1000;
 
       const session = state.sessions.get(sessionId);
@@ -601,16 +602,27 @@ export function registerTools(server, sessionId) {
         return false;
       }
 
-      // Check buffered messages since since_id — scan from end (O(recent) not O(all))
+      // 1) since_id : check buffered after this id — scan from end (O(recent) not O(all))
       if (since_id) {
         const idx = state.messages.findLastIndex(m => m.id === since_id || m.id.startsWith(since_id));
         if (idx >= 0) {
           const buffered = state.messages.slice(idx + 1).filter(matchesFilter);
           if (buffered.length > 0) return formatMsgList(buffered);
         }
+      } else if (since_minutes > 0) {
+        // 2) Sans since_id : check buffered dans la fenêtre de lookback.
+        //    Couvre le cas "agent re-connecté qui poll un DM arrivé pendant qu'il était parti".
+        const cutoff = Date.now() - since_minutes * 60 * 1000;
+        const buffered = [];
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          const msg = state.messages[i];
+          if (new Date(msg.timestamp).getTime() < cutoff) break;
+          if (matchesFilter(msg)) buffered.unshift(msg);
+        }
+        if (buffered.length > 0) return formatMsgList(buffered);
       }
 
-      // Long-poll
+      // 3) Long-poll : attend qu'un nouveau message arrive
       const arrived = await registerWaiter(sessionId, channel, timeout);
 
       if (!arrived) {
