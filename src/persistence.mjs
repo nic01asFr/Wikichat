@@ -149,9 +149,10 @@ export function writeAgentFile(storagePath, subdir, filename, content, append = 
 
 export function saveSnapshot(session) {
   if (!session.name || session.name.startsWith("session-")) return;
+  const nameLc = session.name?.toLowerCase();
   const involved = state.messages.filter(m =>
     m.from === session.sessionId ||
-    (m.isDM && state.channels.get(m.channel)?.participants?.includes(session.sessionId))
+    (m.isDM && state.channels.get(m.channel)?.participants?.includes(nameLc))
   ).slice(-30);
   const interlocutors = [...new Set(
     involved.map(m => m.fromName).filter(n => n !== session.name && !n.includes("Système"))

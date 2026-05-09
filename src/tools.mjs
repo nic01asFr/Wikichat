@@ -106,9 +106,12 @@ function buildBriefing(sessionId, { since, mission } = {}) {
     return `  📁 ${p.name}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${tasks ? ` | 📋 ${tasks} tâche(s)` : ""}`;
   }).join("\n");
 
-  // Filter messages visible to this session
+  // Filter messages visible to this session.
+  // DM participants are stored by lowercased agent NAME (stable across reconnects),
+  // so we must compare against the name, not the volatile sessionId.
+  const myNameLc = getSessionName(sessionId).toLowerCase();
   let msgs = state.messages.filter(m =>
-    !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(sessionId)
+    !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(myNameLc)
   );
 
   // Apply time filter
@@ -581,10 +584,10 @@ export function registerTools(server, sessionId) {
         }
         // Channel filter
         if (channel !== "__all__" && msg.channel !== channel && msg.channel !== "__broadcast__") return false;
-        // DM visibility
+        // DM visibility — participants are stored by lowercased name, not sessionId
         if (msg.isDM) {
           const ci = state.channels.get(msg.channel);
-          if (ci?.participants && !ci.participants.includes(sessionId)) return false;
+          if (ci?.participants && !ci.participants.includes(getSessionName(sessionId).toLowerCase())) return false;
         }
         // Own messages excluded
         if (msg.from === sessionId) return false;
