@@ -254,8 +254,10 @@
 
   /* ── view 05 · Chat 3 colonnes ─────────────────────────────────────────── */
   #v-chat{padding:0;overflow:hidden;position:relative}
-  .chat-shell{position:absolute;inset:0;display:grid;grid-template-columns:240px 1fr;background:var(--bg-0)}
+  .chat-shell{position:absolute;inset:0;display:grid;grid-template-columns:240px 1fr;grid-template-rows:100%;background:var(--bg-0)}
   @media (min-width:1100px){.chat-shell{grid-template-columns:240px 1fr 280px}}
+  .chat-rail,.chat-main,.chat-side{min-height:0}
+  .chat-main{overflow:hidden}
   .chat-rail{background:var(--bg-1);border-right:1px solid var(--border);padding:14px 12px;overflow-y:auto}
   .chat-rail h5{margin:0 0 8px;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-disabled);padding:0 6px}
   .chat-rail h5:not(:first-child){margin-top:14px}
