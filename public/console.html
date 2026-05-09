@@ -131,16 +131,41 @@
   .toast.error{border-color:rgba(209,123,112,.4);color:var(--bad)}
   .toast.success{border-color:rgba(138,181,139,.4);color:#a8cdab}
 
-  /* ── command palette (stub Wave 2) ──────────────────────────────────────── */
-  .cmd-overlay{position:fixed;inset:0;background:rgba(8,7,10,.6);backdrop-filter:blur(12px);z-index:60;display:none;align-items:flex-start;justify-content:center;padding-top:90px}
-  .cmd-overlay.on{display:flex}
-  .cmd-window{width:680px;max-width:calc(100vw - 32px);background:rgba(15,13,17,.96);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden;display:flex;flex-direction:column}
-  .cmd-input-row{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border)}
-  .cmd-input-row .ico{color:var(--accent)}
-  .cmd-input{flex:1;background:transparent;border:0;outline:0;color:var(--fg-strong);font:400 16px/1.4 var(--font-sans)}
-  .cmd-input::placeholder{color:var(--fg-disabled)}
-  .cmd-stub{padding:18px;color:var(--fg-mute);font-size:12.5px;line-height:1.6}
-  .cmd-stub strong{color:var(--accent)}
+  /* ── capture overlay (Wave 2) ───────────────────────────────────────────── */
+  .cap-bg{position:fixed;inset:0;background:rgba(8,7,10,.55);backdrop-filter:blur(10px);z-index:60;display:none;align-items:flex-start;justify-content:center;padding-top:90px;animation:capFade var(--motion) ease-out}
+  .cap-bg.on{display:flex}
+  @keyframes capFade{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(10px)}}
+  .cap-modal{width:560px;max-width:calc(100% - 32px);background:rgba(15,13,17,.97);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden;animation:capRise var(--motion) ease-out}
+  @keyframes capRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .cap-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.1em}
+  .cap-head .grow{flex:1}
+  .cap-head .ts{color:var(--fg-mute);text-transform:none;font-family:var(--font-sans);letter-spacing:0}
+  .cap-body{padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+  .cap-title{background:transparent;border:0;outline:0;color:var(--fg-strong);font:400 22px/1.2 var(--font-serif);width:100%}
+  .cap-title::placeholder{color:var(--fg-disabled)}
+  .cap-body-text{background:transparent;border:0;outline:0;color:var(--fg);font:400 13.5px/1.55 var(--font-sans);width:100%;resize:none;height:80px}
+  .cap-body-text::placeholder{color:var(--fg-disabled)}
+  .cap-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)}
+  .cap-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;cursor:pointer;transition:background var(--motion-fast)}
+  .cap-pill:hover{background:var(--bg-3)}
+  .cap-pill .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px;margin-right:2px}
+  .cap-pill.proj{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+  .cap-pill.axe{background:var(--idea-soft);border-color:transparent;color:#dcc4ed}
+  .cap-pill.add{opacity:.6}
+  .cap-pill .x{color:var(--fg-mute);margin-left:4px;font-size:11px}
+  .cap-pill:hover .x{color:var(--bad)}
+  .cap-add-axe{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 9px;background:var(--bg-2);border:1px dashed var(--border-strong);border-radius:6px;color:var(--fg-mute);font-size:12px;cursor:pointer}
+  .cap-add-axe input{background:transparent;border:0;outline:0;color:var(--fg-strong);width:80px;font-size:12px}
+  .cap-foot{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.2);font-size:11.5px;color:var(--fg-mute)}
+  .cap-foot .grow{flex:1}
+  .cap-cta{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer;border:0;transition:background var(--motion-fast)}
+  .cap-cta:hover{background:var(--accent-strong)}
+  .cap-cta .kbd{background:rgba(26,15,8,.15);color:rgba(26,15,8,.55);border-color:transparent}
+  .cap-proj-picker{position:absolute;top:60px;right:20px;background:rgba(15,13,17,.98);border:1px solid var(--border-strong);border-radius:8px;padding:6px;display:none;flex-direction:column;gap:2px;max-height:280px;overflow-y:auto;min-width:220px;z-index:1}
+  .cap-proj-picker.on{display:flex}
+  .cap-proj-picker button{padding:7px 10px;border-radius:5px;font-size:12.5px;color:var(--fg);text-align:left;display:flex;align-items:center;gap:8px}
+  .cap-proj-picker button:hover{background:var(--bg-3);color:var(--fg-strong)}
+  .cap-proj-picker button .meta{margin-left:auto;color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px}
 </style>
 </head>
 <body>
@@ -188,7 +213,7 @@
   <section class="view" id="v-canvas" data-view="canvas">
     <div class="stub">
       <h2>Canvas</h2>
-      <p>L'écran de référence : projets posés dans des cluster zones, idées flottantes en post-it, agents vivants au-dessus, pan + drag, ⌘K en command bar, peek panel à droite sur sélection.</p>
+      <p>L'écran de référence : projets posés dans des cluster zones, idées flottantes en post-it, agents vivants au-dessus, pan + drag, Ctrl+K en command bar, peek panel à droite sur sélection.</p>
       <div class="wave">⏳ Wave 3 · à venir</div>
     </div>
   </section>
@@ -203,17 +228,31 @@
   </section>
 </main>
 
-<!-- command palette (stub Wave 2) -->
-<div class="cmd-overlay" id="cmd-overlay">
-  <div class="cmd-window">
-    <div class="cmd-input-row">
-      <svg class="ico xl"><use href="#i-search"></use></svg>
-      <input class="cmd-input" id="cmd-input" placeholder="capter une idée, naviguer…">
-      <span class="kbd">Esc</span>
+<!-- capture overlay (Wave 2) -->
+<div class="cap-bg" id="cap-bg" role="dialog" aria-label="Capter une idée">
+  <div class="cap-modal">
+    <div class="cap-head">
+      <span>⚡ capter une idée</span>
+      <span class="grow"></span>
+      <span class="ts" id="cap-ts"></span>
     </div>
-    <div class="cmd-stub">
-      La palette de commandes arrive en <strong>Wave 2</strong>. En attendant : utilise les onglets en haut.<br><br>
-      Raccourcis prévus : <span class="kbd">Ctrl+K</span> capture · <span class="kbd">Ctrl+N</span> spawn · <span class="kbd">G C</span> canvas · <span class="kbd">Esc</span> fermer
+    <div class="cap-body" style="position:relative">
+      <input class="cap-title" id="cap-title" placeholder="Titre court — ce que tu veux te rappeler" autocomplete="off">
+      <textarea class="cap-body-text" id="cap-body" placeholder="Détails (optionnel) — contexte, lien, raison de l'idée"></textarea>
+      <div class="cap-meta" id="cap-meta">
+        <span class="cap-pill proj" id="cap-proj-pill"><span class="k">@</span><span class="cap-proj-name">—</span></span>
+        <div id="cap-axes"></div>
+        <span class="cap-add-axe" id="cap-add-axe-btn"><span style="color:var(--fg-mute)">+</span> ajouter axe</span>
+        <span style="flex:1"></span>
+        <span style="color:var(--fg-mute);font-size:11.5px"><span class="kbd" style="margin-right:6px">Ctrl+P</span>changer projet</span>
+      </div>
+      <div class="cap-proj-picker" id="cap-proj-picker"></div>
+    </div>
+    <div class="cap-foot">
+      <span><span class="kbd">Esc</span> annuler</span>
+      <span><span class="kbd">Ctrl+Shift+↵</span> capter + ouvrir</span>
+      <span class="grow"></span>
+      <button class="cap-cta" id="cap-submit">Capter <span class="kbd">Ctrl+↵</span></button>
     </div>
   </div>
 </div>
@@ -489,6 +528,15 @@ function escapeAttr(s){ return String(s ?? '').replace(/[<>"'&]/g, c => ({'&':'&
    View switching
    ──────────────────────────────────────────────────────────────────────── */
 function applyRoute(route){
+  // capture is an overlay : the underlying view stays
+  if (route.view === 'capture') {
+    Capture.open(route.params);
+    return;
+  } else {
+    // close capture if it was open
+    document.getElementById('cap-bg').classList.remove('on');
+    document.getElementById('cap-proj-picker').classList.remove('on');
+  }
   // active view
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === route.view));
   // brand pos
@@ -504,19 +552,200 @@ function applyRoute(route){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Cmd palette (stub Wave 2)
+   Capture overlay — Wave 2
    ──────────────────────────────────────────────────────────────────────── */
-function openCmd(){
-  document.getElementById('cmd-overlay').classList.add('on');
-  setTimeout(() => document.getElementById('cmd-input').focus(), 20);
+
+// known-axes vocabulary (seed). Augmented dynamically by Store.ideas + Store.projects.
+const AXIS_SEED = [
+  'auth','search','ui','api','docs','tests','ci','perf','refactor','data','crawl',
+  'ml','embeddings','kb','agent','spawn','idea','blocker','design','release','config',
+  'deploy','db','cache','infra','monitoring','log','typing','schema','migration','i18n',
+  'a11y','seo','security','crypto','sync','offline','mobile','grist','blender','n8n',
+  'dsfr','cerema','knowledge','knowledge-pipeline','geomatique','open-data',
+];
+
+function knownAxes(){
+  const set = new Set(AXIS_SEED);
+  for (const i of Store.ideas) for (const a of (i.axes || [])) if (a) set.add(a.toLowerCase());
+  for (const p of Store.projects) for (const a of (p.axes || [])) if (a) set.add(a.toLowerCase());
+  return [...set];
 }
-function closeCmd(){
-  document.getElementById('cmd-overlay').classList.remove('on');
+
+function inferAxes(text){
+  const corpus = (text || '').toLowerCase();
+  if (!corpus.trim()) return [];
+  const axes = knownAxes();
+  const matched = [];
+  for (const a of axes) {
+    // word match : treat as substring with word boundaries
+    const re = new RegExp(`\\b${a.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+    if (re.test(corpus)) matched.push(a);
+    if (matched.length >= 4) break;
+  }
+  return matched;
 }
-document.getElementById('cmd-trigger').addEventListener('click', openCmd);
-document.getElementById('cmd-overlay').addEventListener('click', e => {
-  if (e.target.id === 'cmd-overlay') closeCmd();
+
+function inferProject(routeParams){
+  // 1. explicit param wins
+  if (routeParams && routeParams.proj) {
+    const found = Store.projects.find(p => p.name === routeParams.proj);
+    if (found) return found.name;
+  }
+  // 2. most recently updated project
+  const sorted = [...Store.projects].sort((a, b) =>
+    new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
+  );
+  return sorted[0]?.name || null;
+}
+
+const Capture = {
+  state: { project: null, axes: [], submitting: false },
+
+  open(routeParams){
+    document.getElementById('cap-bg').classList.add('on');
+    document.getElementById('cap-ts').textContent = new Date().toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+    this.state = { project: inferProject(routeParams), axes: [], submitting: false };
+    document.getElementById('cap-title').value = '';
+    document.getElementById('cap-body').value = '';
+    this.renderMeta();
+    setTimeout(() => document.getElementById('cap-title').focus(), 30);
+  },
+
+  close(){
+    document.getElementById('cap-bg').classList.remove('on');
+    document.getElementById('cap-proj-picker').classList.remove('on');
+    // if route is on capture, navigate back to today
+    if (Router.parse().view === 'capture') {
+      const cur = Router.parse();
+      const back = cur.params.from || 'today';
+      Router.navigate({ view: back });
+    }
+  },
+
+  renderMeta(){
+    document.querySelector('#cap-proj-pill .cap-proj-name').textContent = this.state.project || 'aucun projet';
+    const axesEl = document.getElementById('cap-axes');
+    axesEl.innerHTML = this.state.axes.map(a =>
+      `<span class="cap-pill axe" data-axe="${esc(a)}"><span class="k">#</span>${esc(a)}<span class="x">×</span></span>`
+    ).join('');
+    axesEl.querySelectorAll('.cap-pill[data-axe]').forEach(el => {
+      el.addEventListener('click', () => {
+        this.state.axes = this.state.axes.filter(x => x !== el.dataset.axe);
+        this.renderMeta();
+      });
+    });
+  },
+
+  // re-infer axes from current text (debounced)
+  inferTimer: null,
+  triggerInfer(){
+    if (this.inferTimer) clearTimeout(this.inferTimer);
+    this.inferTimer = setTimeout(() => {
+      const txt = document.getElementById('cap-title').value + ' ' + document.getElementById('cap-body').value;
+      const inferred = inferAxes(txt);
+      // merge with user-added (preserve manual additions, add inferred not yet present)
+      for (const a of inferred) if (!this.state.axes.includes(a)) this.state.axes.push(a);
+      this.renderMeta();
+    }, 350);
+  },
+
+  toggleProjPicker(){
+    const picker = document.getElementById('cap-proj-picker');
+    if (picker.classList.contains('on')) {
+      picker.classList.remove('on');
+      return;
+    }
+    picker.innerHTML = '';
+    const sorted = [...Store.projects].sort((a, b) =>
+      new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
+    );
+    // option to clear project
+    const clear = document.createElement('button');
+    clear.innerHTML = `<span style="color:var(--fg-mute)">— aucun</span>`;
+    clear.onclick = () => { this.state.project = null; picker.classList.remove('on'); this.renderMeta(); };
+    picker.appendChild(clear);
+    for (const p of sorted.slice(0, 30)) {
+      const b = document.createElement('button');
+      b.innerHTML = `<span>${esc(p.name)}</span><span class="meta">${esc(p.lifecycle || '')}</span>`;
+      b.onclick = () => { this.state.project = p.name; picker.classList.remove('on'); this.renderMeta(); };
+      picker.appendChild(b);
+    }
+    picker.classList.add('on');
+  },
+
+  addAxe(name){
+    const a = String(name || '').trim().toLowerCase();
+    if (!a) return;
+    if (!this.state.axes.includes(a)) this.state.axes.push(a);
+    this.renderMeta();
+  },
+
+  async submit(openProject){
+    if (this.state.submitting) return;
+    const title = document.getElementById('cap-title').value.trim();
+    if (!title) {
+      toast('Titre requis', 'error');
+      document.getElementById('cap-title').focus();
+      return;
+    }
+    const body = document.getElementById('cap-body').value.trim();
+    const proj = this.state.project;
+    const axes = [...this.state.axes];
+    this.state.submitting = true;
+
+    // optimistic : add to Store + render
+    const optimistic = {
+      id: 'tmp-' + Date.now().toString(36),
+      title, body, axes, related_projects: proj ? [proj] : [],
+      status: 'raw', source: 'user', created_by: 'Console',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      cluster_id: null, similar_to: [], _pending: true,
+    };
+    Store.ideas.unshift(optimistic);
+    if (Router.parse().view === 'today') renderToday();
+    this.close();
+
+    try {
+      const r = await api('POST', '/api/regie/ideas', {
+        title, body, axes, related_projects: proj ? [proj] : [],
+      });
+      // replace optimistic with real
+      const idx = Store.ideas.findIndex(i => i.id === optimistic.id);
+      if (idx >= 0) Store.ideas[idx] = r.idea;
+      if (Router.parse().view === 'today') renderToday();
+      renderTopbar();
+      toast('Idée capturée', 'success');
+      if (openProject && proj) {
+        Router.navigate({ view: 'canvas', params: { proj } });
+      }
+    } catch (err) {
+      Store.ideas = Store.ideas.filter(i => i.id !== optimistic.id);
+      if (Router.parse().view === 'today') renderToday();
+      toast('Échec capture : ' + err.message, 'error');
+    }
+  },
+};
+
+// wire capture inputs
+document.getElementById('cap-title').addEventListener('input', () => Capture.triggerInfer());
+document.getElementById('cap-body').addEventListener('input', () => Capture.triggerInfer());
+document.getElementById('cap-proj-pill').addEventListener('click', e => { e.stopPropagation(); Capture.toggleProjPicker(); });
+document.getElementById('cap-add-axe-btn').addEventListener('click', () => {
+  const name = prompt('Nom de l\'axe :');
+  if (name) Capture.addAxe(name);
 });
+document.getElementById('cap-submit').addEventListener('click', () => Capture.submit(false));
+document.getElementById('cap-bg').addEventListener('click', e => {
+  if (e.target.id === 'cap-bg') Capture.close();
+});
+
+// Cmd-trigger opens capture (Wave 2 : capture is the primary action of Ctrl+K)
+document.getElementById('cmd-trigger').addEventListener('click', () => {
+  Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
+});
+
+// expose for empty-hero CTA
+window.openCmd = () => Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
 
 /* ─────────────────────────────────────────────────────────────────────────
    Toast
@@ -540,11 +769,33 @@ document.querySelectorAll('.topnav button').forEach(b => {
 });
 
 document.addEventListener('keydown', e => {
+  const captureOpen = document.getElementById('cap-bg').classList.contains('on');
+  // Ctrl/Cmd+K → open capture (or close if already open)
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
-    document.getElementById('cmd-overlay').classList.contains('on') ? closeCmd() : openCmd();
+    if (captureOpen) Capture.close();
+    else Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
+    return;
   }
-  if (e.key === 'Escape') closeCmd();
+  if (e.key === 'Escape') {
+    if (captureOpen) Capture.close();
+    return;
+  }
+  // capture-scoped shortcuts
+  if (captureOpen) {
+    // Ctrl+Enter → submit (Shift = capter + ouvrir projet)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      Capture.submit(e.shiftKey);
+      return;
+    }
+    // Ctrl+P → toggle project picker
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      Capture.toggleProjPicker();
+      return;
+    }
+  }
 });
 
 Router.subscribe(applyRoute);
