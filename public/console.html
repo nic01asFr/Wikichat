@@ -86,7 +86,28 @@
   /* ── main ──────────────────────────────────────────────────────────────── */
   main{position:fixed;top:48px;left:0;right:0;bottom:0;overflow:auto}
   .view{display:none;height:100%;padding:24px}
-  .view.active{display:block}
+  .view.active{display:block;animation:viewIn var(--motion) ease-out}
+  @keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+  /* a11y: visible focus ring */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  button:focus-visible,.sp-pick:focus-visible,.cap-pill:focus-visible,.peek-action:focus-visible{outline-offset:2px}
+
+  /* skeleton shimmer for first-load */
+  .skel{position:relative;overflow:hidden;background:var(--bg-2);border-radius:6px;color:transparent}
+  .skel::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(232,154,92,.06),transparent);transform:translateX(-100%);animation:shimmer 1.6s infinite}
+  @keyframes shimmer{to{transform:translateX(100%)}}
+
+  /* drag state for canvas tiles */
+  .proj.draggable{cursor:grab}
+  .proj.dragging{cursor:grabbing;z-index:10;box-shadow:0 16px 40px rgba(0,0,0,.55);transition:none}
+  .proj.has-override::after{content:"";position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);opacity:.6}
+
+  @media (prefers-reduced-motion: reduce){
+    .view.active{animation:none}
+    .skel::after{animation:none}
+    *{transition-duration:.001s !important;animation-duration:.001s !important}
+  }
 
   /* ── view 01 · Aujourd'hui ─────────────────────────────────────────────── */
   .today-greet{padding:24px 28px;background:linear-gradient(180deg,rgba(232,154,92,.06),transparent),var(--bg-1);border:1px solid var(--border);border-radius:14px;margin-bottom:18px}
@@ -498,7 +519,7 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 /* ─────────────────────────────────────────────────────────────────────────
@@ -590,6 +611,7 @@ const Store = {
   ideas: [],
   agents: [],
   sessions: [],
+  _loaded: false,
 };
 
 async function refreshAll(){
@@ -606,6 +628,7 @@ async function refreshAll(){
     Store.ideas = i.ideas || [];
     Store.agents = Array.isArray(a) ? a : (a.agents || []);
     Store.sessions = s.sessions || [];
+    Store._loaded = true;
     renderTopbar();
     const v = Router.parse().view;
     if (v === 'today') renderToday();
@@ -697,6 +720,23 @@ function renderToday(){
   const root = document.getElementById('v-today');
   const totalEverything = Store.projects.length + Store.ideas.length + (Store.agents?.length || 0);
 
+  // Skeleton state during 1st load (Wave 5)
+  if (!Store._loaded) {
+    root.innerHTML = `
+      <div class="today-greet">
+        <h1 class="skel" style="width:60%;height:34px"> </h1>
+        <p class="skel" style="width:40%;height:18px;margin-top:8px"> </p>
+      </div>
+      <div class="today-grid">
+        ${[0,1,2,3].map(() => `
+          <div class="today-card">
+            <div class="today-card-h"><span class="skel" style="width:120px;height:14px"> </span></div>
+            ${[0,1,2].map(() => `<div class="today-row"><span class="skel" style="flex:1;height:14px"> </span></div>`).join('')}
+          </div>`).join('')}
+      </div>`;
+    return;
+  }
+
   if (totalEverything === 0) {
     root.innerHTML = `
       <div class="empty-hero">
@@ -771,13 +811,29 @@ function escapeAttr(s){ return String(s ?? '').replace(/[<>"'&]/g, c => ({'&':'&
    View switching
    ──────────────────────────────────────────────────────────────────────── */
 /* ─────────────────────────────────────────────────────────────────────────
-   Canvas — Wave 3
-   layout : grid auto par cluster (pas d'override draggable, Wave 5)
+   Canvas — Wave 3 + 5
+   layout : grid auto par cluster + overrides drag (Wave 5)
+   Overrides stockés en localStorage(wc.canvas.layout) keyé par nom de projet.
    ──────────────────────────────────────────────────────────────────────── */
 
 const Canvas = {
   zoom: 1,
   selected: null,
+  overrides: {}, // { [projName]: { x, y } }
+  LS_KEY: 'wc.canvas.layout',
+
+  loadOverrides(){
+    try { this.overrides = JSON.parse(localStorage.getItem(this.LS_KEY) || '{}') || {}; }
+    catch { this.overrides = {}; }
+  },
+  saveOverride(name, x, y){
+    this.overrides[name] = { x, y };
+    try { localStorage.setItem(this.LS_KEY, JSON.stringify(this.overrides)); } catch {}
+  },
+  clearOverride(name){
+    delete this.overrides[name];
+    try { localStorage.setItem(this.LS_KEY, JSON.stringify(this.overrides)); } catch {}
+  },
 
   hashId(s){
     let h = 0;
@@ -828,6 +884,14 @@ const Canvas = {
       });
       curX += w + 60;
       if (curX > 1900) { curX = 60; curY += h + 80; }
+    }
+    // apply user-saved overrides (Wave 5 drag)
+    for (const p of Store.projects) {
+      const ov = this.overrides[p.name];
+      if (ov && positions['proj:' + p.name]) {
+        positions['proj:' + p.name].x = ov.x;
+        positions['proj:' + p.name].y = ov.y;
+      }
     }
     // place ideas near their related project
     const ideaPositions = {};
@@ -902,13 +966,15 @@ const Canvas = {
       const meterPct = score !== undefined ? Math.max(5, Math.min(100, score)) : 0;
       const archived = p.lifecycle === 'archived' || p.lifecycle === 'closed' ? 'archived' : '';
       const sel = this.selected === p.name ? 'selected' : '';
+      const hasOv = !!this.overrides[p.name];
       const badges = [];
       if (p.lifecycle && p.lifecycle !== 'active') badges.push(`<span class="badge muted">${esc(p.lifecycle)}</span>`);
       if (p.blockers > 0) badges.push(`<span class="badge bad"><span class="dot"></span>${p.blockers}</span>`);
       if (p.live_agents?.length) badges.push(`<span class="badge ok"><span class="dot"></span>${p.live_agents.length}</span>`);
       if (score !== undefined) badges.push(`<span class="badge ${meterCls}"><span class="dot"></span>${score}</span>`);
+      const ovTitle = hasOv ? ' · position personnalisée (double-clic pour réinitialiser)' : '';
       html += `
-        <div class="proj ${archived} ${sel}" data-proj="${escapeAttr(p.name)}" style="left:${pos.x}px;top:${pos.y}px">
+        <div class="proj draggable ${archived} ${sel} ${hasOv ? 'has-override' : ''}" data-proj="${escapeAttr(p.name)}" tabindex="0" role="button" aria-label="${escapeAttr(p.name + ovTitle)}" style="left:${pos.x}px;top:${pos.y}px">
           <h4>${esc(p.name)}</h4>
           <p class="desc">${esc(p.description || p.purpose || '')}</p>
           <div class="row">
@@ -949,11 +1015,65 @@ const Canvas = {
         </div>`;
     }
     scene.innerHTML = html;
-    // wire clicks
+    // wire clicks + drag (Wave 5)
     scene.querySelectorAll('.proj[data-proj]').forEach(el => {
-      el.addEventListener('click', e => {
+      let down = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+      const THRESHOLD = 5;
+      el.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        down = true; moved = false;
+        sx = e.clientX; sy = e.clientY;
+        ox = parseFloat(el.style.left) || 0;
+        oy = parseFloat(el.style.top) || 0;
+        e.preventDefault();
+      });
+      const move = e => {
+        if (!down) return;
+        const dx = (e.clientX - sx) / Canvas.zoom;
+        const dy = (e.clientY - sy) / Canvas.zoom;
+        if (!moved && (Math.abs(dx) > THRESHOLD || Math.abs(dy) > THRESHOLD)) {
+          moved = true;
+          el.classList.add('dragging');
+        }
+        if (moved) {
+          el.style.left = (ox + dx) + 'px';
+          el.style.top = (oy + dy) + 'px';
+        }
+      };
+      const up = e => {
+        if (!down) return;
+        const wasMoving = moved;
+        down = false;
+        el.classList.remove('dragging');
+        if (wasMoving) {
+          const x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+          Canvas.saveOverride(el.dataset.proj, x, y);
+          el.classList.add('has-override');
+          // re-render to recompute idea/agent anchors
+          setTimeout(() => Canvas.render(), 0);
+        } else {
+          // simple click → open peek
+          Router.navigate({ view: 'canvas', params: { proj: el.dataset.proj } }, { replace: true });
+        }
+      };
+      el.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up, { once: true });
+      el.addEventListener('mouseleave', () => { /* mouseup window handler still catches */ });
+      // double-click → reset override
+      el.addEventListener('dblclick', e => {
         e.stopPropagation();
-        Router.navigate({ view: 'canvas', params: { proj: el.dataset.proj } }, { replace: true });
+        if (Canvas.overrides[el.dataset.proj]) {
+          Canvas.clearOverride(el.dataset.proj);
+          toast('Position réinitialisée', 'success');
+          Canvas.render();
+        }
+      });
+      // keyboard: Enter/Space → open peek, arrow keys → nudge if has override
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          Router.navigate({ view: 'canvas', params: { proj: el.dataset.proj } }, { replace: true });
+        }
       });
     });
   },
@@ -1713,6 +1833,7 @@ document.addEventListener('keydown', e => {
 Router.subscribe(applyRoute);
 
 // boot
+Canvas.loadOverrides();
 applyRoute(Router.parse());
 refreshAll();
 setInterval(refreshAll, 30000);
