@@ -5,547 +5,215 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WikiChat — Console</title>
 <style>
-  :root {
-    --bg: #0D1117;
-    --bg2: #161B22;
-    --bg3: #1C2128;
-    --border: #30363D;
-    --teal: #45B8B0;
-    --teal-dim: #2d7a75;
-    --text: #E6EDF3;
-    --text-dim: #8B949E;
-    --green: #3FB950;
-    --red: #F85149;
-    --yellow: #D29922;
-    --purple: #A371F7;
-    --orange: #E3832D;
+  /* ── tokens (extraits de docs/design/components.html §00) ──────────────── */
+  :root{
+    --bg-0:#0F0D11;--bg-1:#171419;--bg-2:#1F1B21;--bg-3:#2A252C;--bg-4:#3A3439;
+    --border:#272127;--border-strong:#3A3439;
+    --paper:#F4ECE3;--paper-soft:#E8DFD2;
+    --fg-strong:#F1E9DF;--fg:#B6ACA3;--fg-mute:#766E68;--fg-disabled:#534B47;
+    --accent:#E89A5C;--accent-strong:#F0AE73;--accent-fg:#1A0F08;
+    --accent-soft:rgba(232,154,92,.12);--accent-line:rgba(232,154,92,.28);
+    --idea:#C9A6E8;--idea-soft:rgba(201,166,232,.13);
+    --ok:#8AB58B;--warn:#D9AF5C;--bad:#D17B70;--info:#85B0CC;
+    --ok-soft:rgba(138,181,139,.14);--warn-soft:rgba(217,175,92,.14);
+    --bad-soft:rgba(209,123,112,.14);--info-soft:rgba(133,176,204,.14);
+    /* system stack — pas de Google Fonts (contrainte offline) */
+    --font-sans:'Segoe UI',system-ui,-apple-system,sans-serif;
+    --font-serif:'Iowan Old Style',Georgia,'Times New Roman',serif;
+    --font-mono:Consolas,'Liberation Mono',ui-monospace,monospace;
+    --motion-fast:140ms;
+    --motion:200ms;
+    --motion-slow:220ms;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    font-size: 13px;
-    line-height: 1.5;
-    overflow: hidden;
-  }
-  /* ── Header ───────────────────────────────────────────── */
-  header {
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    padding: 10px 18px;
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    height: 48px;
-  }
-  header h1 {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--teal);
-    letter-spacing: 0.02em;
-  }
-  .status-badge {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 11px;
-    color: var(--text-dim);
-  }
-  .status-badge .v { color: var(--text); font-weight: 600; }
-  .status-badge.healthy { border-color: var(--teal-dim); }
-  .grow { flex: 1; }
-  header a { color: var(--text-dim); font-size: 11px; text-decoration: none; padding: 4px 8px; }
-  header a:hover { color: var(--teal); }
-
-  /* ── Main grid ──────────────────────────────────────────── */
-  main {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    height: calc(100vh - 48px);
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg-0);color:var(--fg);font:13.5px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;height:100%;overflow:hidden}
+  ::selection{background:var(--accent-soft);color:var(--fg-strong)}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+  a{color:inherit;text-decoration:none}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+  input,textarea{font:inherit;color:inherit}
+  code{font:500 12px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:60ms!important;transition-duration:60ms!important}
   }
 
-  /* ── Left rail ──────────────────────────────────────────── */
-  aside {
-    background: var(--bg2);
-    border-right: 1px solid var(--border);
-    overflow-y: auto;
-    padding: 12px 0;
-  }
-  .rail-section {
-    padding: 0 14px;
-    margin-bottom: 18px;
-  }
-  .rail-section h3 {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
-    margin-bottom: 8px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .rail-section h3 .count {
-    background: var(--bg3);
-    color: var(--text-dim);
-    padding: 1px 6px;
-    border-radius: 8px;
-    font-size: 10px;
-  }
-  .rail-item {
-    padding: 5px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-bottom: 2px;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-  }
-  .rail-item:hover { background: var(--bg3); }
-  .rail-item.active { background: var(--bg3); border-left: 2px solid var(--teal); padding-left: 6px; }
-  .rail-item.anonymous { color: var(--text-dim); font-style: italic; }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .dot.online { background: var(--green); }
-  .dot.offline { background: var(--text-dim); }
-  .role-tag {
-    color: var(--text-dim);
-    font-size: 10px;
-    margin-left: auto;
-  }
-  .spawn-btn {
-    background: var(--teal-dim);
-    color: var(--text);
-    border: none;
-    padding: 7px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    width: 100%;
-    font-size: 12px;
-    font-weight: 600;
-    margin-bottom: 6px;
-  }
-  .spawn-btn:hover { background: var(--teal); }
+  /* ── icons ─────────────────────────────────────────────────────────────── */
+  .ico{width:14px;height:14px;flex-shrink:0;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .ico.lg{width:16px;height:16px}.ico.sm{width:12px;height:12px}.ico.xl{width:18px;height:18px}
 
-  /* ── Center : tabs ─────────────────────────────────────── */
-  section {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .tabs {
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    padding: 0 16px;
-  }
-  .tab {
-    padding: 12px 16px;
-    color: var(--text-dim);
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+  /* ── atomes ────────────────────────────────────────────────────────────── */
+  .kbd{font-family:var(--font-mono);font-size:11px;padding:1px 5px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;color:var(--fg-mute)}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
+  .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.info{background:var(--info)}.dot.idea{background:var(--idea)}
+  .dot.live{background:var(--ok);box-shadow:0 0 6px var(--ok);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
 
-  .tab-panel { flex: 1; overflow: hidden; display: none; flex-direction: column; }
-  .tab-panel.active { display: flex; }
+  .badge{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:500;font-family:var(--font-sans)}
+  .badge.ok{background:var(--ok-soft);color:#a8cdab}
+  .badge.warn{background:var(--warn-soft);color:#e6c889}
+  .badge.bad{background:var(--bad-soft);color:#e3a59c}
+  .badge.info{background:var(--info-soft);color:#aac8db}
+  .badge.idea{background:var(--idea-soft);color:#dcc4ed}
+  .badge.muted{background:var(--bg-3);color:var(--fg-mute)}
 
-  /* ── Chat panel ─────────────────────────────────────── */
-  .chat-header {
-    padding: 10px 18px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg2);
-    color: var(--text-dim);
-    font-size: 12px;
-  }
-  .chat-header .channel-name { color: var(--teal); font-weight: 600; }
-  .chat-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .msg {
-    background: var(--bg2);
-    border-left: 2px solid var(--border);
-    padding: 6px 10px;
-    border-radius: 0 4px 4px 0;
-  }
-  .msg.system { border-left-color: var(--purple); background: var(--bg3); }
-  .msg.dm { border-left-color: var(--orange); }
-  .msg .msg-meta {
-    font-size: 10px;
-    color: var(--text-dim);
-    margin-bottom: 2px;
-  }
-  .msg .msg-from { color: var(--teal); font-weight: 600; }
-  .msg .msg-content { white-space: pre-wrap; word-break: break-word; font-size: 12px; }
-  .chat-input {
-    border-top: 1px solid var(--border);
-    background: var(--bg2);
-    padding: 10px;
-    display: flex;
-    gap: 8px;
-  }
-  .chat-input input {
-    flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-family: inherit;
-  }
-  .chat-input input:focus { border-color: var(--teal); outline: none; }
-  .chat-input button {
-    background: var(--teal-dim);
-    color: var(--text);
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .chat-input button:hover { background: var(--teal); }
+  /* ── topbar ────────────────────────────────────────────────────────────── */
+  .topbar{position:fixed;top:0;left:0;right:0;height:48px;background:var(--bg-0);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 18px;z-index:10}
+  .brand{display:flex;align-items:center;gap:9px;font:600 13px/1 var(--font-sans);color:var(--fg-strong)}
+  .brand .mark{width:26px;height:26px;border-radius:6px;background:var(--paper);color:var(--bg-0);display:flex;align-items:center;justify-content:center;font:italic 400 16px/1 var(--font-serif);position:relative;flex-shrink:0}
+  .brand .mark::before,.brand .mark::after{content:"";position:absolute;width:2.5px;height:2.5px;border-radius:50%;background:var(--accent);bottom:4px}
+  .brand .mark::before{left:6px}.brand .mark::after{left:14px}
+  .brand .pos{color:var(--fg-mute);font-weight:400;font-size:12px}
 
-  /* ── Régie panel ─────────────────────────────────────── */
-  .regie-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1px;
-    background: var(--border);
-    flex: 1;
-    overflow: hidden;
-  }
-  .regie-col {
-    background: var(--bg);
-    overflow-y: auto;
-    padding: 14px 18px;
-  }
-  .regie-col h2 {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--teal);
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .regie-col h2 button {
-    margin-left: auto;
-    background: var(--bg3);
-    color: var(--text-dim);
-    border: 1px solid var(--border);
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 11px;
-  }
-  .regie-col h2 button:hover { color: var(--teal); border-color: var(--teal-dim); }
-  .add-form {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px;
-    margin-bottom: 12px;
-  }
-  .add-form input, .add-form textarea, .add-form select {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 6px 8px;
-    border-radius: 3px;
-    font-size: 12px;
-    font-family: inherit;
-    margin-bottom: 6px;
-  }
-  .add-form textarea { min-height: 50px; resize: vertical; }
-  .add-form button {
-    background: var(--teal-dim);
-    color: var(--text);
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .add-form button:hover { background: var(--teal); }
-  .idea, .project {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-  }
-  .idea-title, .project-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 4px;
-  }
-  .idea-body, .project-desc {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-bottom: 6px;
-    line-height: 1.4;
-  }
-  .badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 6px;
-  }
-  .badge {
-    background: var(--bg3);
-    color: var(--text-dim);
-    padding: 2px 7px;
-    border-radius: 3px;
-    font-size: 10px;
-  }
-  .badge.lifecycle-ideation { color: var(--yellow); }
-  .badge.lifecycle-mvp { color: var(--green); }
-  .badge.lifecycle-active { color: var(--teal); }
-  .badge.lifecycle-maintenance { color: var(--purple); }
-  .badge.lifecycle-archived { color: var(--text-dim); }
-  .badge.lifecycle-closed { color: var(--text-dim); text-decoration: line-through; }
-  .badge.status-raw { color: var(--text-dim); }
-  .badge.status-clustered { color: var(--purple); }
-  .badge.status-scoped { color: var(--green); }
-  .badge.status-started { color: var(--teal); }
-  .badge.status-shelved { color: var(--text-dim); }
-  .badge.score-low { color: var(--red); }
-  .badge.score-mid { color: var(--yellow); }
-  .badge.score-high { color: var(--green); }
-  .idea-actions, .project-actions {
-    display: flex;
-    gap: 4px;
-    margin-top: 8px;
-  }
-  .idea-actions button, .project-actions button {
-    background: var(--bg3);
-    color: var(--text-dim);
-    border: 1px solid var(--border);
-    padding: 3px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 10px;
-  }
-  .idea-actions button:hover, .project-actions button:hover { color: var(--teal); border-color: var(--teal-dim); }
+  .cmd-trigger{display:flex;align-items:center;gap:9px;flex:1;max-width:480px;height:30px;padding:0 12px;background:var(--bg-1);border:1px solid var(--border-strong);border-radius:7px;color:var(--fg-mute);font-size:12.5px;cursor:text;transition:border-color var(--motion-fast)}
+  .cmd-trigger:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .cmd-trigger .accent{color:var(--accent);font-weight:500}
+  .cmd-trigger .grow{flex:1}
+  .cmd-trigger .ico{color:var(--fg-mute)}
+  .topbar .grow{flex:1;min-width:20px}
 
-  /* ── Spawns panel ─────────────────────────────────────── */
-  .spawns-list { padding: 14px 18px; overflow-y: auto; flex: 1; }
-  .spawn-row {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 12px;
-    margin-bottom: 6px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .spawn-row .spawn-name { font-weight: 600; }
-  .spawn-row .spawn-meta { color: var(--text-dim); font-size: 11px; flex: 1; }
-  .spawn-row .spawn-status { padding: 2px 8px; border-radius: 3px; font-size: 10px; }
-  .spawn-row .spawn-status.running { background: var(--teal-dim); color: var(--text); }
-  .spawn-row .spawn-status.completed { background: var(--bg3); color: var(--green); }
-  .spawn-row .spawn-status.failed { background: var(--bg3); color: var(--red); }
-  .spawn-row .spawn-status.starting { background: var(--bg3); color: var(--yellow); }
+  .hud-pill{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 10px;background:var(--bg-1);border:1px solid var(--border);border-radius:7px;color:var(--fg);font-size:12px;white-space:nowrap}
+  .hud-pill strong{color:var(--fg-strong);font-weight:600}
+  .hud-pill.alert{border-color:rgba(209,123,112,.32);color:var(--bad)}
 
-  /* ── Modal ──────────────────────────────────────────── */
-  .modal-bg {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.7);
-    z-index: 100;
-    align-items: center;
-    justify-content: center;
-  }
-  .modal-bg.show { display: flex; }
-  .modal {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px 24px;
-    width: 480px;
-    max-width: 92vw;
-  }
-  .modal h2 { font-size: 16px; color: var(--teal); margin-bottom: 14px; }
-  .modal label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; margin-top: 10px; }
-  .modal input, .modal select, .modal textarea {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 7px 10px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-family: inherit;
-  }
-  .modal textarea { min-height: 60px; resize: vertical; }
-  .modal-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
-  .modal-actions button {
-    padding: 8px 16px;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    background: var(--bg3);
-    color: var(--text);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .modal-actions button.primary { background: var(--teal-dim); border-color: var(--teal-dim); }
-  .modal-actions button.primary:hover { background: var(--teal); }
+  /* ── nav (vues) ─────────────────────────────────────────────────────────── */
+  .topnav{display:flex;align-items:center;gap:2px;background:var(--bg-1);border:1px solid var(--border);border-radius:7px;padding:2px}
+  .topnav button{padding:4px 10px;border-radius:5px;font-size:12px;color:var(--fg-mute);transition:background var(--motion-fast),color var(--motion-fast)}
+  .topnav button:hover{color:var(--fg-strong)}
+  .topnav button[aria-current="true"]{background:var(--bg-3);color:var(--fg-strong)}
 
-  /* ── Empty / loading states ──────────────────────────── */
-  .empty {
-    color: var(--text-dim);
-    text-align: center;
-    padding: 40px 20px;
-    font-size: 12px;
-  }
-  .toast {
-    position: fixed;
-    bottom: 16px;
-    right: 16px;
-    background: var(--bg2);
-    border: 1px solid var(--teal-dim);
-    border-radius: 6px;
-    padding: 10px 16px;
-    font-size: 12px;
-    z-index: 200;
-    max-width: 400px;
-    display: none;
-  }
-  .toast.show { display: block; }
-  .toast.error { border-color: var(--red); }
+  /* ── main ──────────────────────────────────────────────────────────────── */
+  main{position:fixed;top:48px;left:0;right:0;bottom:0;overflow:auto}
+  .view{display:none;height:100%;padding:24px}
+  .view.active{display:block}
+
+  /* ── view 01 · Aujourd'hui ─────────────────────────────────────────────── */
+  .today-greet{padding:24px 28px;background:linear-gradient(180deg,rgba(232,154,92,.06),transparent),var(--bg-1);border:1px solid var(--border);border-radius:14px;margin-bottom:18px}
+  .today-greet h1{margin:0 0 6px;font:italic 400 28px/1.15 var(--font-serif);color:var(--fg-strong);letter-spacing:-.005em}
+  .today-greet h1 em{color:var(--accent);font-style:normal;font-weight:500}
+  .today-greet p{margin:0;color:var(--fg-mute);font-size:13px;max-width:780px}
+  .today-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:880px){.today-grid{grid-template-columns:1fr}}
+  .today-tile{background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+  .today-tile h3{margin:0;font:500 18px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+  .today-tile h3 .ct{margin-left:auto;font:500 11px/1 var(--font-mono);color:var(--fg-disabled)}
+  .today-list{display:flex;flex-direction:column;gap:0}
+  .today-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);font-size:12.5px;cursor:pointer;transition:background var(--motion-fast)}
+  .today-row:last-child{border-bottom:0}
+  .today-row:hover{background:rgba(255,255,255,.015)}
+  .today-row .t{color:var(--fg-strong);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .today-row .meta{color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px;flex-shrink:0}
+  .today-row .act{color:var(--accent);font-size:11px;opacity:0;transition:opacity var(--motion-fast);flex-shrink:0}
+  .today-row:hover .act{opacity:1}
+  .today-tile .more{padding-top:6px;color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer}
+  .today-tile .more:hover{color:var(--accent-strong)}
+  .today-tile .empty{color:var(--fg-disabled);font-size:12.5px;font-style:italic;padding:8px 0}
+
+  /* ── empty hero (premier matin) ─────────────────────────────────────────── */
+  .empty-hero{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;height:80%;padding:32px;gap:14px}
+  .empty-hero .glyph{width:72px;height:72px;border-radius:18px;background:var(--bg-1);border:1px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--fg-disabled);font:italic 400 36px/1 var(--font-serif);margin-bottom:12px}
+  .empty-hero h3{margin:0;font:400 26px/1.1 var(--font-serif);color:var(--fg-strong)}
+  .empty-hero p{margin:0;color:var(--fg-mute);font-size:13px;line-height:1.55;max-width:380px}
+  .empty-hero .cta{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:13px;margin-top:8px;cursor:pointer;transition:background var(--motion-fast)}
+  .empty-hero .cta:hover{background:var(--accent-strong)}
+
+  /* ── stub views ─────────────────────────────────────────────────────────── */
+  .stub{display:flex;flex-direction:column;align-items:center;justify-content:center;height:80%;text-align:center;gap:14px;color:var(--fg-mute)}
+  .stub h2{margin:0;font:400 32px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
+  .stub h2 em{color:var(--accent);font-style:italic}
+  .stub p{margin:0;font-size:13px;max-width:480px;line-height:1.55}
+  .stub .wave{display:inline-flex;gap:8px;align-items:center;font-size:11.5px;color:var(--fg-disabled);font-family:var(--font-mono);padding:6px 12px;background:var(--bg-1);border:1px solid var(--border);border-radius:6px;margin-top:6px}
+
+  /* ── toast ──────────────────────────────────────────────────────────────── */
+  .toast{position:fixed;bottom:18px;right:18px;padding:11px 16px;background:var(--bg-2);border:1px solid var(--border-strong);border-radius:8px;color:var(--fg);font-size:12.5px;z-index:50;max-width:380px;display:none;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .toast.on{display:block}
+  .toast.error{border-color:rgba(209,123,112,.4);color:var(--bad)}
+  .toast.success{border-color:rgba(138,181,139,.4);color:#a8cdab}
+
+  /* ── command palette (stub Wave 2) ──────────────────────────────────────── */
+  .cmd-overlay{position:fixed;inset:0;background:rgba(8,7,10,.6);backdrop-filter:blur(12px);z-index:60;display:none;align-items:flex-start;justify-content:center;padding-top:90px}
+  .cmd-overlay.on{display:flex}
+  .cmd-window{width:680px;max-width:calc(100vw - 32px);background:rgba(15,13,17,.96);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden;display:flex;flex-direction:column}
+  .cmd-input-row{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border)}
+  .cmd-input-row .ico{color:var(--accent)}
+  .cmd-input{flex:1;background:transparent;border:0;outline:0;color:var(--fg-strong);font:400 16px/1.4 var(--font-sans)}
+  .cmd-input::placeholder{color:var(--fg-disabled)}
+  .cmd-stub{padding:18px;color:var(--fg-mute);font-size:12.5px;line-height:1.6}
+  .cmd-stub strong{color:var(--accent)}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>WikiChat Console</h1>
-  <span class="status-badge healthy" id="status-badge">
-    <span class="v" id="status-uptime">…</span> uptime
-  </span>
-  <span class="status-badge">
-    <span class="v" id="status-budget">…</span> budget
-  </span>
-  <span class="status-badge">
-    <span class="v" id="status-sessions">…</span> sessions
-  </span>
-  <span class="status-badge" id="dormant-badge">…</span>
-  <div class="grow"></div>
-  <a href="/dashboard">→ dashboard</a>
-  <a href="/cockpit">→ cockpit</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"></circle><path d="M11 11l3 3"></path></symbol>
+    <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1L3 9h4l-1 6 6-8H8l1-6z" fill="currentColor" stroke="none"></path></symbol>
+    <symbol id="i-msg" viewBox="0 0 16 16"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6l-3 3v-3H3a1 1 0 0 1-1-1z"></path></symbol>
+    <symbol id="i-idea" viewBox="0 0 16 16"><path d="M5 10a3.5 3.5 0 1 1 6 0c-.5.7-1 1.3-1 2v.5H6V12c0-.7-.5-1.3-1-2zM6.5 14h3"></path></symbol>
+    <symbol id="i-rocket" viewBox="0 0 16 16"><path d="M11 2c-3 0-6 3-7 6l-2 1 2 2 1-1 2 2 1-1 2 2 1-2c3-1 6-4 6-7-1-1-3-2-6-2zM10 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path></symbol>
+    <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2l6.5 11h-13z"></path><path d="M8 6v3M8 11.5v.1"></path></symbol>
+    <symbol id="i-arrow-r" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"></path></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"></path></symbol>
+    <symbol id="i-grid" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5"></rect><rect x="9" y="2" width="5" height="5"></rect><rect x="2" y="9" width="5" height="5"></rect><rect x="9" y="9" width="5" height="5"></rect></symbol>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">w</span>
+    <span>wikichat <span class="pos" id="brand-pos">/ aujourd'hui</span></span>
+  </div>
+  <div class="topnav" role="tablist" aria-label="Vues">
+    <button data-route="today" aria-current="true">Aujourd'hui</button>
+    <button data-route="canvas">Canvas</button>
+    <button data-route="chat/general">Chat</button>
+  </div>
+  <button class="cmd-trigger" id="cmd-trigger" aria-label="Ouvrir la palette de commandes">
+    <svg class="ico"><use href="#i-search"></use></svg>
+    <span class="grow"><span class="accent">Capter,</span> naviguer…</span>
+    <span class="kbd">Ctrl+K</span>
+  </button>
+  <span class="grow"></span>
+  <span class="hud-pill" id="pill-agents"><span class="dot live"></span><strong>0</strong> agents</span>
+  <span class="hud-pill" id="pill-alerts" style="display:none"><strong>0</strong> alertes</span>
+  <span class="hud-pill" id="pill-status"><span class="dot ok"></span>up</span>
 </header>
 
-<main>
-  <aside>
-    <div class="rail-section">
-      <button class="spawn-btn" onclick="openSpawnModal()">+ Spawn agent</button>
-    </div>
-    <div class="rail-section">
-      <h3>Sessions <span class="count" id="rail-sessions-count">0</span></h3>
-      <div id="rail-sessions"></div>
-    </div>
-    <div class="rail-section">
-      <h3>Channels <span class="count" id="rail-channels-count">0</span></h3>
-      <div id="rail-channels"></div>
-    </div>
-  </aside>
+<main id="main">
+  <!-- view: today -->
+  <section class="view" id="v-today" data-view="today"></section>
 
-  <section>
-    <div class="tabs">
-      <div class="tab active" data-tab="chat">Chat</div>
-      <div class="tab" data-tab="regie">Régie</div>
-      <div class="tab" data-tab="spawns">Spawns</div>
+  <!-- view: canvas (Wave 3 stub) -->
+  <section class="view" id="v-canvas" data-view="canvas">
+    <div class="stub">
+      <h2>Canvas</h2>
+      <p>L'écran de référence : projets posés dans des cluster zones, idées flottantes en post-it, agents vivants au-dessus, pan + drag, ⌘K en command bar, peek panel à droite sur sélection.</p>
+      <div class="wave">⏳ Wave 3 · à venir</div>
     </div>
+  </section>
 
-    <!-- Chat tab -->
-    <div class="tab-panel active" data-panel="chat">
-      <div class="chat-header">Canal courant : <span class="channel-name" id="chat-channel">general</span></div>
-      <div class="chat-messages" id="chat-messages"></div>
-      <div class="chat-input">
-        <input type="text" id="chat-as" placeholder="As (display name)" value="Console" style="max-width: 140px;" />
-        <input type="text" id="chat-text" placeholder="Tape un message + Entrée pour envoyer" />
-        <button onclick="sendChat()">Send</button>
-      </div>
-    </div>
-
-    <!-- Régie tab -->
-    <div class="tab-panel" data-panel="regie">
-      <div class="regie-grid">
-        <div class="regie-col">
-          <h2>💡 Ideas <span class="count" id="ideas-count" style="font-size:10px;color:var(--text-dim);font-weight:normal">0</span>
-            <button onclick="harmonize()">🧩 Harmonize</button>
-          </h2>
-          <div class="add-form">
-            <input type="text" id="idea-title" placeholder="Titre court de l'idée" />
-            <textarea id="idea-body" placeholder="Description (optionnel)"></textarea>
-            <input type="text" id="idea-axes" placeholder="Axes : grist, auth, ui (séparés par virgule)" />
-            <input type="text" id="idea-projects" placeholder="Projets liés (séparés par virgule)" />
-            <button onclick="addIdea()">+ Capter</button>
-          </div>
-          <div id="ideas-list"></div>
-        </div>
-        <div class="regie-col">
-          <h2>🗺️ Projects <span class="count" id="projects-count" style="font-size:10px;color:var(--text-dim);font-weight:normal">0</span>
-            <button onclick="auditAll()">🩺 Audit all</button>
-          </h2>
-          <div id="projects-list"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Spawns tab -->
-    <div class="tab-panel" data-panel="spawns">
-      <div class="spawns-list" id="spawns-list">
-        <div class="empty">Pas de spawn pour l'instant. Clic sur <strong>+ Spawn agent</strong> en haut à gauche.</div>
-      </div>
+  <!-- view: chat (Wave 4 stub) -->
+  <section class="view" id="v-chat" data-view="chat">
+    <div class="stub">
+      <h2>Chat <em>en vol</em></h2>
+      <p>Discuter avec un agent en vol. Layout 3 colonnes : rail conversations · side principal · side panel contexte. Le watermark "non lus depuis Vh" est la signature de cette vue.</p>
+      <div class="wave">⏳ Wave 4 · à venir</div>
     </div>
   </section>
 </main>
 
-<!-- Spawn modal -->
-<div class="modal-bg" id="spawn-modal">
-  <div class="modal">
-    <h2>Spawn un agent</h2>
-    <label>Nom</label>
-    <input type="text" id="spawn-name" placeholder="ex: ReviewerAlice" />
-    <label>Repo path (absolu)</label>
-    <input type="text" id="spawn-repo" placeholder="C:\\Users\\Omen\\Desktop\\..." />
-    <label>Rôle (optionnel)</label>
-    <input type="text" id="spawn-role" placeholder="ex: reviewer, dev, auditor" />
-    <label>Tâche initiale</label>
-    <textarea id="spawn-task" placeholder="Décris l'action à effectuer (commence par un verbe)"></textarea>
-    <label>Mode</label>
-    <select id="spawn-mode">
-      <option value="headless">headless (one-shot, recommandé)</option>
-      <option value="daemon">daemon (persistant en background)</option>
-    </select>
-    <div class="modal-actions">
-      <button onclick="closeSpawnModal()">Annuler</button>
-      <button class="primary" onclick="submitSpawn()">Spawn</button>
+<!-- command palette (stub Wave 2) -->
+<div class="cmd-overlay" id="cmd-overlay">
+  <div class="cmd-window">
+    <div class="cmd-input-row">
+      <svg class="ico xl"><use href="#i-search"></use></svg>
+      <input class="cmd-input" id="cmd-input" placeholder="capter une idée, naviguer…">
+      <span class="kbd">Esc</span>
+    </div>
+    <div class="cmd-stub">
+      La palette de commandes arrive en <strong>Wave 2</strong>. En attendant : utilise les onglets en haut.<br><br>
+      Raccourcis prévus : <span class="kbd">Ctrl+K</span> capture · <span class="kbd">Ctrl+N</span> spawn · <span class="kbd">G C</span> canvas · <span class="kbd">Esc</span> fermer
     </div>
   </div>
 </div>
@@ -553,420 +221,338 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// ─────────────────────────────────────────────────────────
-// State
-// ─────────────────────────────────────────────────────────
-const ui = {
-  currentChannel: "general",
-  pollTimer: null,
-  pollIdeas: null,
-  pollSpawns: null,
-};
+/* ─────────────────────────────────────────────────────────────────────────
+   Hash router · vanilla, ~80 lignes
+   Routes :
+     #today                            view=today
+     #canvas[?proj=<id>]                view=canvas
+     #chat/<channel>[?agent=<name>]     view=chat segment=<channel>
+     #capture[?proj=<id>]               view=capture (Wave 2)
+     #spawn[?proj=<id>]                 view=spawn (Wave 4)
+   ──────────────────────────────────────────────────────────────────────── */
+const Router = (() => {
+  const VALID_VIEWS = new Set(['today','canvas','capture','spawn','chat']);
+  const subs = [];
+  let last = null;
 
-// ─────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────
-function $(sel) { return document.querySelector(sel); }
-function $$(sel) { return [...document.querySelectorAll(sel)]; }
-function el(tag, attrs = {}, children = []) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") e.className = v;
-    else if (k === "onclick") e.onclick = v;
-    else if (k === "html") e.innerHTML = v;
-    else e.setAttribute(k, v);
+  function parse(){
+    const raw = location.hash.replace(/^#\/?/, '') || 'today';
+    const [path, qs = ''] = raw.split('?');
+    const [view, segment] = path.split('/', 2);
+    const params = {};
+    new URLSearchParams(qs).forEach((v,k) => { params[k] = v; });
+    if (!VALID_VIEWS.has(view)) return { view:'today', segment:undefined, params:{} };
+    return { view, segment: segment || undefined, params };
   }
-  for (const c of (Array.isArray(children) ? children : [children])) {
-    if (typeof c === "string") e.appendChild(document.createTextNode(c));
-    else if (c) e.appendChild(c);
+
+  function fmt(route){
+    let h = '#' + route.view;
+    if (route.segment) h += '/' + route.segment;
+    const qs = new URLSearchParams(route.params || {}).toString();
+    if (qs) h += '?' + qs;
+    return h;
   }
-  return e;
-}
-function toast(msg, isError) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.className = "toast", 3500);
-}
-function fmtAge(iso) {
-  if (!iso) return "?";
-  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
-  if (s < 60) return s + "s";
-  if (s < 3600) return Math.floor(s / 60) + "m";
-  if (s < 86400) return Math.floor(s / 3600) + "h";
-  return Math.floor(s / 86400) + "d";
-}
-async function api(method, url, body) {
+
+  function navigate(route, opts = {}){
+    const next = fmt(route);
+    if (opts.replace) history.replaceState(null, '', next);
+    else if (next !== location.hash) location.hash = next;
+    if (opts.replace) emit();
+  }
+
+  let updateTimer = null;
+  function update(params){
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => {
+      const cur = parse();
+      const merged = { ...cur, params: { ...cur.params, ...params } };
+      history.replaceState(null, '', fmt(merged));
+      emit();
+    }, 300);
+  }
+
+  function emit(){
+    const route = parse();
+    if (last && JSON.stringify(route) === JSON.stringify(last)) return;
+    last = route;
+    for (const fn of subs) {
+      try { fn(route); } catch (err) { console.error('[router] sub failed', err); }
+    }
+  }
+
+  function subscribe(fn){
+    subs.push(fn);
+    return () => { const i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); };
+  }
+
+  window.addEventListener('hashchange', emit);
+
+  return { parse, navigate, update, subscribe };
+})();
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fetch helpers + state store
+   ──────────────────────────────────────────────────────────────────────── */
+async function api(method, url, body){
   const opts = { method, headers: {} };
   if (body !== undefined) {
-    opts.headers["Content-Type"] = "application/json";
+    opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
   const r = await fetch(url, opts);
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`${r.status}: ${txt.slice(0, 200)}`);
-  }
+  if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.json();
 }
 
-// ─────────────────────────────────────────────────────────
-// Tabs
-// ─────────────────────────────────────────────────────────
-$$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
-function switchTab(name) {
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  $$(".tab-panel").forEach(p => p.classList.toggle("active", p.dataset.panel === name));
-  if (name === "regie") refreshRegie();
-  if (name === "spawns") refreshSpawns();
-}
+const Store = {
+  health: null,
+  projects: [],
+  ideas: [],
+  agents: [],
+  sessions: [],
+};
 
-// ─────────────────────────────────────────────────────────
-// Header status
-// ─────────────────────────────────────────────────────────
-async function refreshStatus() {
+async function refreshAll(){
   try {
-    const h = await api("GET", "/api/health");
-    $("#status-uptime").textContent = (h.uptime < 3600) ? Math.round(h.uptime / 60) + "m" : Math.round(h.uptime / 3600) + "h";
-    $("#status-budget").textContent = h.budget.current + "/" + h.budget.max;
-    $("#status-sessions").textContent = h.registeredSessions + "/" + h.sessions;
-    $("#status-badge").className = "status-badge healthy";
-    const dorm = await api("GET", "/api/admin/dormant").catch(() => null);
-    if (dorm) {
-      $("#dormant-badge").innerHTML = `<span class="v">${dorm.active ? "AWAKE" : "DORMANT"}</span>`;
-      $("#dormant-badge").style.color = dorm.active ? "var(--green)" : "var(--text-dim)";
-    }
-  } catch (err) {
-    $("#status-badge").className = "status-badge";
-    $("#status-uptime").textContent = "?";
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-// Left rail : sessions + channels
-// ─────────────────────────────────────────────────────────
-async function refreshRail() {
-  try {
-    const [{ sessions }, { channels }] = await Promise.all([
-      api("GET", "/api/regie/sessions"),
-      api("GET", "/api/regie/channels"),
+    const [h, p, i, a, s] = await Promise.all([
+      api('GET', '/api/health').catch(() => null),
+      api('GET', '/api/regie/projects').catch(() => ({ projects: [] })),
+      api('GET', '/api/regie/ideas?limit=50').catch(() => ({ ideas: [] })),
+      fetch('/api/agents').then(r => r.json()).catch(() => []),
+      api('GET', '/api/regie/sessions').catch(() => ({ sessions: [] })),
     ]);
-    const railS = $("#rail-sessions");
-    railS.innerHTML = "";
-    $("#rail-sessions-count").textContent = sessions.filter(s => !s.anonymous).length;
-    sessions.filter(s => !s.anonymous).forEach(s => {
-      const item = el("div", { class: "rail-item" }, [
-        el("span", { class: "dot online" }),
-        el("span", {}, s.name),
-        el("span", { class: "role-tag" }, s.role || s.agent_type || ""),
-      ]);
-      item.onclick = () => openDM(s.name);
-      railS.appendChild(item);
-    });
-    sessions.filter(s => s.anonymous).forEach(s => {
-      const item = el("div", { class: "rail-item anonymous" }, [
-        el("span", { class: "dot offline" }),
-        el("span", {}, s.name || s.id.slice(0, 6)),
-      ]);
-      railS.appendChild(item);
-    });
-
-    const railC = $("#rail-channels");
-    railC.innerHTML = "";
-    const visibleChannels = channels.filter(c => !c.isDM || c.name.includes("console"));
-    $("#rail-channels-count").textContent = visibleChannels.length;
-    visibleChannels.forEach(c => {
-      const cls = "rail-item" + (c.name === ui.currentChannel ? " active" : "");
-      const item = el("div", { class: cls }, "#" + c.name);
-      item.onclick = () => selectChannel(c.name);
-      railC.appendChild(item);
-    });
+    Store.health = h;
+    Store.projects = p.projects || [];
+    Store.ideas = i.ideas || [];
+    Store.agents = Array.isArray(a) ? a : (a.agents || []);
+    Store.sessions = s.sessions || [];
+    renderTopbar();
+    if (Router.parse().view === 'today') renderToday();
   } catch (err) {
-    console.error("rail refresh", err);
+    console.error('[refresh]', err);
   }
 }
 
-// ─────────────────────────────────────────────────────────
-// Chat
-// ─────────────────────────────────────────────────────────
-function selectChannel(name) {
-  ui.currentChannel = name;
-  $("#chat-channel").textContent = name;
-  $$(".rail-item").forEach(i => {
-    i.classList.toggle("active", i.textContent.replace(/^#/, "") === name);
+/* ─────────────────────────────────────────────────────────────────────────
+   Topbar (status pills)
+   ──────────────────────────────────────────────────────────────────────── */
+function renderTopbar(){
+  const h = Store.health;
+  const liveAgents = Store.sessions.filter(s => !s.anonymous).length;
+  const alerts = computeAlerts().length;
+
+  const pillAgents = document.getElementById('pill-agents');
+  pillAgents.innerHTML = `<span class="dot ${liveAgents > 0 ? 'live' : 'info'}"></span><strong>${liveAgents}</strong> agent${liveAgents !== 1 ? 's' : ''}`;
+
+  const pillAlerts = document.getElementById('pill-alerts');
+  if (alerts > 0) {
+    pillAlerts.innerHTML = `<strong>${alerts}</strong> alerte${alerts !== 1 ? 's' : ''}`;
+    pillAlerts.style.display = '';
+  } else {
+    pillAlerts.style.display = 'none';
+  }
+
+  const pillStatus = document.getElementById('pill-status');
+  if (h) {
+    pillStatus.innerHTML = `<span class="dot ok"></span>${h.budget.current}/${h.budget.max}`;
+  } else {
+    pillStatus.innerHTML = `<span class="dot bad"></span>down`;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   View: Today — derive alerts/ideas/agents-back/at-risk from store
+   ──────────────────────────────────────────────────────────────────────── */
+function ageDays(iso){
+  if (!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function ageHuman(iso){
+  if (!iso) return '?';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  return Math.floor(s / 86400) + 'j';
+}
+
+function computeAlerts(){
+  const out = [];
+  for (const p of Store.projects) {
+    if (p.blockers > 0) out.push({ kind: 'bad', t: `${p.name} · ${p.blockers} blocker${p.blockers > 1 ? 's' : ''}`, meta: 'blocker', proj: p.name });
+    const lastCommit = p.health?.last_commit_age_days;
+    if (lastCommit !== null && lastCommit !== undefined && lastCommit > 30) {
+      out.push({ kind: 'warn', t: `${p.name} · pas de commit depuis ${lastCommit}j`, meta: lastCommit + 'j', proj: p.name });
+    }
+    if (p.health?.score !== undefined && p.health.score < 30) {
+      out.push({ kind: 'bad', t: `${p.name} · santé ${p.health.score}/100`, meta: p.health.score + '/100', proj: p.name });
+    }
+  }
+  return out.slice(0, 6);
+}
+
+function computeRecentIdeas(){
+  const cutoff = Date.now() - 2 * 86400000;
+  return Store.ideas
+    .filter(i => i.status === 'raw' && new Date(i.updated_at).getTime() > cutoff)
+    .slice(0, 6);
+}
+
+function computeAgentsBack(){
+  return (Store.agents || [])
+    .filter(a => a.status === 'completed' || a.status === 'done')
+    .slice(0, 6);
+}
+
+function computeAtRisk(){
+  return Store.projects
+    .filter(p => p.health?.score !== undefined && p.health.score < 60)
+    .sort((a, b) => (a.health?.score || 0) - (b.health?.score || 0))
+    .slice(0, 6);
+}
+
+function renderToday(){
+  const root = document.getElementById('v-today');
+  const totalEverything = Store.projects.length + Store.ideas.length + (Store.agents?.length || 0);
+
+  if (totalEverything === 0) {
+    root.innerHTML = `
+      <div class="empty-hero">
+        <div class="glyph">w</div>
+        <h3>Bienvenue.</h3>
+        <p>Aucun projet, aucune idée, aucun agent. Capte ta première idée pour démarrer — elle deviendra le germe de ton premier projet.</p>
+        <button class="cta" onclick="openCmd()">⚡ Capter ma première idée <span class="kbd" style="background:transparent;border-color:rgba(26,15,8,.25);color:rgba(26,15,8,.55)">Ctrl+K</span></button>
+      </div>`;
+    return;
+  }
+
+  const alerts = computeAlerts();
+  const ideas = computeRecentIdeas();
+  const agentsBack = computeAgentsBack();
+  const atRisk = computeAtRisk();
+
+  const greetParts = [];
+  if (ideas.length) greetParts.push(`${ideas.length} idée${ideas.length > 1 ? 's' : ''} en attente de tri`);
+  if (alerts.length) greetParts.push(`${alerts.length} alerte${alerts.length > 1 ? 's' : ''} à regarder`);
+  if (atRisk.length) greetParts.push(`${atRisk.length} projet${atRisk.length > 1 ? 's' : ''} à risque`);
+  const things = alerts.length + (ideas.length > 0 ? 1 : 0) + (atRisk.length > 0 ? 1 : 0);
+  const thingsWord = things === 0 ? 'Rien' : things === 1 ? 'Une chose' : things === 2 ? 'Deux choses' : `${things} choses`;
+
+  root.innerHTML = `
+    <div class="today-greet">
+      <h1>Bonjour. <em>${thingsWord}</em> ${things === 0 ? 'à signaler' : things === 1 ? 'demande' : 'demandent'} ton attention.</h1>
+      <p>${greetParts.length ? 'Tu as ' + greetParts.join(', ') + '.' : "Tout est calme. C'est l'occasion de capter ce qui te trotte en tête."}</p>
+    </div>
+
+    <div class="today-grid">
+      ${tileTpl('Alertes', alerts.length, alerts.map(a =>
+        `<div class="today-row" data-proj="${escapeAttr(a.proj || '')}"><span class="dot ${a.kind}"></span><span class="t">${esc(a.t)}</span><span class="meta">${esc(a.meta)}</span></div>`
+      ).join(''), alerts.length === 0 ? 'Aucune alerte. Tout va bien.' : '')}
+
+      ${tileTpl('Idées récentes à trier', ideas.length, ideas.map(i =>
+        `<div class="today-row" data-idea="${escapeAttr(i.id)}"><span class="dot idea"></span><span class="t">${esc(i.title)}</span><span class="meta">${i.id.slice(0, 8)}</span><span class="act">→ trier</span></div>`
+      ).join(''), ideas.length === 0 ? "Pas d'idée non triée." : '', Store.ideas.filter(i => i.status === 'raw').length > 6 ? 'voir toutes (' + Store.ideas.filter(i => i.status === 'raw').length + ')' : null)}
+
+      ${tileTpl('Agents revenus', agentsBack.length, agentsBack.map(a =>
+        `<div class="today-row"><span class="dot ok"></span><span class="t">${esc(a.name)} · ${esc(a.role || a.mode || '')} ${a.repo_path ? '— terminé' : ''}</span><span class="meta">${ageHuman(a.spawned_at || a.completed_at)}</span></div>`
+      ).join(''), agentsBack.length === 0 ? "Pas d'agent revenu récemment." : '')}
+
+      ${tileTpl('Projets à risque', atRisk.length, atRisk.map(p =>
+        `<div class="today-row" data-proj="${escapeAttr(p.name)}"><span class="dot ${p.health.score < 40 ? 'bad' : 'warn'}"></span><span class="t">${esc(p.name)} · santé ${p.health.score}/100</span><span class="meta">${esc(p.lifecycle || 'active')}</span></div>`
+      ).join(''), atRisk.length === 0 ? 'Tous les projets sont en bonne santé.' : '')}
+    </div>
+  `;
+
+  // wire row clicks
+  root.querySelectorAll('.today-row[data-proj]').forEach(el => {
+    el.addEventListener('click', () => {
+      const proj = el.dataset.proj;
+      if (proj) Router.navigate({ view: 'canvas', params: { proj } });
+    });
   });
-  refreshChat();
 }
-function openDM(agentName) {
-  // We don't know "our" agent name on the console side — use display name from input
-  const me = ($("#chat-as").value || "Console").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
-  const them = String(agentName).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
-  const [a, b] = [me, them].sort();
-  const ch = `dm:${a}__${b}`;
-  selectChannel(ch);
+
+function tileTpl(title, count, rows, emptyMsg, moreLabel){
+  return `
+    <div class="today-tile">
+      <h3>${title} <span class="ct">${count}</span></h3>
+      <div class="today-list">
+        ${rows || `<div class="empty">${emptyMsg || 'Rien.'}</div>`}
+      </div>
+      ${moreLabel ? `<div class="more">${moreLabel} →</div>` : ''}
+    </div>`;
 }
-async function refreshChat() {
-  try {
-    const r = await fetch(`/api/messages?channel=${encodeURIComponent(ui.currentChannel)}&since_minutes=120`);
-    const msgs = await r.json();
-    const list = $("#chat-messages");
-    list.innerHTML = "";
-    if (!Array.isArray(msgs) || msgs.length === 0) {
-      list.appendChild(el("div", { class: "empty" }, "Aucun message dans ce canal sur les 2 dernières heures."));
-      return;
-    }
-    for (const m of msgs) {
-      const isSystem = m.from === "system";
-      const isDM = ui.currentChannel.startsWith("dm:");
-      const cls = "msg" + (isSystem ? " system" : "") + (isDM ? " dm" : "");
-      const div = el("div", { class: cls });
-      const meta = el("div", { class: "msg-meta" }, [
-        el("span", { class: "msg-from" }, m.fromName || m.from),
-        " · " + new Date(m.timestamp).toLocaleTimeString("fr-FR"),
-      ]);
-      const body = el("div", { class: "msg-content" }, m.content);
-      div.appendChild(meta);
-      div.appendChild(body);
-      list.appendChild(div);
-    }
-    list.scrollTop = list.scrollHeight;
-  } catch (err) {
-    console.error("chat refresh", err);
-  }
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return String(s ?? '').replace(/[<>"'&]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   View switching
+   ──────────────────────────────────────────────────────────────────────── */
+function applyRoute(route){
+  // active view
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === route.view));
+  // brand pos
+  const labels = { today: '/ aujourd\'hui', canvas: '/ canvas', chat: '/ chat', capture: '/ capture', spawn: '/ spawn' };
+  document.getElementById('brand-pos').textContent = labels[route.view] || ('/ ' + route.view);
+  // topnav active
+  document.querySelectorAll('.topnav button').forEach(b => {
+    const target = b.dataset.route.split('/')[0];
+    b.setAttribute('aria-current', target === route.view ? 'true' : 'false');
+  });
+  // render view-specific
+  if (route.view === 'today') renderToday();
 }
-async function sendChat() {
-  const text = $("#chat-text").value.trim();
-  if (!text) return;
-  const from = $("#chat-as").value.trim() || "Console";
-  try {
-    await api("POST", "/api/chat", { from, channel: ui.currentChannel, content: text });
-    $("#chat-text").value = "";
-    refreshChat();
-  } catch (err) {
-    toast("Send failed: " + err.message, true);
-  }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Cmd palette (stub Wave 2)
+   ──────────────────────────────────────────────────────────────────────── */
+function openCmd(){
+  document.getElementById('cmd-overlay').classList.add('on');
+  setTimeout(() => document.getElementById('cmd-input').focus(), 20);
 }
-$("#chat-text").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+function closeCmd(){
+  document.getElementById('cmd-overlay').classList.remove('on');
+}
+document.getElementById('cmd-trigger').addEventListener('click', openCmd);
+document.getElementById('cmd-overlay').addEventListener('click', e => {
+  if (e.target.id === 'cmd-overlay') closeCmd();
 });
 
-// ─────────────────────────────────────────────────────────
-// Régie : ideas + projects
-// ─────────────────────────────────────────────────────────
-async function refreshRegie() {
-  refreshIdeas();
-  refreshProjects();
-}
-async function refreshIdeas() {
-  try {
-    const { ideas, stats } = await api("GET", "/api/regie/ideas?limit=50");
-    $("#ideas-count").textContent = stats.total;
-    const list = $("#ideas-list");
-    list.innerHTML = "";
-    if (ideas.length === 0) {
-      list.appendChild(el("div", { class: "empty" }, "Idea pool vide. Capte ta première au-dessus ↑"));
-      return;
-    }
-    for (const i of ideas) {
-      list.appendChild(renderIdea(i));
-    }
-  } catch (err) { console.error("ideas refresh", err); }
-}
-function renderIdea(i) {
-  const card = el("div", { class: "idea" });
-  card.appendChild(el("div", { class: "idea-title" }, `[${i.id}] ${i.title}`));
-  if (i.body) card.appendChild(el("div", { class: "idea-body" }, i.body.slice(0, 200) + (i.body.length > 200 ? "…" : "")));
-  const badges = el("div", { class: "badges" }, [
-    el("span", { class: `badge status-${i.status}` }, i.status),
-    el("span", { class: "badge" }, "↻ " + fmtAge(i.updated_at)),
-  ]);
-  for (const a of (i.axes || []).slice(0, 5)) badges.appendChild(el("span", { class: "badge" }, "🏷 " + a));
-  for (const p of (i.related_projects || []).slice(0, 4)) badges.appendChild(el("span", { class: "badge" }, "🔗 " + p));
-  if (i.cluster_id) badges.appendChild(el("span", { class: "badge status-clustered" }, "🧩 " + i.cluster_id.slice(0, 6)));
-  card.appendChild(badges);
-  const actions = el("div", { class: "idea-actions" });
-  for (const newStatus of ["raw", "scoped", "started", "shelved"]) {
-    if (newStatus === i.status) continue;
-    const b = el("button", { onclick: () => updateIdeaStatus(i.id, newStatus) }, "→ " + newStatus);
-    actions.appendChild(b);
-  }
-  actions.appendChild(el("button", { onclick: () => deleteIdea(i.id) }, "✕"));
-  card.appendChild(actions);
-  return card;
-}
-async function addIdea() {
-  const title = $("#idea-title").value.trim();
-  if (!title) return toast("Titre requis", true);
-  const body = $("#idea-body").value.trim();
-  const axes = $("#idea-axes").value.split(",").map(s => s.trim()).filter(Boolean);
-  const projects = $("#idea-projects").value.split(",").map(s => s.trim()).filter(Boolean);
-  try {
-    await api("POST", "/api/regie/ideas", { title, body, axes, related_projects: projects });
-    $("#idea-title").value = "";
-    $("#idea-body").value = "";
-    $("#idea-axes").value = "";
-    $("#idea-projects").value = "";
-    toast("Idée capturée");
-    refreshIdeas();
-  } catch (err) { toast("Échec: " + err.message, true); }
-}
-async function updateIdeaStatus(id, status) {
-  try {
-    await api("PATCH", "/api/regie/ideas/" + id, { status });
-    refreshIdeas();
-  } catch (err) { toast("Update failed: " + err.message, true); }
-}
-async function deleteIdea(id) {
-  if (!confirm("Supprimer définitivement [" + id + "] ?")) return;
-  try {
-    await api("DELETE", "/api/regie/ideas/" + id);
-    refreshIdeas();
-  } catch (err) { toast("Delete failed: " + err.message, true); }
-}
-async function harmonize() {
-  toast("Harmonisation en cours…");
-  try {
-    const { report } = await api("POST", "/api/regie/harmonize", { post_to_channel: true });
-    toast(`${report.clusters.length} cluster(s) sur ${report.total_ideas} idée(s).`);
-    refreshIdeas();
-  } catch (err) { toast("Harmonize failed: " + err.message, true); }
+/* ─────────────────────────────────────────────────────────────────────────
+   Toast
+   ──────────────────────────────────────────────────────────────────────── */
+function toast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast on' + (kind ? ' ' + kind : '');
+  setTimeout(() => t.classList.remove('on'), 3500);
 }
 
-async function refreshProjects() {
-  try {
-    const { projects } = await api("GET", "/api/regie/projects");
-    $("#projects-count").textContent = projects.length;
-    const list = $("#projects-list");
-    list.innerHTML = "";
-    if (projects.length === 0) {
-      list.appendChild(el("div", { class: "empty" }, "Aucun projet déclaré."));
-      return;
-    }
-    for (const p of projects.slice(0, 60)) {
-      list.appendChild(renderProject(p));
-    }
-  } catch (err) { console.error("projects refresh", err); }
-}
-function renderProject(p) {
-  const card = el("div", { class: "project" });
-  card.appendChild(el("div", { class: "project-title" }, p.name));
-  if (p.description) card.appendChild(el("div", { class: "project-desc" }, p.description));
-  if (p.purpose) card.appendChild(el("div", { class: "project-desc" }, "🎯 " + p.purpose));
-  const badges = el("div", { class: "badges" });
-  if (p.lifecycle) badges.appendChild(el("span", { class: `badge lifecycle-${p.lifecycle}` }, p.lifecycle));
-  for (const a of (p.axes || []).slice(0, 4)) badges.appendChild(el("span", { class: "badge" }, "🏷 " + a));
-  if (p.health?.score !== undefined) {
-    const s = p.health.score;
-    const cls = s < 30 ? "score-low" : s < 60 ? "score-mid" : "score-high";
-    badges.appendChild(el("span", { class: "badge " + cls }, "🩺 " + s + "/100"));
-  }
-  if (p.tasks_active) badges.appendChild(el("span", { class: "badge" }, "📋 " + p.tasks_active));
-  if (p.blockers) badges.appendChild(el("span", { class: "badge score-low" }, "🔴 " + p.blockers));
-  if (p.live_agents.length) badges.appendChild(el("span", { class: "badge" }, "👥 " + p.live_agents.length));
-  if (p.publish?.github?.visibility && p.publish.github.visibility !== "none") {
-    badges.appendChild(el("span", { class: "badge" }, "gh:" + p.publish.github.visibility));
-  }
-  if (p.publish?.license) badges.appendChild(el("span", { class: "badge" }, "© " + p.publish.license));
-  card.appendChild(badges);
-  if (p.health?.warnings?.length) {
-    const w = el("div", { class: "project-desc", style: "color: var(--yellow)" }, "⚠ " + p.health.warnings.slice(0, 3).join(" · "));
-    card.appendChild(w);
-  }
-  const actions = el("div", { class: "project-actions" });
-  actions.appendChild(el("button", { onclick: () => auditOne(p.name) }, "🩺 Audit"));
-  actions.appendChild(el("button", { onclick: () => editLifecycle(p.name, p.lifecycle) }, "✎ Lifecycle"));
-  if (p.repo) actions.appendChild(el("button", { onclick: () => spawnFor(p.name, p.repo) }, "+ Spawn ici"));
-  card.appendChild(actions);
-  return card;
-}
-async function auditOne(project) {
-  toast("Audit " + project + "…");
-  try {
-    const { audit } = await api("POST", "/api/regie/audit", { project, persist: true });
-    toast(`${project}: score ${audit.score}/100`);
-    refreshProjects();
-  } catch (err) { toast("Audit failed: " + err.message, true); }
-}
-async function auditAll() {
-  toast("Audit batch en cours (jusqu'à ~10s)…");
-  try {
-    const r = await api("POST", "/api/regie/audit-all", { persist: true });
-    toast(`${r.count} projets audités en ${r.elapsed_ms}ms`);
-    refreshProjects();
-  } catch (err) { toast("Audit-all failed: " + err.message, true); }
-}
-function editLifecycle(name, current) {
-  const next = prompt("Lifecycle pour '" + name + "' (ideation, mvp, active, maintenance, archived, closed) :", current || "active");
-  if (!next) return;
-  api("PATCH", "/api/regie/projects/" + encodeURIComponent(name), { lifecycle: next })
-    .then(() => { toast("Lifecycle → " + next); refreshProjects(); })
-    .catch(err => toast("Edit failed: " + err.message, true));
-}
-function spawnFor(projectName, repoPath) {
-  $("#spawn-name").value = "Worker-" + projectName.slice(0, 8);
-  $("#spawn-repo").value = repoPath;
-  openSpawnModal();
-}
+/* ─────────────────────────────────────────────────────────────────────────
+   Wiring
+   ──────────────────────────────────────────────────────────────────────── */
+document.querySelectorAll('.topnav button').forEach(b => {
+  b.addEventListener('click', () => {
+    const route = b.dataset.route;
+    const [view, segment] = route.split('/', 2);
+    Router.navigate({ view, segment });
+  });
+});
 
-// ─────────────────────────────────────────────────────────
-// Spawns
-// ─────────────────────────────────────────────────────────
-function openSpawnModal() { $("#spawn-modal").classList.add("show"); }
-function closeSpawnModal() { $("#spawn-modal").classList.remove("show"); }
-async function submitSpawn() {
-  const name = $("#spawn-name").value.trim();
-  const repo = $("#spawn-repo").value.trim();
-  const role = $("#spawn-role").value.trim();
-  const task = $("#spawn-task").value.trim();
-  const mode = $("#spawn-mode").value;
-  if (!name || !repo) return toast("name + repo requis", true);
-  const url = mode === "daemon" ? "/api/spawn/daemon" : "/api/spawn/headless";
-  const body = mode === "daemon"
-    ? { projectPath: repo, name, role: role || undefined, task: task || undefined }
-    : { projectPath: repo, name, role: role || undefined, prompt: task || undefined };
-  try {
-    const r = await api("POST", url, body);
-    toast("Spawn lancé : " + name);
-    closeSpawnModal();
-    $("#spawn-task").value = "";
-    switchTab("spawns");
-    refreshSpawns();
-  } catch (err) { toast("Spawn failed: " + err.message, true); }
-}
-async function refreshSpawns() {
-  try {
-    const r = await fetch("/api/agents");
-    const data = await r.json();
-    const agents = Array.isArray(data) ? data : (data.agents || []);
-    const list = $("#spawns-list");
-    list.innerHTML = "";
-    if (agents.length === 0) {
-      list.appendChild(el("div", { class: "empty" }, "Pas de spawn pour l'instant."));
-      return;
-    }
-    for (const a of agents.slice(0, 50)) {
-      const row = el("div", { class: "spawn-row" });
-      row.appendChild(el("div", { class: "spawn-name" }, a.name));
-      row.appendChild(el("div", { class: "spawn-meta" }, `${a.mode || "?"} · ${a.role || ""} · ${fmtAge(a.spawned_at || a.started_at)} ago`));
-      const status = a.status || "?";
-      row.appendChild(el("div", { class: "spawn-status " + status }, status));
-      list.appendChild(row);
-    }
-  } catch (err) { console.error("spawns refresh", err); }
-}
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    document.getElementById('cmd-overlay').classList.contains('on') ? closeCmd() : openCmd();
+  }
+  if (e.key === 'Escape') closeCmd();
+});
 
-// ─────────────────────────────────────────────────────────
-// Boot
-// ─────────────────────────────────────────────────────────
-async function boot() {
-  await refreshStatus();
-  await refreshRail();
-  await refreshChat();
-  setInterval(refreshStatus, 8000);
-  setInterval(refreshRail, 6000);
-  setInterval(refreshChat, 3000);
-}
-boot();
+Router.subscribe(applyRoute);
+
+// boot
+applyRoute(Router.parse());
+refreshAll();
+setInterval(refreshAll, 30000);
 </script>
 </body>
 </html>
