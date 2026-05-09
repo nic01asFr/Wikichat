@@ -203,6 +203,85 @@
   .peek-action .k{color:var(--fg-disabled);font-family:var(--font-mono);font-size:10.5px}
   .peek-action.primary .k{color:rgba(26,15,8,.5)}
 
+  /* ── view 04 · Spawn modal ────────────────────────────────────────────── */
+  .sp-bg{position:fixed;inset:0;background:rgba(8,7,10,.55);backdrop-filter:blur(10px);z-index:60;display:none;align-items:flex-start;justify-content:center;padding-top:60px;animation:capFade var(--motion) ease-out}
+  .sp-bg.on{display:flex}
+  .sp-modal{width:640px;max-width:calc(100% - 32px);background:rgba(15,13,17,.97);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden;animation:capRise var(--motion) ease-out}
+  .sp-head{padding:18px 22px;border-bottom:1px solid var(--border)}
+  .sp-head .lbl{font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin-bottom:6px}
+  .sp-head h3{margin:0;font:400 24px/1.1 var(--font-serif);color:var(--fg-strong)}
+  .sp-head h3 em{color:var(--accent);font-style:normal;font-weight:500}
+  .sp-body{padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+  .sp-row{display:flex;align-items:flex-start;gap:14px}
+  .sp-row .k{width:70px;color:var(--fg-mute);font:500 11px/1.4 var(--font-mono);text-transform:uppercase;letter-spacing:.08em;padding-top:8px}
+  .sp-row .pickers{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+  .sp-pick{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;cursor:pointer;transition:background var(--motion-fast)}
+  .sp-pick:hover{background:var(--bg-3)}
+  .sp-pick.on{background:var(--accent);color:var(--accent-fg);border-color:transparent;font-weight:600}
+  .sp-input{flex:1;padding:8px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:7px;color:var(--fg-strong);font:400 13px/1.4 var(--font-sans);outline:0}
+  .sp-input:focus{border-color:var(--accent)}
+  .sp-input.task{height:78px;resize:none}
+  .sp-preview{padding:14px 16px;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;font:500 12px/1.55 var(--font-mono);color:var(--fg-mute);white-space:pre-wrap;word-break:break-all}
+  .sp-preview .acc{color:var(--accent)}
+  .sp-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.2)}
+  .sp-foot .grow{flex:1}
+  .sp-cancel{padding:7px 14px;border-radius:7px;border:1px solid var(--border);color:var(--fg);font-size:12.5px;background:transparent;cursor:pointer}
+  .sp-cancel:hover{background:var(--bg-3)}
+  .sp-cta{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:12.5px;border:0;cursor:pointer;transition:background var(--motion-fast)}
+  .sp-cta:hover{background:var(--accent-strong)}
+  .sp-cta .kbd{background:rgba(26,15,8,.15);color:rgba(26,15,8,.55);border-color:transparent}
+
+  /* ── view 05 · Chat 3 colonnes ─────────────────────────────────────────── */
+  #v-chat{padding:0;overflow:hidden;position:relative}
+  .chat-shell{position:absolute;inset:0;display:grid;grid-template-columns:240px 1fr;background:var(--bg-0)}
+  @media (min-width:1100px){.chat-shell{grid-template-columns:240px 1fr 280px}}
+  .chat-rail{background:var(--bg-1);border-right:1px solid var(--border);padding:14px 12px;overflow-y:auto}
+  .chat-rail h5{margin:0 0 8px;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-disabled);padding:0 6px}
+  .chat-rail h5:not(:first-child){margin-top:14px}
+  .chat-rail .conv{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer;margin-bottom:2px;transition:background var(--motion-fast)}
+  .chat-rail .conv:hover{background:var(--bg-2)}
+  .chat-rail .conv.on{background:var(--bg-2)}
+  .chat-rail .conv.on::before{content:"";width:2px;background:var(--accent);align-self:stretch;margin-left:-9px;margin-right:7px;border-radius:1px}
+  .chat-rail .conv .ava{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 10px/1 var(--font-sans);color:#0F0D11;flex-shrink:0;background:linear-gradient(135deg,#85B0CC,#8AB58B)}
+  .chat-rail .conv .body{flex:1;min-width:0}
+  .chat-rail .conv .n{font:500 12.5px/1.2 var(--font-sans);color:var(--fg-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-rail .conv .s{font:400 11px/1 var(--font-mono);color:var(--fg-mute)}
+  .chat-rail .conv .un{width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0;box-shadow:0 0 6px var(--accent)}
+
+  .chat-main{display:flex;flex-direction:column;background:var(--bg-0);min-width:0}
+  .chat-head{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border);background:var(--bg-1);flex-shrink:0}
+  .chat-head .ava{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 12px/1 var(--font-sans);color:#0F0D11;background:linear-gradient(135deg,#E89A5C,#C9A6E8)}
+  .chat-head .ttl{font:500 14px/1.2 var(--font-sans);color:var(--fg-strong)}
+  .chat-head .sub{font:500 11px/1 var(--font-mono);color:var(--fg-mute)}
+  .chat-head .grow{flex:1}
+  .chat-msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px;position:relative}
+  .chat-msgs .empty{margin:auto;color:var(--fg-disabled);font-size:12.5px;font-style:italic}
+  .msg{display:flex;gap:10px;align-items:flex-start}
+  .msg .ava{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px/1 var(--font-sans);color:#0F0D11;flex-shrink:0;background:linear-gradient(135deg,#E89A5C,#C9A6E8)}
+  .msg .ava.user{background:var(--bg-3);color:var(--fg);font-weight:600;font-size:12px}
+  .msg .ava.system{background:var(--bg-3);color:var(--fg-mute);font-size:13px}
+  .msg .body{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
+  .msg .nm{display:flex;align-items:baseline;gap:8px}
+  .msg .nm .n{font:500 12.5px/1 var(--font-sans);color:var(--fg-strong)}
+  .msg .nm .ts{font:400 10.5px/1 var(--font-mono);color:var(--fg-disabled)}
+  .msg .txt{color:var(--fg);font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+  .msg .txt code{font-family:var(--font-mono);font-size:12px;color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+  .unread-mark{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--accent);position:relative;margin:8px 0}
+  .unread-mark .lbl{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bg-0);padding:0 12px;font:500 10.5px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap}
+  .chat-input{padding:14px 18px;border-top:1px solid var(--border);background:var(--bg-1);display:flex;gap:10px;align-items:flex-end;flex-shrink:0}
+  .chat-input textarea{flex:1;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--fg-strong);font:400 13px/1.5 var(--font-sans);resize:none;height:40px;min-height:40px;max-height:120px;outline:0}
+  .chat-input textarea:focus{border-color:var(--border-strong)}
+  .chat-input .send{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;background:var(--accent);color:var(--accent-fg);border-radius:8px;border:0;cursor:pointer;transition:background var(--motion-fast)}
+  .chat-input .send:hover{background:var(--accent-strong)}
+  .chat-input .send:disabled{background:var(--bg-3);color:var(--fg-disabled);cursor:not-allowed}
+
+  .chat-side{background:var(--bg-1);border-left:1px solid var(--border);padding:16px 18px;overflow-y:auto;display:none;flex-direction:column;gap:14px}
+  @media (min-width:1100px){.chat-side{display:flex}}
+  .chat-side h5{margin:0;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-mute)}
+  .chat-side .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12px}
+  .chat-side .kv .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:11px}
+  .chat-side .kv .v{color:var(--fg-strong);font-family:var(--font-mono);font-size:11px;text-align:right;word-break:break-all}
+
   /* ── stub views ─────────────────────────────────────────────────────────── */
   .stub{display:flex;flex-direction:column;align-items:center;justify-content:center;height:80%;text-align:center;gap:14px;color:var(--fg-mute)}
   .stub h2{margin:0;font:400 32px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
@@ -313,15 +392,82 @@
     <aside class="peek" id="peek"></aside>
   </section>
 
-  <!-- view: chat (Wave 4 stub) -->
+  <!-- view: chat (Wave 4) -->
   <section class="view" id="v-chat" data-view="chat">
-    <div class="stub">
-      <h2>Chat <em>en vol</em></h2>
-      <p>Discuter avec un agent en vol. Layout 3 colonnes : rail conversations · side principal · side panel contexte. Le watermark "non lus depuis Vh" est la signature de cette vue.</p>
-      <div class="wave">⏳ Wave 4 · à venir</div>
+    <div class="chat-shell">
+      <aside class="chat-rail" id="chat-rail"></aside>
+      <div class="chat-main">
+        <div class="chat-head" id="chat-head">
+          <div class="ava" id="chat-head-ava">#</div>
+          <div>
+            <div class="ttl" id="chat-head-ttl">—</div>
+            <div class="sub" id="chat-head-sub">—</div>
+          </div>
+          <span class="grow"></span>
+        </div>
+        <div class="chat-msgs" id="chat-msgs"><div class="empty">Sélectionne une conversation à gauche.</div></div>
+        <div class="chat-input">
+          <textarea id="chat-input-text" placeholder="Écrire un message…  Ctrl+↵ pour envoyer"></textarea>
+          <button class="send" id="chat-send" title="Envoyer (Ctrl+↵)" disabled>
+            <svg class="ico" style="width:16px;height:16px"><use href="#i-arrow-r"></use></svg>
+          </button>
+        </div>
+      </div>
+      <aside class="chat-side" id="chat-side">
+        <h5>Contexte</h5>
+        <div class="kv" id="chat-side-kv"><span class="k">canal</span><span class="v">—</span></div>
+      </aside>
     </div>
   </section>
 </main>
+
+<!-- spawn modal (Wave 4) -->
+<div class="sp-bg" id="sp-bg" role="dialog" aria-label="Spawner un agent">
+  <div class="sp-modal">
+    <div class="sp-head">
+      <div class="lbl">⚡ spawn agent</div>
+      <h3>Lancer un agent <em id="sp-h-proj">—</em></h3>
+    </div>
+    <div class="sp-body">
+      <div class="sp-row">
+        <span class="k">projet</span>
+        <div class="pickers" id="sp-proj-pickers"></div>
+      </div>
+      <div class="sp-row">
+        <span class="k">rôle</span>
+        <div class="pickers" id="sp-role-pickers">
+          <span class="sp-pick on" data-role="dev">dev</span>
+          <span class="sp-pick" data-role="qa">qa</span>
+          <span class="sp-pick" data-role="spec">spec</span>
+          <span class="sp-pick" data-role="refactor">refactor</span>
+          <span class="sp-pick" data-role="research">research</span>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="k">tâche</span>
+        <textarea class="sp-input task" id="sp-task" placeholder="Décris la tâche en une phrase — ex : 'Audit des tests unitaires existants et propose un plan de couverture.'"></textarea>
+      </div>
+      <div class="sp-row">
+        <span class="k">mode</span>
+        <div class="pickers" id="sp-mode-pickers">
+          <span class="sp-pick on" data-mode="headless">headless · one-shot</span>
+          <span class="sp-pick" data-mode="daemon">daemon · persistent</span>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="k">nom</span>
+        <input class="sp-input" id="sp-name" placeholder="auto" autocomplete="off">
+      </div>
+      <div class="sp-preview" id="sp-preview">$ claude -p …</div>
+    </div>
+    <div class="sp-foot">
+      <span style="font-size:11.5px;color:var(--fg-mute)"><span class="kbd">Esc</span> annuler</span>
+      <span class="grow"></span>
+      <button class="sp-cancel" id="sp-cancel">Annuler</button>
+      <button class="sp-cta" id="sp-submit">Spawner <span class="kbd">Ctrl+↵</span></button>
+    </div>
+  </div>
+</div>
 
 <!-- capture overlay (Wave 2) -->
 <div class="cap-bg" id="cap-bg" role="dialog" aria-label="Capter une idée">
@@ -864,6 +1010,7 @@ const Canvas = {
           <h5>Action rapide</h5>
           <div style="display:flex;flex-direction:column;gap:5px">
             <button class="peek-action primary" data-act="capture"><svg class="ico"><use href="#i-bolt"></use></svg><span class="grow">Capter une idée ici</span><span class="k">Ctrl+K</span></button>
+            <button class="peek-action" data-act="spawn"><svg class="ico"><use href="#i-rocket"></use></svg><span class="grow">Spawner un agent ici</span><span class="k">Ctrl+N</span></button>
             <button class="peek-action" data-act="chat"><svg class="ico"><use href="#i-msg"></use></svg><span class="grow">Ouvrir #${esc(p.name.toLowerCase().replace(/\s+/g, '-'))}</span></button>
           </div>
         </div>
@@ -883,6 +1030,13 @@ const Canvas = {
     };
     peek.querySelector('[data-act="capture"]').onclick = () => {
       Router.navigate({ view: 'capture', params: { proj: projName, from: 'canvas' } });
+    };
+    peek.querySelector('[data-act="spawn"]').onclick = () => {
+      Router.navigate({ view: 'spawn', params: { proj: projName } });
+    };
+    peek.querySelector('[data-act="chat"]').onclick = () => {
+      const channel = projName.toLowerCase().replace(/\s+/g, '-');
+      Router.navigate({ view: 'chat', segment: channel });
     };
     // refresh selection styling
     document.querySelectorAll('.proj').forEach(el => el.classList.toggle('selected', el.dataset.proj === projName));
@@ -930,14 +1084,19 @@ document.getElementById('canvas-pan').addEventListener('wheel', e => {
 }, { passive: false });
 
 function applyRoute(route){
-  // capture is an overlay : the underlying view stays
+  // capture & spawn are overlays : the underlying view stays
   if (route.view === 'capture') {
     Capture.open(route.params);
     return;
   } else {
-    // close capture if it was open
     document.getElementById('cap-bg').classList.remove('on');
     document.getElementById('cap-proj-picker').classList.remove('on');
+  }
+  if (route.view === 'spawn') {
+    Spawn.open(route.params);
+    return;
+  } else {
+    document.getElementById('sp-bg').classList.remove('on');
   }
   // active view
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === route.view));
@@ -955,13 +1114,295 @@ function applyRoute(route){
     Canvas.render();
     if (route.params.proj) {
       Canvas.showPeek(route.params.proj);
-      // delay center so layout has DOM
       setTimeout(() => Canvas.centerOn(route.params.proj), 50);
     } else {
       Canvas.hidePeek();
     }
   }
+  if (route.view === 'chat') {
+    Chat.open(route.segment, route.params);
+  } else {
+    Chat.stopPolling();
+  }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Spawn modal — Wave 4
+   ──────────────────────────────────────────────────────────────────────── */
+const Spawn = {
+  state: { project: null, role: 'dev', mode: 'headless', submitting: false },
+
+  open(params){
+    document.getElementById('sp-bg').classList.add('on');
+    const projName = params?.proj || (Store.projects[0]?.name) || null;
+    this.state.project = Store.projects.find(p => p.name === projName) || Store.projects[0] || null;
+    this.state.role = 'dev';
+    this.state.mode = 'headless';
+    this.renderProjects();
+    this.applyChips();
+    this.renderHead();
+    document.getElementById('sp-task').value = '';
+    document.getElementById('sp-name').value = '';
+    this.renderPreview();
+    setTimeout(() => document.getElementById('sp-task').focus(), 60);
+  },
+
+  close(){
+    document.getElementById('sp-bg').classList.remove('on');
+    if (Router.parse().view === 'spawn') {
+      Router.navigate({ view: Router.parse().params.from || 'canvas' });
+    }
+  },
+
+  renderProjects(){
+    const wrap = document.getElementById('sp-proj-pickers');
+    const projs = Store.projects.slice(0, 12);
+    wrap.innerHTML = projs.map(p =>
+      `<span class="sp-pick ${p.name === this.state.project?.name ? 'on' : ''}" data-proj="${esc(p.name)}">${esc(p.name)}</span>`
+    ).join('');
+    wrap.querySelectorAll('[data-proj]').forEach(el => {
+      el.addEventListener('click', () => {
+        this.state.project = Store.projects.find(p => p.name === el.dataset.proj);
+        this.renderProjects();
+        this.renderHead();
+        this.renderPreview();
+      });
+    });
+  },
+
+  renderHead(){
+    document.getElementById('sp-h-proj').textContent = this.state.project?.name || '—';
+  },
+
+  applyChips(){
+    document.querySelectorAll('#sp-role-pickers .sp-pick').forEach(el => {
+      el.classList.toggle('on', el.dataset.role === this.state.role);
+    });
+    document.querySelectorAll('#sp-mode-pickers .sp-pick').forEach(el => {
+      el.classList.toggle('on', el.dataset.mode === this.state.mode);
+    });
+  },
+
+  renderPreview(){
+    const proj = this.state.project;
+    const task = document.getElementById('sp-task').value.trim() || '<task>';
+    const name = document.getElementById('sp-name').value.trim() || `${this.state.role}-${proj?.name || 'proj'}-${Date.now().toString(36).slice(-4)}`;
+    const path = proj?.path || '<path>';
+    const cmd = this.state.mode === 'daemon'
+      ? `POST /api/spawn/daemon\n  projectPath: ${path}\n  name:        ${name}\n  role:        ${this.state.role}\n  task:        ${task}`
+      : `POST /api/spawn/headless\n  projectPath: ${path}\n  name:        ${name}\n  role:        ${this.state.role}\n  prompt:      ${task}`;
+    document.getElementById('sp-preview').textContent = '$ ' + cmd;
+  },
+
+  async submit(){
+    if (this.state.submitting) return;
+    const proj = this.state.project;
+    if (!proj?.path) { toast('Projet sans path — choisis un autre.', 'error'); return; }
+    const task = document.getElementById('sp-task').value.trim();
+    if (!task) { toast('Tâche requise.', 'error'); document.getElementById('sp-task').focus(); return; }
+    const name = document.getElementById('sp-name').value.trim() || `${this.state.role}-${proj.name}-${Date.now().toString(36).slice(-4)}`;
+    this.state.submitting = true;
+    const url = this.state.mode === 'daemon' ? '/api/spawn/daemon' : '/api/spawn/headless';
+    const body = this.state.mode === 'daemon'
+      ? { projectPath: proj.path, name, role: this.state.role, task }
+      : { projectPath: proj.path, name, role: this.state.role, prompt: task };
+    try {
+      const r = await api('POST', url, body);
+      if (r?.error) throw new Error(r.error);
+      toast(`✓ Agent "${name}" spawn (${this.state.mode}) sur ${proj.name}`, 'success');
+      this.close();
+      setTimeout(refreshAll, 400);
+    } catch (err) {
+      toast('Spawn raté : ' + err.message, 'error');
+    } finally {
+      this.state.submitting = false;
+    }
+  },
+};
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Chat — Wave 4 (3 cols : rail · main · side)
+   Watermark "non lus depuis Vh" via localStorage(wc.chat.lastRead.<channel>)
+   ──────────────────────────────────────────────────────────────────────── */
+const Chat = {
+  state: { channels: [], current: null, messages: [], pollTimer: null, sending: false },
+  LS_KEY: 'wc.chat.lastRead',
+
+  lastRead(ch){
+    try { return JSON.parse(localStorage.getItem(this.LS_KEY) || '{}')[ch] || 0; }
+    catch { return 0; }
+  },
+  setLastRead(ch, ts){
+    try {
+      const m = JSON.parse(localStorage.getItem(this.LS_KEY) || '{}');
+      m[ch] = ts;
+      localStorage.setItem(this.LS_KEY, JSON.stringify(m));
+    } catch {}
+  },
+
+  async loadChannels(){
+    try {
+      const r = await api('GET', '/api/regie/channels');
+      this.state.channels = r?.channels || [];
+    } catch { this.state.channels = []; }
+  },
+
+  async open(segment, params){
+    if (!this.state.channels.length) await this.loadChannels();
+    let target = segment || 'general';
+    // accept "@AgentName" segment for DMs
+    if (target.startsWith('@')) {
+      const me = 'Pilot';
+      const targ = target.slice(1);
+      const parts = [me, targ].sort();
+      target = `dm:${parts[0]}-${parts[1]}`;
+    }
+    this.state.current = target;
+    this.renderRail();
+    await this.loadMessages();
+    this.startPolling();
+    setTimeout(() => document.getElementById('chat-input-text')?.focus(), 60);
+  },
+
+  renderRail(){
+    const rail = document.getElementById('chat-rail');
+    if (!rail) return;
+    const sys = this.state.channels.filter(c => !c.isDM);
+    const dms = this.state.channels.filter(c => c.isDM);
+    const row = (c) => {
+      const last = this.lastRead(c.name);
+      const unread = (this.state.messagesByChannel?.[c.name] || []).filter(m => new Date(m.timestamp).getTime() > last).length;
+      const label = c.isDM ? c.name.replace(/^dm:/, '').replace('-', ' ↔ ') : '#' + c.name;
+      const initials = label.replace(/^#/, '').slice(0, 2).toUpperCase();
+      return `<div class="conv ${this.state.current === c.name ? 'on' : ''}" data-ch="${esc(c.name)}">
+        <div class="ava">${esc(initials)}</div>
+        <div class="body"><div class="n">${esc(label)}</div><div class="s">${c.isDM ? 'DM' : 'salon'}</div></div>
+        ${unread ? '<div class="un" title="non lus"></div>' : ''}
+      </div>`;
+    };
+    rail.innerHTML = `
+      <h5>Salons · ${sys.length}</h5>
+      ${sys.map(row).join('') || '<div style="color:var(--fg-disabled);font-size:11.5px;padding:0 6px">aucun salon</div>'}
+      <h5>DMs · ${dms.length}</h5>
+      ${dms.map(row).join('') || '<div style="color:var(--fg-disabled);font-size:11.5px;padding:0 6px">aucun DM</div>'}
+    `;
+    rail.querySelectorAll('[data-ch]').forEach(el => {
+      el.addEventListener('click', () => Router.navigate({ view: 'chat', segment: el.dataset.ch }));
+    });
+  },
+
+  async loadMessages(){
+    if (!this.state.current) return;
+    try {
+      const r = await api('GET', '/api/messages?channel=' + encodeURIComponent(this.state.current) + '&limit=80');
+      this.state.messages = Array.isArray(r) ? r : (r?.messages || []);
+    } catch { this.state.messages = []; }
+    this.renderMain();
+    // mark read on view
+    const last = this.state.messages[this.state.messages.length - 1];
+    if (last) this.setLastRead(this.state.current, new Date(last.timestamp).getTime());
+  },
+
+  renderMain(){
+    const ch = this.state.current;
+    const head = document.getElementById('chat-head');
+    if (!ch) { head.querySelector('#chat-head-ttl').textContent = '—'; return; }
+    const isDM = ch.startsWith('dm:');
+    const label = isDM ? ch.replace(/^dm:/, '').replace('-', ' ↔ ') : '#' + ch;
+    document.getElementById('chat-head-ava').textContent = isDM ? '↔' : '#';
+    document.getElementById('chat-head-ttl').textContent = label;
+    document.getElementById('chat-head-sub').textContent = isDM ? 'conversation directe' : 'salon de coordination';
+
+    const lastRead = this.lastRead(ch);
+    const msgs = this.state.messages;
+    const wrap = document.getElementById('chat-msgs');
+    if (!msgs.length) {
+      wrap.innerHTML = '<div class="empty">Aucun message dans ce canal — sois le premier à écrire.</div>';
+    } else {
+      let html = '';
+      let unreadInserted = false;
+      for (const m of msgs) {
+        const ts = new Date(m.timestamp).getTime();
+        if (!unreadInserted && lastRead > 0 && ts > lastRead) {
+          html += `<div class="unread-mark"><span class="lbl">non lus depuis ${Chat.fmtAgo(lastRead)}</span></div>`;
+          unreadInserted = true;
+        }
+        const author = esc(m.fromName || m.from || '?');
+        const initials = (m.fromName || m.from || '?').slice(0, 2).toUpperCase();
+        const isUser = m.from === 'browser-pilot';
+        const isSys = m.type === 'system' || m.type === 'system_message';
+        const avaCls = isSys ? 'system' : (isUser ? 'user' : '');
+        const avaTxt = isSys ? '⚙' : esc(initials);
+        html += `<div class="msg">
+          <div class="ava ${avaCls}">${avaTxt}</div>
+          <div class="body">
+            <div class="nm"><span class="n">${author}</span><span class="ts">${Chat.fmtTime(ts)}</span></div>
+            <div class="txt">${esc(m.content || '')}</div>
+          </div>
+        </div>`;
+      }
+      wrap.innerHTML = html;
+      wrap.scrollTop = wrap.scrollHeight;
+    }
+
+    // side panel kv
+    const kv = document.getElementById('chat-side-kv');
+    const live = (Store.sessions || []).filter(s => !s.anonymous).slice(0, 6);
+    kv.innerHTML = `
+      <span class="k">canal</span><span class="v">${esc(ch)}</span>
+      <span class="k">messages</span><span class="v">${msgs.length}</span>
+      <span class="k">type</span><span class="v">${isDM ? 'DM' : 'salon'}</span>
+      <span class="k">live</span><span class="v">${live.length}</span>
+    `;
+  },
+
+  startPolling(){
+    this.stopPolling();
+    this.state.pollTimer = setInterval(() => this.loadMessages(), 5000);
+  },
+  stopPolling(){
+    if (this.state.pollTimer) { clearInterval(this.state.pollTimer); this.state.pollTimer = null; }
+  },
+
+  async send(){
+    if (this.state.sending || !this.state.current) return;
+    const ta = document.getElementById('chat-input-text');
+    const content = ta.value.trim();
+    if (!content) return;
+    this.state.sending = true;
+    document.getElementById('chat-send').disabled = true;
+    // DM channel : reverse-map dm:a-b → @b (target = the not-Pilot one)
+    let channelOut = this.state.current;
+    if (channelOut.startsWith('dm:')) {
+      const parts = channelOut.slice(3).split('-');
+      const target = parts.find(p => p !== 'Pilot') || parts[1];
+      channelOut = '@' + target;
+    }
+    try {
+      await api('POST', '/api/chat', { from: 'Pilot', channel: channelOut, content });
+      ta.value = '';
+      await this.loadMessages();
+    } catch (err) {
+      toast('Envoi raté : ' + err.message, 'error');
+    } finally {
+      this.state.sending = false;
+      document.getElementById('chat-send').disabled = !ta.value.trim();
+    }
+  },
+
+  fmtTime(ts){
+    const d = new Date(ts);
+    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  },
+  fmtAgo(ts){
+    const min = Math.floor((Date.now() - ts) / 60000);
+    if (min < 1) return 'à l\'instant';
+    if (min < 60) return min + ' min';
+    const h = Math.floor(min / 60);
+    if (h < 24) return h + 'h';
+    return Math.floor(h / 24) + 'j';
+  },
+};
 
 /* ─────────────────────────────────────────────────────────────────────────
    Capture overlay — Wave 2
@@ -1160,6 +1601,36 @@ document.getElementById('cmd-trigger').addEventListener('click', () => {
 window.openCmd = () => Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
 
 /* ─────────────────────────────────────────────────────────────────────────
+   Spawn modal wiring (Wave 4)
+   ──────────────────────────────────────────────────────────────────────── */
+document.getElementById('sp-bg').addEventListener('click', e => {
+  if (e.target.id === 'sp-bg') Spawn.close();
+});
+document.getElementById('sp-cancel').addEventListener('click', () => Spawn.close());
+document.getElementById('sp-submit').addEventListener('click', () => Spawn.submit());
+document.querySelectorAll('#sp-role-pickers .sp-pick').forEach(el => {
+  el.addEventListener('click', () => { Spawn.state.role = el.dataset.role; Spawn.applyChips(); Spawn.renderPreview(); });
+});
+document.querySelectorAll('#sp-mode-pickers .sp-pick').forEach(el => {
+  el.addEventListener('click', () => { Spawn.state.mode = el.dataset.mode; Spawn.applyChips(); Spawn.renderPreview(); });
+});
+document.getElementById('sp-task').addEventListener('input', () => Spawn.renderPreview());
+document.getElementById('sp-name').addEventListener('input', () => Spawn.renderPreview());
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Chat wiring (Wave 4)
+   ──────────────────────────────────────────────────────────────────────── */
+const chatInput = document.getElementById('chat-input-text');
+const chatSend = document.getElementById('chat-send');
+chatInput.addEventListener('input', () => {
+  chatSend.disabled = !chatInput.value.trim() || Chat.state.sending;
+  // auto-grow up to 120px
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(120, Math.max(40, chatInput.scrollHeight)) + 'px';
+});
+chatSend.addEventListener('click', () => Chat.send());
+
+/* ─────────────────────────────────────────────────────────────────────────
    Toast
    ──────────────────────────────────────────────────────────────────────── */
 function toast(msg, kind){
@@ -1182,6 +1653,9 @@ document.querySelectorAll('.topnav button').forEach(b => {
 
 document.addEventListener('keydown', e => {
   const captureOpen = document.getElementById('cap-bg').classList.contains('on');
+  const spawnOpen = document.getElementById('sp-bg').classList.contains('on');
+  const inChat = Router.parse().view === 'chat';
+
   // Ctrl/Cmd+K → open capture (or close if already open)
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
@@ -1189,22 +1663,48 @@ document.addEventListener('keydown', e => {
     else Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
     return;
   }
+  // Ctrl/Cmd+N → open spawn
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    if (spawnOpen) Spawn.close();
+    else {
+      const cur = Router.parse();
+      const proj = cur.params?.proj || (Canvas.selected) || null;
+      Router.navigate({ view: 'spawn', params: proj ? { proj, from: cur.view } : { from: cur.view } });
+    }
+    return;
+  }
   if (e.key === 'Escape') {
     if (captureOpen) Capture.close();
+    else if (spawnOpen) Spawn.close();
     return;
   }
   // capture-scoped shortcuts
   if (captureOpen) {
-    // Ctrl+Enter → submit (Shift = capter + ouvrir projet)
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       Capture.submit(e.shiftKey);
       return;
     }
-    // Ctrl+P → toggle project picker
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
       e.preventDefault();
       Capture.toggleProjPicker();
+      return;
+    }
+  }
+  // spawn-scoped shortcuts
+  if (spawnOpen) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      Spawn.submit();
+      return;
+    }
+  }
+  // chat-scoped shortcuts (only when input is focused)
+  if (inChat && document.activeElement?.id === 'chat-input-text') {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      Chat.send();
       return;
     }
   }
