@@ -26,6 +26,8 @@ export function saveChannels() {
   const channels = [...state.channels.entries()].map(([name, ch]) => ({
     name, description: ch.description, createdBy: ch.createdBy,
     isSystem: ch.isSystem || false,
+    isDM: ch.isDM || false,
+    participants: ch.participants || undefined,
   }));
   try { writeAtomicJSON(CHANNELS_FILE, channels); } catch { /* non-blocking */ }
 }
@@ -40,6 +42,8 @@ export function loadChannels() {
           name: ch.name, description: ch.description,
           createdBy: ch.createdBy || "system",
           createdAt: new Date(), isSystem: ch.isSystem || false,
+          isDM: ch.isDM || false,
+          participants: ch.participants || undefined,
         });
       }
     }
@@ -58,6 +62,7 @@ function _flushMessages() {
       id: m.id, from: m.from, fromName: m.fromName,
       channel: m.channel, content: m.content,
       type: m.type, timestamp: m.timestamp,
+      isDM: m.isDM || false,
     }));
     writeAtomicJSON(MESSAGES_FILE, msgs);
   } catch { /* non-blocking */ }
