@@ -1904,12 +1904,34 @@ export function registerTools(server, sessionId) {
           spawnedBy: launcherName,
         }).then(result => {
           const status = result.success ? "✅ terminé" : `❌ échec (exit ${result.exitCode})`;
-          // Update ticket
           ticket.status = result.success ? "completed" : "failed";
           ticket.completedAt = new Date();
           ticket.result = { success: result.success, exitCode: result.exitCode };
           sysMsg("coordination", `${status} — headless "${name}" dans ${repoName} [ticket:${ticketId}]`);
-          // Notify spawner via waiters
+          // DM the spawner on pre-flight failures so they know what happened
+          if (!result.success && result.exitCode < 0) {
+            const reason =
+              result.exitCode === -2 ? `Budget atteint — trop de sessions actives` :
+              result.exitCode === -3 ? `Profondeur de spawn maximale atteinte` :
+              result.exitCode === -4 ? `Quota quotidien/concurrent atteint` :
+              result.stderr?.slice(0, 200) || "Échec inconnu";
+            const spawnerSession = getSessionByName(launcherName);
+            const dmKey = dmChannelKey("Système", launcherName);
+            if (!state.channels.has(dmKey)) {
+              state.channels.set(dmKey, {
+                name: dmKey, description: `DM Système → ${launcherName}`,
+                createdBy: "system", createdAt: new Date(),
+                isDM: true, participants: ["système", launcherName.toLowerCase()],
+              });
+            }
+            pushMessage({
+              id: randomUUID(), from: "system", fromName: "🔔 Système",
+              channel: dmKey, isDM: true,
+              content: `❌ Spawn échoué pour "${name}" (exit ${result.exitCode}): ${reason}`,
+              timestamp: new Date(),
+            });
+            if (spawnerSession) notify(dmKey, null);
+          }
           notifyWaiters("__tickets__", null);
           pushDashboardUpdate();
         }).catch(() => {
@@ -1962,6 +1984,23 @@ export function registerTools(server, sessionId) {
           ticket.status = "failed";
           ticket.completedAt = new Date();
           ticket.result = { success: false, error: result.error };
+          // DM the spawner so they know why the daemon failed to start
+          const dmKey = dmChannelKey("Système", launcherName);
+          if (!state.channels.has(dmKey)) {
+            state.channels.set(dmKey, {
+              name: dmKey, description: `DM Système → ${launcherName}`,
+              createdBy: "system", createdAt: new Date(),
+              isDM: true, participants: ["système", launcherName.toLowerCase()],
+            });
+          }
+          pushMessage({
+            id: randomUUID(), from: "system", fromName: "🔔 Système",
+            channel: dmKey, isDM: true,
+            content: `❌ Spawn daemon échoué pour "${name}": ${result.error}`,
+            timestamp: new Date(),
+          });
+          const spawnerSession = getSessionByName(launcherName);
+          if (spawnerSession) notify(dmKey, null);
           return txt(`❌ Échec daemon "${name}": ${result.error}`);
         }
       }

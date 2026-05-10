@@ -33,12 +33,17 @@ let _activeRespawns = 0;
 const MAX_CONCURRENT_RESPAWNS = 3;
 
 // ── Resource budget — global ceiling on live + spawning sessions ──────────────
-const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10");
+const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "30");
 let _pendingSpawns = 0; // processes spawned but not yet MCP-connected
 
-/** Count current load: connected MCP sessions + processes still booting */
+/** Count current load: named MCP sessions + processes still booting.
+ *  Anonymous sessions (name starts with "session-") are excluded — they are
+ *  transient IDE/browser connections that should not consume spawn budget. */
 export function currentLoad() {
-  return state.sessions.size + _pendingSpawns;
+  const namedCount = [...state.sessions.values()].filter(
+    s => s.name && !s.name.startsWith("session-")
+  ).length;
+  return namedCount + _pendingSpawns;
 }
 
 /**
