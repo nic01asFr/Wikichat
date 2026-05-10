@@ -197,20 +197,37 @@ function buildBriefing(sessionId, { since, mission } = {}) {
 /** Resolve or create a DM channel, return channel key */
 function resolveDMChannel(sessionId, targetName) {
   const senderName = getSessionName(sessionId);
+
+  // If the target looks like an anonymous session name ("session-abc123"), try
+  // to resolve it to the real registered name. Agents sometimes address peers
+  // by the default session-ID name they saw in list_sessions, even after that
+  // peer has registered under a real name. Without this, the DM channel is
+  // keyed by "session-abc123" but matchesFilter checks the real name.
+  let resolvedTarget = targetName;
+  if (/^session-[a-f0-9]{6}$/i.test(targetName)) {
+    const prefix = targetName.slice(8); // "abc123"
+    for (const [sid, s] of state.sessions) {
+      if ((sid.startsWith(prefix) || sid.slice(0, 6) === prefix) && s.name !== targetName) {
+        resolvedTarget = s.name;
+        break;
+      }
+    }
+  }
+
   // The DM channel is keyed by AGENT NAMES (stable across reconnections).
   // Even if the target is currently offline, we can still create the DM
   // channel — the target will see the message when they reconnect under
   // the same name. This makes async DMs work correctly.
-  const key = dmChannelKey(senderName, targetName);
+  const key = dmChannelKey(senderName, resolvedTarget);
   if (!state.channels.has(key)) {
     state.channels.set(key, {
       name: key,
-      description: `DM entre ${senderName} et ${targetName}`,
+      description: `DM entre ${senderName} et ${resolvedTarget}`,
       createdBy: "system",
       createdAt: new Date(),
       isDM: true,
       // Participants stored by NAME, not session-id, so reconnections preserve membership
-      participants: [senderName.toLowerCase(), targetName.toLowerCase()],
+      participants: [senderName.toLowerCase(), resolvedTarget.toLowerCase()],
     });
   }
   return { channel: key };
@@ -629,8 +646,16 @@ export function registerTools(server, sessionId) {
         return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
       }
 
-      // Messages in the last 5 seconds — scan from end only
-      const cutoff = Date.now() - 5000;
+      // After wakeup: re-run since_id scan first (most reliable — covers delayed wakeups),
+      // then fall back to a 30s window (wider than the old 5s to handle timing jitter).
+      if (since_id) {
+        const idx = state.messages.findLastIndex(m => m.id === since_id || m.id.startsWith(since_id));
+        if (idx >= 0) {
+          const buffered = state.messages.slice(idx + 1).filter(matchesFilter);
+          if (buffered.length > 0) return formatMsgList(buffered);
+        }
+      }
+      const cutoff = Date.now() - 30000;
       const recent = [];
       for (let i = state.messages.length - 1; i >= 0; i--) {
         const msg = state.messages[i];
