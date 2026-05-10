@@ -546,13 +546,26 @@ export function registerTools(server, sessionId) {
     "read_messages",
     "Lire les messages récents. Filtrage par canal, expéditeur ou période.",
     {
-      channel: z.string().optional().describe("Canal ('__all__' pour tout)"),
+      channel: z.string().optional().describe("Canal ('__all__' pour tout, '@Nom' pour DM avec cet agent, '@me' pour tous mes DMs)"),
       from_session: z.string().optional().describe("Filtrer par expéditeur"),
       since_minutes: z.number().default(30).describe("Messages des N dernières minutes"),
       limit: z.number().default(50).describe("Nombre max"),
       since_id: z.string().optional().describe("Messages après cet ID"),
     },
     async ({ channel, from_session, since_minutes, limit, since_id }) => {
+      // Resolve "@Name" → DM channel key. "@me" / self-reference → DMs only.
+      let dmOnly = false;
+      if (channel?.startsWith("@")) {
+        const myName = getSessionName(sessionId);
+        const targetName = channel.slice(1);
+        if (!targetName || targetName.toLowerCase() === myName.toLowerCase() || targetName === "me") {
+          channel = "__all__";
+          dmOnly = true;
+        } else {
+          channel = dmChannelKey(myName, targetName);
+        }
+      }
+
       const cutoff = new Date(Date.now() - since_minutes * 60 * 1000);
       let sinceFound = !since_id;
 
@@ -562,6 +575,7 @@ export function registerTools(server, sessionId) {
           return false;
         }
         if (new Date(msg.timestamp) < cutoff) return false;
+        if (dmOnly && !msg.isDM) return false;
         if (channel && channel !== "__all__" && msg.channel !== channel) return false;
         if (msg.isDM) {
           const myName = getSessionName(sessionId);
@@ -596,7 +610,7 @@ export function registerTools(server, sessionId) {
     "poll_messages",
     "Attendre de nouveaux messages (long-polling). Pour agents actifs dans une conversation. Les curateurs n'en ont PAS besoin — utilisez read_messages().",
     {
-      channel: z.string().default("__all__").describe("Canal à surveiller (défaut: tous)"),
+      channel: z.string().default("__all__").describe("Canal à surveiller. '__all__' = tout. '@Nom' = DM avec cet agent. '@me' = tous mes DMs. (défaut: tous)"),
       timeout_seconds: z.number().default(30).describe("Timeout en secondes (max: 120)"),
       since_id: z.string().optional().describe("Attendre les messages après cet ID"),
       since_minutes: z.number().default(5).describe("Sans since_id, fenêtre de lookback (défaut 5min) — livre les messages bufferés non lus avant de long-poll. Mettre 0 pour désactiver et n'attendre que du nouveau."),
@@ -606,6 +620,19 @@ export function registerTools(server, sessionId) {
     async ({ channel, timeout_seconds, since_id, since_minutes, types }) => {
       const timeout = Math.min(timeout_seconds, 120) * 1000;
 
+      // Resolve "@Name" → DM channel key. "@me" or self-reference → "__all__" + dmOnly flag.
+      let dmOnly = false;
+      if (channel.startsWith("@")) {
+        const myName = getSessionName(sessionId);
+        const targetName = channel.slice(1);
+        if (!targetName || targetName.toLowerCase() === myName.toLowerCase() || targetName === "me") {
+          channel = "__all__";
+          dmOnly = true;
+        } else {
+          channel = dmChannelKey(myName, targetName);
+        }
+      }
+
       const session = state.sessions.get(sessionId);
       if (session) session.lastSeen = new Date();
 
@@ -614,6 +641,8 @@ export function registerTools(server, sessionId) {
         if (msg.channel === "system" && channel !== "system") {
           if (!types?.includes("system")) return false;
         }
+        // dmOnly: caller used "@me" or "@self" — only return DMs
+        if (dmOnly && !msg.isDM) return false;
         // Channel filter
         if (channel !== "__all__" && msg.channel !== channel && msg.channel !== "__broadcast__") return false;
         // DM visibility — check both participants list (updated on rename) and
