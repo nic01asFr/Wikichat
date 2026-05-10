@@ -173,6 +173,43 @@ export function findClaudeBin() {
   return null;
 }
 
+/**
+ * On Windows, npm CLI shims are .cmd files that call: node "path/to/cli.js" %*
+ * Resolving the underlying script lets us spawn node directly — no cmd /c
+ * intermediary, no console window flash, completely background.
+ * Returns { cmd, scriptPath } or null if unresolvable.
+ */
+function resolveWindowsNodeShim(cmdPath) {
+  try {
+    const content = fs.readFileSync(cmdPath, "utf8");
+    const match = content.match(/node(?:\.exe)?\s+"([^"]+)"/i);
+    if (!match) return null;
+    let scriptPath = match[1].replace(/%~dp0/gi, path.dirname(cmdPath) + path.sep);
+    // Normalise separators
+    scriptPath = path.normalize(scriptPath);
+    if (fs.existsSync(scriptPath)) return { cmd: process.execPath, scriptPath };
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Build spawn args for the Claude binary.
+ * On Windows .cmd files: resolve to node + script to avoid cmd /c console flash.
+ */
+export function buildSpawnArgs(claudeBin, extraArgs) {
+  const isWindows = process.platform === "win32";
+  const needsShell = isWindows && (claudeBin.endsWith(".cmd") || claudeBin.endsWith(".bat"));
+  if (needsShell) {
+    const resolved = resolveWindowsNodeShim(claudeBin);
+    if (resolved) {
+      return { cmd: resolved.cmd, args: [resolved.scriptPath, ...extraArgs], resolved: true };
+    }
+    // Fallback: cmd /c (may flash briefly)
+    return { cmd: "cmd", args: ["/c", claudeBin, ...extraArgs], resolved: false };
+  }
+  return { cmd: claudeBin, args: extraArgs, resolved: true };
+}
+
 // ── MCP config injection (safe) ───────────────────────────────────────────────
 
 /**
@@ -370,9 +407,6 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     let stdout = "";
     let stderr = "";
 
-    // On Windows, .cmd files must be invoked via cmd /c
-    const isWindows = process.platform === "win32";
-    const needsShell = isWindows && (claudeBin.endsWith(".cmd") || claudeBin.endsWith(".bat"));
     const mcpConfigPath = path.join(projectPath, ".mcp.json");
     const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name];
     if (resumeSessionId) {
@@ -381,9 +415,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
     }
-    const spawnArgs = needsShell
-      ? { cmd: "cmd", args: ["/c", claudeBin, ...baseArgs] }
-      : { cmd: claudeBin, args: baseArgs };
+    const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
 
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
@@ -525,7 +557,6 @@ export function spawnDaemon(projectPath, options = {}) {
 
   try {
     const isWindows = process.platform === "win32";
-    const needsShell = isWindows && (claudeBin.endsWith(".cmd") || claudeBin.endsWith(".bat"));
     const model = options.model || "haiku";
     const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, "--model", model];
     if (fs.existsSync(mcpConfigPath)) {
@@ -536,14 +567,10 @@ export function spawnDaemon(projectPath, options = {}) {
     }
     baseArgs.push("--max-budget-usd", "5");
 
-    const spawnArgs = needsShell
-      ? { cmd: "cmd", args: ["/c", claudeBin, ...baseArgs] }
-      : { cmd: claudeBin, args: baseArgs };
+    const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
 
-    // detached: false on Windows — keeps the daemon process tied to the
-    // server's lifetime. On Windows, detached children survive parent death
-    // (orphan claude.exe), causing budget leaks. The lifecycle trigger
-    // re-spawns them at next server boot, which is the desired behavior.
+    // detached: false on Windows — keeps the daemon tied to the server's lifetime.
+    // On Windows detached children survive parent death (orphan claude.exe).
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
@@ -583,14 +610,15 @@ export function spawnDaemon(projectPath, options = {}) {
             `register(name="${name}"${role ? `, role="${role}"` : ""}) puis poll_messages.`,
             `Sois CONCIS. Boucle poll_messages(timeout_seconds=30).`,
           ].join("\n");
-          const newArgs = needsShell
-            ? ["/c", claudeBin, "-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name, ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []), "--model", model, "--max-budget-usd", "5"]
-            : ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name, ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []), "--model", model, "--max-budget-usd", "5"];
-          const newChild = spawn(needsShell ? "cmd" : claudeBin, newArgs, {
+          const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
+            ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
+            "--model", model, "--max-budget-usd", "5"];
+          const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
+          const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
             cwd: projectPath,
             stdio: ["ignore", "pipe", "pipe"],
             env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
-            windowsHide: true, detached: true, shell: false,
+            windowsHide: true, detached: !isWindows, shell: false,
           });
           newChild.stdout.on("data", () => {});
           newChild.stderr.on("data", () => {});
