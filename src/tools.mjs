@@ -316,6 +316,18 @@ export function registerTools(server, sessionId) {
       session.agent_type = agent_type;
       session.lastSeen = new Date();
 
+      // Migrate DM channel participants when renaming (especially anonymous → real name).
+      // Without this, DMs sent to the old name become invisible after registration.
+      if (oldName !== name) {
+        const oldLc = oldName.toLowerCase();
+        const newLc = name.toLowerCase();
+        for (const ch of state.channels.values()) {
+          if (!ch.isDM || !ch.participants) continue;
+          const idx = ch.participants.indexOf(oldLc);
+          if (idx >= 0) ch.participants[idx] = newLc;
+        }
+      }
+
       // Resolve storage path
       const reg = loadSpawnRegistry();
       const entry = reg.find(e => e.name === name);
@@ -552,11 +564,13 @@ export function registerTools(server, sessionId) {
         if (new Date(msg.timestamp) < cutoff) return false;
         if (channel && channel !== "__all__" && msg.channel !== channel) return false;
         if (msg.isDM) {
-          // DM channels are keyed by agent name (dm:alice__bob). Membership is
-          // derived from the channel name itself — survives session-id changes.
           const myName = getSessionName(sessionId);
-          if (myName.startsWith("session-")) return false; // anonymous can't see DMs
-          if (!isAgentInDMChannel(msg.channel, myName)) return false;
+          // Check channel key (stable, derived from names at creation time) OR
+          // participants list (updated on rename). Either match = visible.
+          const ci = state.channels.get(msg.channel);
+          const inByKey = isAgentInDMChannel(msg.channel, myName);
+          const inByParticipants = ci?.participants?.includes(myName.toLowerCase());
+          if (!inByKey && !inByParticipants) return false;
         }
         if (from_session && msg.fromName.toLowerCase() !== from_session.toLowerCase()) return false;
         return true;
@@ -602,10 +616,14 @@ export function registerTools(server, sessionId) {
         }
         // Channel filter
         if (channel !== "__all__" && msg.channel !== channel && msg.channel !== "__broadcast__") return false;
-        // DM visibility — participants are stored by lowercased name, not sessionId
+        // DM visibility — check both participants list (updated on rename) and
+        // channel key (derived from names at creation time, stable across restarts)
         if (msg.isDM) {
+          const myName = getSessionName(sessionId).toLowerCase();
           const ci = state.channels.get(msg.channel);
-          if (ci?.participants && !ci.participants.includes(getSessionName(sessionId).toLowerCase())) return false;
+          const inByParticipants = ci?.participants?.includes(myName);
+          const inByKey = isAgentInDMChannel(msg.channel, myName);
+          if (!inByParticipants && !inByKey) return false;
         }
         // Own messages excluded
         if (msg.from === sessionId) return false;
