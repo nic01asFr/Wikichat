@@ -239,11 +239,92 @@ function ensureMcpJson(projectPath, port = 3777) {
 const AGENT_PREAMBLE = `
 PROTOCOLE OBLIGATOIRE — MCP-FIRST:
 1. register() sur WikiChat MCP IMMÉDIATEMENT au démarrage. C'est ta première action.
-2. Utilise les tools MCP WikiChat (send_message, share_artifact, etc.) pour TOUTE communication.
-3. Écris aussi ton résultat dans .wikichat/artifacts/<timestamp>_<titre>.md comme backup local.
-4. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
+2. Déclare ta présence : declare_capabilities(skills=[...], current_task="<ce que tu fais>", current_project="<projet>", availability="available").
+   → Permet aux autres agents de te trouver via list_sessions(topic=...) et de te contacter.
+3. Utilise les tools MCP WikiChat (send_message, share_artifact, etc.) pour TOUTE communication.
+4. Pour coordonner avec d'autres : list_sessions(topic="<sujet>") pour trouver qui peut aider,
+   contact_agent(target="<nom>", also_invite=[...], thread="<sujet>") pour ouvrir une discussion suivie.
+5. Écris aussi ton résultat dans .wikichat/artifacts/<timestamp>_<titre>.md comme backup local.
+6. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
    format: {"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>","data":{"title":"...","content":"..."}}
 `;
+
+// ── KB context injection ──────────────────────────────────────────────────────
+
+const KB_DIR = path.join(os.homedir(), ".wikichat", "knowledge");
+
+/**
+ * Load relevant KB axes for a project and return a compact context block.
+ *
+ * Detection strategy (no LLM, pure filesystem, ~0ms):
+ *   1. Explicit topics list (options.kb_topics) — authoritative.
+ *   2. Project name / slug extracted from projectPath basename.
+ *   3. Keywords from first 30 lines of CLAUDE.md (words ≥5 chars, top frequency).
+ * Match: any *-axis.md whose stem contains a keyword (or vice-versa).
+ * Output: TL;DR + DÉCISIONS CLOSES section of each matched axis, capped at 40
+ * lines per axis so the injected block stays small (< 200 lines total).
+ */
+function loadKBContext(projectPath, options = {}) {
+  try {
+    if (!fs.existsSync(KB_DIR)) return "";
+    const axes = fs.readdirSync(KB_DIR).filter(f => f.endsWith("-axis.md"));
+    if (axes.length === 0) return "";
+
+    // Build keyword list
+    const keywords = new Set();
+    if (Array.isArray(options.kb_topics)) {
+      options.kb_topics.forEach(t => keywords.add(String(t).toLowerCase()));
+    }
+    if (projectPath) {
+      keywords.add(path.basename(projectPath).toLowerCase());
+      // Parse CLAUDE.md for frequency keywords
+      try {
+        const cm = path.join(projectPath, "CLAUDE.md");
+        if (fs.existsSync(cm)) {
+          const words = fs.readFileSync(cm, "utf8").split("\n").slice(0, 30).join(" ")
+            .toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/\s+/);
+          const freq = {};
+          for (const w of words) { if (w.length >= 5) freq[w] = (freq[w] || 0) + 1; }
+          Object.entries(freq).filter(([, n]) => n >= 2)
+            .sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .forEach(([w]) => keywords.add(w));
+        }
+      } catch { /* CLAUDE.md unreadable — skip */ }
+    }
+    if (keywords.size === 0) return "";
+
+    // Match axes
+    const matched = axes.filter(f => {
+      const stem = f.replace(/-axis\.md$/, "");
+      return [...keywords].some(k => stem.includes(k) || k.includes(stem));
+    });
+    if (matched.length === 0) return "";
+
+    // Extract compact content: TL;DR + DÉCISIONS CLOSES, max 40 lines each
+    const blocks = [];
+    for (const f of matched.slice(0, 3)) { // cap at 3 axes
+      try {
+        const raw = fs.readFileSync(path.join(KB_DIR, f), "utf8");
+        const lines = raw.split("\n");
+        const out = [];
+        let inSection = false, sectionLines = 0;
+        for (const ln of lines) {
+          if (/^##\s+(TL;DR|DÉCISIONS CLOSES|DECISIONS CLOSES)/i.test(ln)) {
+            inSection = true; sectionLines = 0; out.push(ln); continue;
+          }
+          if (inSection && /^##\s/.test(ln)) { inSection = false; }
+          if (inSection && sectionLines < 40) { out.push(ln); sectionLines++; }
+        }
+        if (out.length > 0) {
+          const topic = f.replace(/-axis\.md$/, "");
+          blocks.push(`### KB: ${topic}\n${out.join("\n").trim()}`);
+        }
+      } catch { /* unreadable axis */ }
+    }
+    if (blocks.length === 0) return "";
+    return `\n\n## Contexte KB (axes pertinents — lis avant d'agir)\n${blocks.join("\n\n")}\n`;
+  } catch { return ""; }
+}
 
 // ── Role injection ───────────────────────────────────────────────────────────
 
@@ -277,8 +358,10 @@ export const PROMPT_TEMPLATES = {
    */
   task: (name, task, options = {}) => {
     const roleContent = options.projectPath ? loadRole(options.projectPath, options.role) : "";
+    const kbContext = options.projectPath ? loadKBContext(options.projectPath, options) : "";
     return AGENT_PREAMBLE +
       (roleContent || `Tu es ${name}, agent WikiChat. `) +
+      kbContext +
       `Ta mission: ${task}. ` +
       `register() puis effectue la mission. ` +
       `Partage le résultat via share_artifact sur WikiChat. ` +

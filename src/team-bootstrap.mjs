@@ -180,6 +180,22 @@ const KNOWLEDGE_TRIGGERS = [
     max_per_day: 50,
   },
   {
+    // Covers ALL artifacts shared on #library (not just closures).
+    // Fires the same absorber — it handles both closure and non-closure artifacts.
+    // cooldown_s=120 avoids hammering if several agents share_artifact in burst.
+    id: "team-channel-library-artifact",
+    description: "Tout artifact posté sur #library → absorption incrémentale dans l'axe pertinent",
+    type: "channel_match",
+    config: {
+      channel: "library",
+      pattern: "^📎",
+      flags: "m",
+    },
+    routine: "team:knowledge-absorb-closure",
+    cooldown_s: 120,
+    max_per_day: 100,
+  },
+  {
     id: "team-cron-axis-discovery",
     description: "Discover potential new axes — Monday 08:00",
     type: "cron",

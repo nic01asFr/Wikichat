@@ -11,8 +11,8 @@ import { spawn } from "child_process";
 
 import {
   state, pushMessage, sysMsg, getSessionByName, getSessionName,
-  dmChannelKey, isAgentInDMChannel, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
-  getChannelCount,
+  dmChannelKey, isAgentInDMChannel, resolveAgentName, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
+  getChannelCount, inboxFor,
 } from "./state.mjs";
 import { scanForProjects } from "./scanner.mjs";
 import { loadRegistry, loadConfig, saveRegistry, mergeProjects } from "./registry.mjs";
@@ -21,7 +21,7 @@ import { notifyWaiters, registerWaiter } from "./notifier.mjs";
 import {
   saveSnapshot, loadSnapshot, saveProject, loadSpawnRegistry,
   upsertSpawnRegistry, getAgentStoragePath, writeAgentFile,
-  SESSION_STORE,
+  SESSION_STORE, saveIdentityBinding, getIdentityBinding,
 } from "./persistence.mjs";
 import { pushDashboardUpdate } from "./dashboard.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
@@ -29,6 +29,7 @@ import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./s
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
+import { triggerMemoryPublish } from "./memory-publish-hook.mjs";
 import { dispatch as dispatchIntent, readDispatchLog, recordOutcome } from "./dispatch.mjs";
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
@@ -47,6 +48,19 @@ function notify(channel, excludeId) {
   pushDashboardUpdate();
 }
 
+/** Render the coordination protocol of a message so the RECIPIENT can act on it.
+ * Without this, status/expects_reply/eta were stored on send but never shown on
+ * receive — the "fin de message" turn-taking convention was purely decorative. */
+function coordMarkers(msg) {
+  const m = [];
+  if (msg.status === "over") m.push("🔚 over → à toi");
+  else if (msg.status === "standby") m.push(`⏳ standby${msg.eta_seconds ? ` ~${msg.eta_seconds}s` : ""} → n'attends pas`);
+  else if (msg.status === "done") m.push("✅ done → rien à répondre");
+  if (msg.expects_reply) m.push("❓ réponse attendue");
+  if (msg.eta_seconds && msg.status !== "standby") m.push(`⏱️ ETA ${msg.eta_seconds}s`);
+  return m.length ? `\n     ⟨${m.join(" · ")}⟩` : "";
+}
+
 function formatMsgList(msgs) {
   const lines = msgs.map(msg => {
     const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
@@ -54,10 +68,66 @@ function formatMsgList(msgs) {
     const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
     const readers = state.reads.get(msg.id);
     const ack = readers?.size > 0 ? ` ✓${[...readers].join(",")}` : "";
-    return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${ack}`;
+    return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${ack}${coordMarkers(msg)}`;
   });
   const lastId = msgs.at(-1).id;
   return txt(`🔔 ${msgs.length} nouveau(x) message(s):\n\n${lines.join("\n\n")}\n\n🔖 Dernier: ${lastId.slice(0, 8)}`);
+}
+
+/**
+ * Resolve an agent's "home" — its project channel. An agent registered in a repo
+ * belongs to that project's room: that room is where teammates reach it (by
+ * @mention) and what it polls. This is the stable address the volatile display
+ * name never was. Resolution order: persisted __home_channel → the session's
+ * current_project → the reported cwd matched against the registry (else the
+ * cwd's basename). Returns a channel slug, or null if nothing locates a project.
+ */
+function homeChannelFor(name) {
+  if (!name) return null;
+  const persisted = recall(name, "__home_channel");
+  if (persisted) return persisted;
+  const found = getSessionByName(name);
+  const sess = found ? state.sessions.get(found.id) : null;
+  let proj = sess?.current_project || null;
+  if (!proj) {
+    const cwd = recall(name, "__cwd");
+    if (cwd) {
+      const baseName = path.basename(String(cwd).replace(/[\\/]+$/, ""));
+      try {
+        const norm = p => String(p).replace(/[\\/]+$/, "").toLowerCase();
+        const reg = loadRegistry();
+        const hit = reg.projects.find(p => p.path && norm(p.path) === norm(cwd));
+        proj = hit?.name || hit?.slug || baseName;
+      } catch { proj = baseName; }
+    }
+  }
+  if (!proj) return null;
+  const slug = "proj-" + String(proj).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return slug.length > 5 ? slug : null;
+}
+
+/**
+ * Ensure an agent's home project channel exists, list the agent as a member, and
+ * persist the home so future resolutions are O(1). Returns the slug or null.
+ */
+async function ensureHomeChannel(name) {
+  const slug = homeChannelFor(name);
+  if (!slug) return null;
+  const nameLc = String(name).toLowerCase();
+  let ch = state.channels.get(slug);
+  if (!ch) {
+    ch = { name: slug, description: `🏠 Maison projet — agents y vivent et s'y joignent par @mention`, createdBy: name, createdAt: new Date(), participants: [nameLc] };
+    state.channels.set(slug, ch);
+  } else {
+    if (!Array.isArray(ch.participants)) ch.participants = [];
+    if (!ch.participants.includes(nameLc)) ch.participants.push(nameLc);
+  }
+  remember(name, "__home_channel", slug);
+  const found = getSessionByName(name);
+  const sess = found ? state.sessions.get(found.id) : null;
+  if (sess) sess.home_channel = slug;
+  try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch { /* non-blocking */ }
+  return slug;
 }
 
 /**
@@ -194,25 +264,23 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   return txt(sections.join("\n\n"));
 }
 
-/** Resolve or create a DM channel, return channel key */
+/** Resolve or create a DM channel, return channel key + resolution info.
+ *
+ * The target name is normalised via resolveAgentName() — exact match, then
+ * session-XXX → real name, then unique prefix/substring — so a DM addressed to
+ * "@Bob" reaches an agent registered as "Bob-Dev" instead of vanishing onto a
+ * channel nobody reads. The SAME resolver runs on read_messages/poll_messages,
+ * so both sides compute the identical channel key. */
 function resolveDMChannel(sessionId, targetName) {
   const senderName = getSessionName(sessionId);
-
-  // If the target looks like an anonymous session name ("session-abc123"), try
-  // to resolve it to the real registered name. Agents sometimes address peers
-  // by the default session-ID name they saw in list_sessions, even after that
-  // peer has registered under a real name. Without this, the DM channel is
-  // keyed by "session-abc123" but matchesFilter checks the real name.
-  let resolvedTarget = targetName;
-  if (/^session-[a-f0-9]{6}$/i.test(targetName)) {
-    const prefix = targetName.slice(8); // "abc123"
-    for (const [sid, s] of state.sessions) {
-      if ((sid.startsWith(prefix) || sid.slice(0, 6) === prefix) && s.name !== targetName) {
-        resolvedTarget = s.name;
-        break;
-      }
-    }
+  let resolution = resolveAgentName(targetName);
+  // A DM must never resolve to its own sender (can happen when the typed target
+  // is a substring of the sender's name, e.g. "@Box" while sending as "SenderBox").
+  // Treat that as a literal target instead — never silently self-DM.
+  if (resolution.matched && resolution.name.toLowerCase() === senderName.toLowerCase()) {
+    resolution = { name: targetName, matched: false, online: false };
   }
+  const resolvedTarget = resolution.name;
 
   // The DM channel is keyed by AGENT NAMES (stable across reconnections).
   // Even if the target is currently offline, we can still create the DM
@@ -230,7 +298,13 @@ function resolveDMChannel(sessionId, targetName) {
       participants: [senderName.toLowerCase(), resolvedTarget.toLowerCase()],
     });
   }
-  return { channel: key };
+  return {
+    channel: key,
+    resolvedTarget,
+    typedTarget: targetName,
+    matched: resolution.matched,
+    online: resolution.online,
+  };
 }
 
 /**
@@ -316,6 +390,13 @@ export function registerTools(server, sessionId) {
       session.agent_type = agent_type;
       session.lastSeen = new Date();
 
+      // Bind this connection's stable token → identity so future reconnects are
+      // recognised automatically without re-registering. This is the durable
+      // half of "register once, stay yourself across reconnects".
+      if (session.bindToken) {
+        try { saveIdentityBinding(session.bindToken, name, role ?? null); } catch { /* non-blocking */ }
+      }
+
       // Migrate DM channel participants when renaming (especially anonymous → real name).
       // Without this, DMs sent to the old name become invisible after registration.
       if (oldName !== name) {
@@ -363,6 +444,16 @@ export function registerTools(server, sessionId) {
 
       // Auto-restore identity (skills, current_project, availability, memories)
       const identity = restoreIdentity(session, name);
+
+      // Join your project's home channel — your stable address. Teammates reach
+      // you there by @mention; it's what you poll. Best-effort: if your cwd/project
+      // isn't known yet (first turn, hook hasn't reported cwd), it resolves later.
+      let home = null;
+      try { home = await ensureHomeChannel(name); } catch { /* non-blocking */ }
+      const homeHint = home
+        ? `\n\n🏠 Maison : #${home} — c'est là qu'on te joint (@${name}) et ce que tu relèves avec poll().`
+        : `\n\n🏠 Maison : pas encore résolue (projet/cwd inconnu) — elle se fixera dès que ton repo sera connu.`;
+
       const resumeHint = identity.restored
         ? `\n\n📦 Identité restaurée (${timeSince(identity.snapshotAge)}): ${identity.summary}.` +
           (identity.lastInterlocutors.length
@@ -372,7 +463,7 @@ export function registerTools(server, sessionId) {
 
       const isCurator = role && /curator|curateur|meta|méta/i.test(role);
       const workflowByType = {
-        interactive: `💡 Mode interactif: get_briefing() pour le contexte → send_message → poll quand demandé\n   Pas de boucle poll — vous êtes turn-based.`,
+        interactive: `💡 Mode interactif (turn-based): ta maison #${home || "(projet)"} te livre tout ce qui t'est adressé via ton hook, à chaque fin de tour — pas de boucle poll.\n   poll() = relever à la demande tout ce qui t'est adressé depuis ton dernier poll (curseur auto). poll(timeout_seconds=N) = rendez-vous synchrone si tu dois attendre une réponse maintenant.\n   Pour joindre quelqu'un : contact_agent(target, message) dépose dans SA maison ; sa réponse revient dans la tienne.`,
         daemon: `💡 Mode daemon: poll_messages(since_id, timeout=120) en boucle permanente\n   Ne terminez jamais — relancez poll après chaque timeout.`,
         headless: `💡 Mode headless: exécutez votre mission → share_artifact → exit\n   Pas de poll, pas de boucle. One-shot.`,
       };
@@ -384,7 +475,7 @@ export function registerTools(server, sessionId) {
         `✅ Enregistré: "${name}"${role ? ` (${role})` : ""}\n\n` +
         `📡 ${state.sessions.size} session(s)${others ? ":\n" + others : " (vous êtes seul)"}\n\n` +
         `Canaux: ${[...state.channels.keys()].filter(c => !c.startsWith("dm:")).map(c => `#${c}`).join(", ")}\n\n` +
-        workflow + resumeHint
+        workflow + homeHint + resumeHint
       );
     }
   );
@@ -500,12 +591,25 @@ export function registerTools(server, sessionId) {
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
+      let dmHint = "";
 
       if (channel.startsWith("@")) {
         const res = resolveDMChannel(sessionId, channel.slice(1));
         if (res.error) return txt(`❌ ${res.error}`);
         targetChannel = res.channel;
         isDM = true;
+        // Surface DM resolution so mis-addressing is never silent. Before this,
+        // a DM to a name that didn't exactly match a registered agent was keyed
+        // onto a channel the recipient never read — sent, but invisible.
+        if (res.matched && res.resolvedTarget.toLowerCase() !== res.typedTarget.toLowerCase()) {
+          dmHint = `\n↪️ "@${res.typedTarget}" résolu vers ${res.resolvedTarget}.`;
+        }
+        if (res.matched && !res.online) {
+          dmHint += `\n💤 ${res.resolvedTarget} est hors-ligne — il verra le DM à sa reconnexion.`;
+        }
+        if (!res.matched) {
+          dmHint += `\n⚠️ Aucune session nommée "${res.typedTarget}". Le DM reste en attente, visible uniquement quand un agent s'enregistre EXACTEMENT sous ce nom. Vérifie list_sessions.`;
+        }
       } else if (!state.channels.has(channel)) {
         return txt(`❌ Canal "#${channel}" inexistant. Disponibles: ${[...state.channels.keys()].filter(c => !c.startsWith("dm:")).map(c => `#${c}`).join(", ")}.`);
       }
@@ -536,7 +640,7 @@ export function registerTools(server, sessionId) {
         ? `\n⏰ Rappel cron actif → CronDelete("${sender.cron_job_id}") pour l'annuler.` : "";
       if (sender) { sender.eta = null; sender.etaReason = null; }
 
-      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${cronHint}\n\n⚡ Lance poll_messages pour attendre la réponse.`);
+      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}\n\n⚡ Lance poll_messages pour attendre la réponse.`);
     }
   );
 
@@ -554,6 +658,7 @@ export function registerTools(server, sessionId) {
     },
     async ({ channel, from_session, since_minutes, limit, since_id }) => {
       // Resolve "@Name" → DM channel key. "@me" / self-reference → DMs only.
+      // Same name resolution as send_message so both sides agree on the key.
       let dmOnly = false;
       if (channel?.startsWith("@")) {
         const myName = getSessionName(sessionId);
@@ -562,7 +667,7 @@ export function registerTools(server, sessionId) {
           channel = "__all__";
           dmOnly = true;
         } else {
-          channel = dmChannelKey(myName, targetName);
+          channel = dmChannelKey(myName, resolveAgentName(targetName).name);
         }
       }
 
@@ -598,7 +703,7 @@ export function registerTools(server, sessionId) {
         const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
         const ch = msg.isDM ? "📩DM" : `#${msg.channel}`;
         const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
-        return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}`;
+        return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${coordMarkers(msg)}`;
       });
       return txt(`📬 ${filtered.length} message(s):\n\n${lines.join("\n\n")}\n\n🔖 Dernier: ${filtered.at(-1).id.slice(0, 8)}`);
     }
@@ -621,6 +726,7 @@ export function registerTools(server, sessionId) {
       const timeout = Math.min(timeout_seconds, 120) * 1000;
 
       // Resolve "@Name" → DM channel key. "@me" or self-reference → "__all__" + dmOnly flag.
+      // Same name resolution as send_message so both sides agree on the key.
       let dmOnly = false;
       if (channel.startsWith("@")) {
         const myName = getSessionName(sessionId);
@@ -629,7 +735,7 @@ export function registerTools(server, sessionId) {
           channel = "__all__";
           dmOnly = true;
         } else {
-          channel = dmChannelKey(myName, targetName);
+          channel = dmChannelKey(myName, resolveAgentName(targetName).name);
         }
       }
 
@@ -686,32 +792,95 @@ export function registerTools(server, sessionId) {
         if (buffered.length > 0) return formatMsgList(buffered);
       }
 
-      // 3) Long-poll : attend qu'un nouveau message arrive
-      const arrived = await registerWaiter(sessionId, channel, timeout);
+      // 3) Long-poll : wait for a MATCHING message, re-waiting through spurious
+      //    wakeups. A waiter on "__all__" is woken by ANY message — including
+      //    background daemon/system chatter on unrelated channels and DMs to
+      //    other agents. Previously the first such wake returned immediately
+      //    (often "activité détectée" with nothing relevant), so in a live team
+      //    the agent kept dropping the very message it was waiting for. Now we
+      //    keep waiting until a message that passes matchesFilter actually
+      //    arrives, or the timeout elapses.
+      //
+      //    The boundary is tracked by message id (not a time window): we return
+      //    exactly the messages appended after what existed when we started, so
+      //    nothing already seen is re-delivered. findLastIndex re-locates the
+      //    boundary even if eviction shifted indices.
+      const deadline = Date.now() + timeout;
+      let baselineId = state.messages.length ? state.messages[state.messages.length - 1].id : null;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const arrived = await registerWaiter(sessionId, channel, remaining);
+        if (!arrived) break; // genuine timeout
 
-      if (!arrived) {
-        return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
-      }
-
-      // After wakeup: re-run since_id scan first (most reliable — covers delayed wakeups),
-      // then fall back to a 30s window (wider than the old 5s to handle timing jitter).
-      if (since_id) {
-        const idx = state.messages.findLastIndex(m => m.id === since_id || m.id.startsWith(since_id));
-        if (idx >= 0) {
-          const buffered = state.messages.slice(idx + 1).filter(matchesFilter);
-          if (buffered.length > 0) return formatMsgList(buffered);
+        if (since_id) {
+          const idx = state.messages.findLastIndex(m => m.id === since_id || m.id.startsWith(since_id));
+          if (idx >= 0) {
+            const buffered = state.messages.slice(idx + 1).filter(matchesFilter);
+            if (buffered.length > 0) return formatMsgList(buffered);
+          }
+        } else {
+          const baseIdx = baselineId ? state.messages.findLastIndex(m => m.id === baselineId) : -1;
+          const fresh = state.messages.slice(baseIdx + 1).filter(matchesFilter);
+          if (fresh.length > 0) return formatMsgList(fresh);
         }
+        // Spurious wake: nothing matched. Advance the baseline past everything
+        // seen so far and keep waiting for the remaining time.
+        baselineId = state.messages.length ? state.messages[state.messages.length - 1].id : baselineId;
       }
-      const cutoff = Date.now() - 30000;
-      const recent = [];
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        const msg = state.messages[i];
-        if (new Date(msg.timestamp).getTime() < cutoff) break;
-        if (matchesFilter(msg)) recent.unshift(msg);
+      return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
+    }
+  );
+
+  // ── poll (unified inbox) ──────────────────────────────────────────────────────
+  // The turn-based agent's primitive: "poll, point." No target, no channel, no
+  // cursor to manage. Returns EVERYTHING addressed to you (DMs, @mentions,
+  // broadcasts) since your last poll — the cursor lives server-side keyed on your
+  // identity, and is the SAME cursor the Stop-hook mailbox advances. So push and
+  // pull never double-deliver and never drop. Optional long-poll for a sync
+  // rendezvous; otherwise just call it and rendre la main — the hook brings the
+  // rest at your next turn.
+  server.tool(
+    "poll",
+    "Relève ta boîte : TOUT ce qui t'est adressé (DM, @mentions, broadcasts) depuis ton dernier poll. " +
+    "Pas de cible, pas de canal — tu polls, point. Le curseur est tenu côté serveur sur ton identité et avance tout seul " +
+    "(c'est le même que celui du hook boîte mail, donc jamais de doublon ni de manqué). " +
+    "Avec timeout : attend une réponse (rendez-vous synchrone). Sans attente : snapshot immédiat puis rends la main, le hook t'apportera la suite au prochain tour.",
+    {
+      timeout_seconds: z.number().default(0).describe("Attente max si rien de neuf (0-120). 0 (défaut) = snapshot immédiat, pas d'attente bloquante."),
+    },
+    async ({ timeout_seconds }) => {
+      const myName = getSessionName(sessionId);
+      const session = state.sessions.get(sessionId);
+      if (session) session.lastSeen = new Date();
+      const timeout = Math.min(Math.max(timeout_seconds ?? 0, 0), 120) * 1000;
+
+      // First poll under this identity → look back 10min to catch waiting mail;
+      // afterwards → strictly since the server cursor.
+      const cursor = recall(myName, "__inbox_cursor");
+      const first = !cursor;
+      const res = inboxFor(myName, { sinceId: cursor, sinceMinutes: first ? 10 : 0 });
+      if (res.lastId) remember(myName, "__inbox_cursor", res.lastId);
+      if (res.messages.length > 0) return formatMsgList(res.messages);
+
+      if (timeout <= 0) {
+        return txt(`📭 Rien de neuf pour toi.\n💡 Tu peux rendre la main — le hook boîte mail te livrera ce qui arrive à ton prochain tour. Ou poll(timeout_seconds=N) pour attendre maintenant.`);
       }
-      return recent.length > 0
-        ? formatMsgList(recent)
-        : txt("🔔 Activité détectée. Relancez poll_messages.");
+
+      // Long-poll : wait for a message that lands in MY inbox, re-waiting through
+      // spurious wakeups (any channel activity wakes an "__all__" waiter).
+      const deadline = Date.now() + timeout;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const arrived = await registerWaiter(sessionId, "__all__", remaining);
+        if (!arrived) break; // genuine timeout
+        const cur = recall(myName, "__inbox_cursor");
+        const r = inboxFor(myName, { sinceId: cur, sinceMinutes: 0 });
+        if (r.lastId) remember(myName, "__inbox_cursor", r.lastId);
+        if (r.messages.length > 0) return formatMsgList(r.messages);
+      }
+      return txt(`⏰ Rien de neuf (timeout ${timeout / 1000}s). Ta boîte est à jour — rends la main, le hook t'apportera la suite.`);
     }
   );
 
@@ -792,18 +961,76 @@ export function registerTools(server, sessionId) {
 
   // ══ CHANNELS & SESSIONS ══════════════════════════════════════════════════════
 
-  server.tool("list_sessions", "Lister toutes les sessions connectées.", {}, async () => {
-    if (state.sessions.size === 0) return txt("📡 Aucune session connectée.");
-    const lines = [...state.sessions.entries()].map(([id, s]) => {
-      const me = id === sessionId ? " ← vous" : "";
-      const eta = s.eta && new Date(s.eta) > new Date() ? ` ⏳ ${timeUntil(s.eta)}${s.etaReason ? ` (${s.etaReason})` : ""}` : "";
-      const avail = s.availability && s.availability !== "available" ? ` [${s.availability}]` : "";
-      const task = s.current_task ? `\n    📋 ${s.current_project ? s.current_project + " — " : ""}${s.current_task}` : "";
-      const skills = s.skills?.length ? `\n    🔧 ${s.skills.join(", ")}` : "";
-      return `  • ${s.name}${s.role ? ` [${s.role}]` : ""}${avail}${s.status ? ` 💬 "${s.status}"` : ""}${eta} — actif ${timeSince(s.lastSeen)}${me}${task}${skills}`;
-    });
-    return txt(`📡 ${state.sessions.size} session(s):\n\n${lines.join("\n")}`);
-  });
+  server.tool(
+    "list_sessions",
+    "Lister les sessions connectées. Avec `topic`, élargit aux agents offline pertinents (roster projets + axes KB) — utile pour trouver avec qui collaborer sur un sujet.",
+    { topic: z.string().optional().describe("Filtrer / élargir aux agents travaillant sur ce sujet (online + offline pertinents)") },
+    async ({ topic } = {}) => {
+      const lines = [];
+
+      // ── Online sessions (toujours listées) ──
+      if (state.sessions.size === 0) {
+        lines.push("(aucune session connectée)");
+      } else {
+        for (const [id, s] of state.sessions) {
+          const me = id === sessionId ? " ← vous" : "";
+          const eta = s.eta && new Date(s.eta) > new Date() ? ` ⏳ ${timeUntil(s.eta)}${s.etaReason ? ` (${s.etaReason})` : ""}` : "";
+          const avail = s.availability && s.availability !== "available" ? ` [${s.availability}]` : "";
+          const task = s.current_task ? `\n    📋 ${s.current_project ? s.current_project + " — " : ""}${s.current_task}` : "";
+          const skills = s.skills?.length ? `\n    🔧 ${s.skills.join(", ")}` : "";
+          lines.push(`  • ${s.name}${s.role ? ` [${s.role}]` : ""}${avail}${s.status ? ` 💬 "${s.status}"` : ""}${eta} — actif ${timeSince(s.lastSeen)}${me}${task}${skills}`);
+        }
+      }
+
+      // ── Topic filter: offline contributors from project roster + KB ──
+      if (topic) {
+        const tl = topic.toLowerCase();
+        const liveNames = new Set([...state.sessions.values()].map(s => s.name.toLowerCase()));
+        const offline = new Map(); // name → { role, repo, project, source }
+
+        // 1. Project roster: agents who worked on matching projects
+        for (const proj of state.projects.values()) {
+          const match = (proj.name || "").toLowerCase().includes(tl)
+            || (proj.slug || "").toLowerCase().includes(tl)
+            || (proj.description || "").toLowerCase().includes(tl);
+          if (!match) continue;
+          for (const [aname, ae] of Object.entries(proj.agents || {})) {
+            if (!liveNames.has(aname.toLowerCase()) && !offline.has(aname)) {
+              offline.set(aname, { role: ae.role, project: proj.name, source: "roster" });
+            }
+          }
+        }
+
+        // 2. KB axes: agents mentioned in axis files for this topic
+        const _home = process.env.USERPROFILE || process.env.HOME || "";
+        const KB_DIR = path.join(_home, ".wikichat", "knowledge");
+        try {
+          const matchedAxes = (await import("fs")).default
+            .readdirSync(KB_DIR).filter(f => f.replace(/-axis\.md$/, "").includes(tl));
+          for (const f of matchedAxes) {
+            const raw = (await import("fs")).default.readFileSync(path.join(KB_DIR, f), "utf8");
+            // Extract agent names from "producer:" frontmatter or @mentions
+            for (const m of raw.matchAll(/producer:\s*(\S+)/g)) {
+              const n = m[1].trim();
+              if (!liveNames.has(n.toLowerCase()) && !offline.has(n))
+                offline.set(n, { role: null, project: f.replace(/-axis\.md$/, ""), source: "KB" });
+            }
+          }
+        } catch { /* KB dir absent or unreadable */ }
+
+        if (offline.size > 0) {
+          lines.push(`\n📴 Offline — pertinents pour "${topic}":`);
+          for (const [name, info] of offline) {
+            lines.push(`  • ${name}${info.role ? ` [${info.role}]` : ""} — ${info.project} (${info.source})`);
+          }
+          lines.push(`💡 contact_agent(target="<nom>", ...) pour les joindre`);
+        }
+      }
+
+      const header = `📡 ${state.sessions.size} session(s) connectée(s)${topic ? ` + recherche topic "${topic}"` : ""}:`;
+      return txt(`${header}\n\n${lines.join("\n")}`);
+    }
+  );
 
   server.tool("list_channels", "Lister les canaux de discussion.", {}, async () => {
     const chans = [...state.channels.entries()].filter(([n]) => !n.startsWith("dm:"))
@@ -1273,6 +1500,10 @@ export function registerTools(server, sessionId) {
       proj.updatedBy = name;
       trackAgentOnProject(sessionId, project, "close");
       saveProject(proj);
+
+      // Capitalisation distante : publie le snapshot mémoire si configuré
+      // (WIKICHAT_MEMORY_REPO). Non-bloquant — la clôture n'attend pas le push.
+      triggerMemoryPublish(`close_project:${project}`);
 
       // Broadcast sur #library pour que le Librarian absorbe la capitalisation.
       if (!state.channels.has("library")) {
@@ -1931,6 +2162,220 @@ export function registerTools(server, sessionId) {
   );
 
   // ══ SPAWN ═════════════════════════════════════════════════════════════════════
+
+  server.tool(
+    "contact_agent",
+    "Joindre un agent en déposant un message dans SA maison (canal-projet), en le @mentionnant. " +
+    "Async par défaut : il le relève à son prochain tour via son hook boîte mail — qu'il soit en ligne ou pas, tu ne bloques jamais. Sa réponse te reviendra dans TA maison. " +
+    "wake=true pour réveiller activement un agent offline (reprise --resume). " +
+    "Avec `also_invite` + `thread` : crée un canal partagé multi-parties.",
+    {
+      target: z.string().describe("Nom de l'agent principal à contacter"),
+      message: z.string().describe("Le message / la demande à transmettre"),
+      expects_reply: z.boolean().optional().describe("Si true, on demande explicitement une réponse"),
+      wake: z.boolean().optional().describe("Si true et l'agent est offline : le réveiller activement (spawn --resume). Défaut false = livraison async, il verra à son retour."),
+      repo_path: z.string().optional().describe("Override du repo (sinon auto-résolu)"),
+      also_invite: z.array(z.string()).optional().describe("Autres agents à inviter dans la discussion (multi-parties)"),
+      thread: z.string().optional().describe("Nom du canal partagé à créer/réutiliser (ex: 'zebra-qgis-filter'). Si absent avec also_invite, auto-généré."),
+    },
+    async ({ target, message, expects_reply, wake, repo_path, also_invite, thread }) => {
+      const senderName = getSessionName(sessionId);
+      const resolution = resolveAgentName(target);
+      const name = resolution.name;
+      if (name.toLowerCase() === senderName.toLowerCase()) return txt(`❌ Tu ne peux pas te contacter toi-même.`);
+
+      // ── MULTI-PARTY THREAD : also_invite → canal partagé + invitations ────────
+      const allParticipants = also_invite?.length ? [name, ...also_invite] : null;
+      if (allParticipants) {
+        // Create or reuse the shared channel
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+        const channelSlug = thread
+          ? thread.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 40)
+          : `thread-${name.toLowerCase().replace(/[^a-z0-9]/g, "")}-${date}`;
+
+        if (!state.channels.has(channelSlug)) {
+          state.channels.set(channelSlug, {
+            name: channelSlug,
+            description: `Discussion ${senderName} + ${allParticipants.join(", ")}${thread ? ` — ${thread}` : ""}`,
+            createdBy: senderName, createdAt: new Date(),
+          });
+          try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch {}
+        }
+
+        // Post opening message on the shared channel
+        pushMessage({
+          id: randomUUID(), from: sessionId, fromName: senderName,
+          channel: channelSlug, content: message, timestamp: new Date(),
+          expects_reply: expects_reply ?? true, status: "over",
+        });
+        notify(channelSlug, sessionId);
+
+        // Invite each participant via DM (online) or contact (offline)
+        const results = [];
+        for (const pName of allParticipants) {
+          const res = resolveAgentName(pName);
+          const pResolved = res.name;
+          const pFound = getSessionByName(pResolved);
+          const pLive = pFound ? state.sessions.get(pFound.id) : null;
+          const pOnline = pLive && pLive.availability !== "stale" &&
+            (!pLive.lastSeen || Date.now() - new Date(pLive.lastSeen).getTime() < 5 * 60 * 1000) &&
+            pFound?.id !== sessionId;
+          const invite = `📬 ${senderName} t'invite sur #${channelSlug} — rejoins la discussion et poste via send_message(channel="${channelSlug}").`;
+          if (pOnline) {
+            const dm = resolveDMChannel(sessionId, pResolved);
+            pushMessage({ id: randomUUID(), from: sessionId, fromName: senderName, channel: dm.channel, content: invite, timestamp: new Date(), isDM: true, expects_reply: true, status: "over" });
+            notify(dm.channel, sessionId);
+            results.push(`  📩 ${pResolved} (online) — DM d'invitation envoyé`);
+          } else {
+            // Best-effort offline contact — fire and forget
+            const csid = recall(pResolved, "__claude_session_id");
+            const stripWk = p => p ? p.replace(/[\\/]\.wikichat[\\/]?$/, "") : null;
+            const pRepo = repo_path || recall(pResolved, "__cwd")
+              || stripWk(pLive?.storage_path)
+              || (() => { const e = loadSpawnRegistry().find(x => x.name === pResolved); return stripWk(e?.storage_path); })()
+              || (() => { for (const p of state.projects.values()) { const a = p.agents?.[pResolved]; if (a?.repo_path) return a.repo_path; } return null; })();
+            if (pRepo && fs.existsSync(pRepo)) {
+              const spawnPrompt = `📨 ${senderName} t'invite sur #${channelSlug} :\n\n${message}\n\nregister(name="${pResolved}") puis poste sur #${channelSlug} via send_message(channel="${channelSlug}", ..., status="over").`;
+              spawnHeadless(pRepo, spawnPrompt, { name: pResolved, role: pLive?.role || "agent", port: parseInt(process.env.PORT || "3777"), spawnedBy: senderName, resumeSessionId: csid || null }).catch(() => {});
+              results.push(`  🔁 ${pResolved} (offline) — spawn ${csid ? "--resume" : "frais"}`);
+            } else {
+              results.push(`  ⚠️ ${pResolved} — offline, repo inconnu (relance-le d'abord)`);
+            }
+          }
+        }
+        return txt(
+          `🧵 Canal #${channelSlug} ouvert — ${allParticipants.length} participant(s) invité(s):\n${results.join("\n")}\n\n` +
+          `💬 Poste sur #${channelSlug} via send_message(channel="${channelSlug}", ...)\n` +
+          `👁️ Chaque participant reçoit les nouveaux messages via son hook boîte mail.`
+        );
+      }
+
+      const found = getSessionByName(name);
+      const live = found ? state.sessions.get(found.id) : null;
+      const online = live && live.availability !== "stale" &&
+        (!live.lastSeen || Date.now() - new Date(live.lastSeen).getTime() < 5 * 60 * 1000) &&
+        found.id !== sessionId;
+
+      // ── DEFAULT : deposit in the recipient's HOME (project channel), @mentioning
+      //    them. This is the stable address the volatile display name never was —
+      //    it works identically online or offline (the hook delivers at their next
+      //    turn), and their reply lands in YOUR home. No blocking, no spawn, no
+      //    fresh-lineage hallucination. ──────────────────────────────────────────
+      const targetHome = homeChannelFor(name);
+      if (targetHome) {
+        let ch = state.channels.get(targetHome);
+        if (!ch) {
+          ch = { name: targetHome, description: `🏠 Maison projet — agents y vivent et s'y joignent par @mention`, createdBy: name, createdAt: new Date(), participants: [name.toLowerCase()] };
+          state.channels.set(targetHome, ch);
+          try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch { /* */ }
+        }
+        const msg = pushMessage({
+          id: randomUUID(), from: sessionId, fromName: senderName,
+          channel: targetHome, content: `@${name} ${message}`, timestamp: new Date(),
+          expects_reply: expects_reply ?? true, status: "over",
+        });
+        notify(targetHome, sessionId);
+
+        // Optionally wake an offline agent so it answers now instead of at its
+        // next human-driven turn. Opt-in (wake=true) so we never silently spawn a
+        // fresh lineage that invents context.
+        let wakeNote = "";
+        if (!online && wake) {
+          const csid0 = recall(name, "__claude_session_id");
+          const stripWk0 = p => p ? p.replace(/[\\/]\.wikichat[\\/]?$/, "") : null;
+          const repo0 = repo_path || recall(name, "__cwd")
+            || stripWk0(live?.storage_path)
+            || (() => { const e = loadSpawnRegistry().find(x => x.name === name); return stripWk0(e?.storage_path); })();
+          if (repo0 && fs.existsSync(repo0)) {
+            const wakePrompt = `📨 ${senderName} t'a déposé un message dans ta maison #${targetHome} :\n\n${message}\n\nTu es "${name}". ${csid0 ? "Reprends ta session — garde ton contexte. " : ""}register(name="${name}") si besoin, lis via poll(), réponds via send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over").`;
+            spawnHeadless(repo0, wakePrompt, { name, role: live?.role || "agent", port: parseInt(process.env.PORT || "3777"), spawnedBy: senderName, resumeSessionId: csid0 || null }).catch(() => {});
+            wakeNote = `\n🔁 Réveil ${csid0 ? "--resume" : "frais"} lancé (wake=true).`;
+          } else {
+            wakeNote = `\n⚠️ wake demandé mais repo inconnu — il verra le message à son retour.`;
+          }
+        }
+
+        const stateNote = online
+          ? `Il est EN LIGNE — il le relèvera à son prochain tour (hook).`
+          : `Il est offline — le message l'attend dans sa maison, livré dès son retour.${wake ? "" : " (wake=true pour le réveiller maintenant.)"}`;
+        return txt(
+          `📬 Déposé dans la maison de ${name} → #${targetHome} (🆔 ${msg.id.slice(0, 8)}), il est @mentionné.\n${stateNote}${wakeNote}\n` +
+          `↩️ Sa réponse te reviendra dans TA maison — relève avec poll().`
+        );
+      }
+
+      // ── FALLBACK : home unknown (cwd/projet jamais reporté) → legacy. Online =
+      //    DM direct ; offline = reprise seulement si wake (sinon on ne peut rien
+      //    faire d'utile sans adresse stable). ──────────────────────────────────
+      if (online) {
+        const dm = resolveDMChannel(sessionId, name);
+        const msg = pushMessage({
+          id: randomUUID(), from: sessionId, fromName: senderName,
+          channel: dm.channel, content: message, timestamp: new Date(),
+          isDM: true, expects_reply: expects_reply ?? null, status: "over",
+        });
+        notify(dm.channel, sessionId);
+        return txt(`📩 ${name} est EN LIGNE (maison inconnue) — DM envoyé (🆔 ${msg.id.slice(0, 8)}). Il le relèvera à son prochain tour.`);
+      }
+
+      if (!wake) {
+        return txt(`📭 ${name} est offline et sa maison (canal-projet) est inconnue — rien à quoi l'adresser de stable.\n💡 Passe wake=true pour le réveiller (reprise --resume), ou repo_path=... pour fixer son repo.`);
+      }
+
+      // ── OFFLINE + wake → reprise (--resume) ou spawn frais ──
+      const csid = recall(name, "__claude_session_id");
+      const stripWk = p => p ? p.replace(/[\\/]\.wikichat[\\/]?$/, "") : null;
+      let repo = repo_path
+        || recall(name, "__cwd")
+        || stripWk(live?.storage_path)
+        || (() => { const e = loadSpawnRegistry().find(x => x.name === name); return stripWk(e?.storage_path); })()
+        || (() => { for (const p of state.projects.values()) { const a = p.agents?.[name]; if (a?.repo_path) return a.repo_path; } return null; })();
+
+      if (!repo || !fs.existsSync(repo)) {
+        return txt(`❌ ${name} est offline et je ne sais pas où reprendre sa session (cwd/registry/roster introuvables). Relance-le une fois pour qu'il s'enregistre, ou passe repo_path=...`);
+      }
+
+      const prompt =
+        `📨 Message direct de ${senderName} (via WikiChat) :\n\n${message}\n\n` +
+        `Tu es "${name}". ${csid ? "Tu reprends ta session précédente — garde ton contexte. " : ""}` +
+        `register(name="${name}") si tu n'es pas déjà enregistré, puis réponds à ${senderName} via ` +
+        `send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over"). ` +
+        `Si rien à ajouter, send_message(..., status="done").`;
+
+      const ticketId = randomUUID().slice(0, 8);
+      state.spawnTickets.set(ticketId, {
+        id: ticketId, name, mode: "contact", repo: path.basename(repo),
+        spawnedBy: senderName, spawnerId: sessionId,
+        status: "running", createdAt: new Date(), completedAt: null, result: null,
+      });
+
+      const resumed = !!csid;
+      sysMsg("coordination", `📨 ${senderName} contacte "${name}" (offline) → ${resumed ? "reprise --resume" : "spawn frais"} [ticket:${ticketId}]`);
+      notify("coordination", sessionId);
+
+      spawnHeadless(repo, prompt, {
+        name, role: live?.role || "agent",
+        port: parseInt(process.env.PORT || "3777"),
+        spawnedBy: senderName,
+        resumeSessionId: csid || null,
+      }).then(result => {
+        const t = state.spawnTickets.get(ticketId);
+        if (t) { t.status = result.success ? "completed" : "failed"; t.completedAt = new Date(); t.result = { success: result.success, exitCode: result.exitCode }; }
+        notifyWaiters("__tickets__", null);
+        pushDashboardUpdate();
+      }).catch(() => {
+        const t = state.spawnTickets.get(ticketId);
+        if (t) { t.status = "failed"; t.completedAt = new Date(); }
+        notifyWaiters("__tickets__", null);
+      });
+
+      return txt(
+        `🔁 ${name} est OFFLINE → ${resumed ? "reprise de SA session (--resume) " : "spawn frais "}avec ton message [ticket:${ticketId}].\n` +
+        `${resumed ? "Il continue à la suite de son historique." : "⚠️ Pas de claude_session_id connu → contexte neuf (il se ré-enregistre)."}\n` +
+        `💡 poll_ticket("${ticketId}") ou poll_messages(channel="@${name}") pour sa réponse.`
+      );
+    }
+  );
 
   server.tool(
     "spawn_session",

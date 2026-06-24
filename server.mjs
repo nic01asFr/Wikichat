@@ -19,9 +19,9 @@ import { readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join, extname } from "path";
 import { homedir } from "os";
 
-import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
-import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
-import { loadMemories, flushMemories } from "./src/identity.mjs";
+import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive, isAgentInDMChannel, inboxFor } from "./src/state.mjs";
+import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE, getIdentityBinding, saveIdentityBinding, touchIdentityBinding } from "./src/persistence.mjs";
+import { loadMemories, flushMemories, restoreIdentity, remember, recall } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
@@ -379,12 +379,17 @@ setInterval(async () => {
       s.availability = "stale";
     }
   }
-  // DM channel garbage collection — remove empty DM channels with no active participants
-  const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
-  for (const [name, ch] of state.channels) {
+  // DM channel garbage collection — only drop channels that are TRULY empty
+  // (no message left in the buffer). Previously this deleted any DM channel with
+  // no message in the last 30 min, even when older messages were still buffered —
+  // which threw away the channel's `participants` list and silently broke DM
+  // visibility for those still-present messages (read_messages/poll_messages fall
+  // back to participants when the key doesn't contain the reader's current name).
+  // A channel can't outlive its messages, so memory stays bounded by the buffer cap.
+  for (const [name] of state.channels) {
     if (!name.startsWith("dm:")) continue;
-    const hasRecentMsg = state.messages.some(m => m.channel === name && new Date(m.timestamp) > thirtyMinAgo);
-    if (!hasRecentMsg) {
+    const hasAnyMsg = state.messages.some(m => m.channel === name);
+    if (!hasAnyMsg) {
       state.channels.delete(name);
     }
   }
@@ -480,7 +485,17 @@ app.get("/sse", async (req, res) => {
   const sid = transport.sessionId;
   const mcpServer = new McpServer({ name: "mcp-wikichat", version: "2.0.0" });
 
-  state.sessions.set(sid, {
+  // Stable identity token carried by the client on EVERY connect (survives the
+  // transport sessionId changing across reconnects). Two delivery styles, same
+  // mechanism: `?agent=<Name>` is the identity directly; `?token=`/header is an
+  // opaque token bound to a name on first register(). See src/persistence.mjs.
+  const directName = (req.query.agent || "").trim() || null;
+  const bindToken = directName
+    || (req.query.token || "").trim()
+    || (req.headers["x-wikichat-token"] || "").toString().trim()
+    || null;
+
+  const session = {
     sessionId: sid,
     name: `session-${sid.slice(0, 6)}`,
     connectedAt: new Date(), lastSeen: new Date(),
@@ -490,9 +505,37 @@ app.get("/sse", async (req, res) => {
     skills: [], current_task: null, current_project: null,
     availability: "available",
     storage_path: null,
-  });
+    bindToken, // used by register() to persist the token→identity binding
+  };
+  state.sessions.set(sid, session);
   transports.set(sid, { transport, server: mcpServer });
-  console.log(`[WikiChat] +session ${sid.slice(0, 8)} (total: ${state.sessions.size})`);
+
+  // Auto-restore identity from the token if we know it (or if ?agent=Name is
+  // authoritative). This is what makes "register once, recognised forever" work:
+  // the agent never has to re-register after a reconnect.
+  let claimName = null, claimRole = null;
+  if (directName) {
+    claimName = directName; // authoritative on every connect
+  } else if (bindToken) {
+    const ident = getIdentityBinding(bindToken);
+    if (ident) { claimName = ident.name; claimRole = ident.role; }
+  }
+  if (claimName) {
+    const holder = getSessionByName(claimName);
+    if (!holder || holder.id === sid) {
+      session.name = claimName;
+      if (claimRole) session.role = claimRole;
+      session.availability = "available";
+      try { restoreIdentity(session, claimName); } catch { /* best-effort */ }
+      try { saveIdentityBinding(bindToken, claimName, session.role); } catch { /* */ }
+      sysMsg("system", `${claimName} connecté — identité ${directName ? "fixée" : "restaurée"} automatiquement.`);
+    } else {
+      // Name currently held by another live session: don't steal it. Stay
+      // anonymous; register() will arbitrate (stale-takeover) if appropriate.
+      console.log(`[WikiChat] identité "${claimName}" occupée — ${sid.slice(0, 8)} reste anonyme`);
+    }
+  }
+  console.log(`[WikiChat] +session ${sid.slice(0, 8)}${session.name.startsWith("session-") ? "" : ` (${session.name})`} (total: ${state.sessions.size})`);
   pushDashboardUpdate();
 
   res.on("close", () => {
@@ -761,6 +804,66 @@ app.get("/api/messages", (req, res) => {
   }
   const n = Math.min(parseInt(limit) || 50, 200);
   res.json(msgs.slice(-n));
+});
+
+// GET /api/inbox — messages addressed to a specific agent (DMs, @mentions,
+// broadcasts), for the Stop-hook "mailbox check". Lets an active-but-not-polling
+// agent learn it's being contacted at its next turn boundary, no human in the loop.
+//
+// Cursor protocol: pass the last id you saw via since_id; the response gives the
+// new lastId to store. Without since_id, pass since_minutes=N to catch recent
+// unread on first activation (so already-pending messages aren't missed); with
+// neither, an empty baseline + current lastId is returned (arm without replay).
+app.get("/api/inbox", (req, res) => {
+  const agent = (req.query.agent || "").toString().trim();
+  if (!agent) { res.status(400).json({ error: "agent required" }); return; }
+  const sinceMin = parseFloat(req.query.since_minutes) || 0;
+
+  // Unified cursor : the server owns ONE cursor per identity, in the same
+  // persistent identity memory used by the `poll` MCP tool. So push (this hook
+  // endpoint) and pull (poll) share a single position — a message delivered one
+  // way is never re-delivered the other way. An explicit since_id query param
+  // still overrides (legacy callers), but the server cursor is the default and
+  // is always advanced afterwards.
+  const explicitSince = (req.query.since_id || "").toString().trim() || null;
+  const serverCursor = recall(agent, "__inbox_cursor");
+  const sinceId = explicitSince || serverCursor || null;
+
+  const result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+
+  // Advance the shared cursor to the newest id we just accounted for (covers
+  // resync/baseline too — arm at the head without replaying history).
+  if (result.lastId) remember(agent, "__inbox_cursor", result.lastId);
+
+  const messages = result.messages.map(m => ({
+    id: m.id, from: m.fromName, channel: m.isDM ? "DM" : m.channel, isDM: !!m.isDM,
+    content: m.content, timestamp: m.timestamp,
+    status: m.status ?? null, expects_reply: m.expects_reply ?? null, eta_seconds: m.eta_seconds ?? null,
+  }));
+
+  res.json({
+    agent, count: messages.length, messages,
+    lastId: result.lastId ?? sinceId,
+    ...(result.resynced ? { resynced: true } : {}),
+    ...(result.baseline ? { baseline: true } : {}),
+  });
+});
+
+// POST /api/identity — an agent (via its Stop hook) reports its stable Claude
+// session id + cwd, bound to its WikiChat name. This is the missing link that
+// makes `contact_agent` able to RESUME an offline agent: the agent itself can't
+// read $CLAUDE_SESSION_ID, but the hook gets it from stdin and reports it here.
+// Stored in the identity memory (same place register() persists it).
+app.post("/api/identity", express.json(), (req, res) => {
+  const { name, claude_session_id, cwd } = req.body || {};
+  if (!name || String(name).startsWith("session-")) { res.status(400).json({ error: "name required" }); return; }
+  if (claude_session_id) {
+    remember(name, "__claude_session_id", claude_session_id);
+    const found = getSessionByName(name);
+    if (found) { const live = state.sessions.get(found.id); if (live) live.claude_session_id = claude_session_id; }
+  }
+  if (cwd) remember(name, "__cwd", cwd);
+  res.json({ ok: true, name });
 });
 
 // POST /api/spawn/daemon — launch a persistent background agent

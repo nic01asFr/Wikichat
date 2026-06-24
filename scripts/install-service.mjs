@@ -45,9 +45,14 @@ function installWindows() {
   const stdout = path.join(os.homedir(), ".wikichat", "stdout.log");
   const stderr = path.join(os.homedir(), ".wikichat", "stderr.log");
   // Build the inner cmd command. Escape backslashes and quotes for VBS string literal.
+  // IMPORTANT: cd into the repo root first. A Startup-folder launch inherits
+  // cwd=C:\Windows\System32, and the server creates its data dirs relative to
+  // process.cwd() — without this cd it tried to mkdir under System32 and crashed
+  // at boot with EPERM. macOS/Linux set WorkingDirectory; Windows needs this cd.
+  const cd = `cd /d "${REPO_ROOT}"`;
   const innerCmd = WITH_TEAM
-    ? `set WIKICHAT_AUTONOMOUS_TEAM=1 && "${NODE_BIN}" "${SERVER_ENTRY}" > "${stdout}" 2> "${stderr}"`
-    : `"${NODE_BIN}" "${SERVER_ENTRY}" > "${stdout}" 2> "${stderr}"`;
+    ? `${cd} && set WIKICHAT_AUTONOMOUS_TEAM=1 && "${NODE_BIN}" "${SERVER_ENTRY}" > "${stdout}" 2> "${stderr}"`
+    : `${cd} && "${NODE_BIN}" "${SERVER_ENTRY}" > "${stdout}" 2> "${stderr}"`;
   // VBS escapes : double-quote → "" inside string literal
   const vbsEscaped = innerCmd.replace(/"/g, '""');
   const vbs = `' WikiChat auto-start — runs node server.mjs at user logon, hidden window.

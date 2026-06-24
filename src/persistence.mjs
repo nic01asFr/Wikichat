@@ -361,3 +361,65 @@ export function flushSpawnRegistry() {
     try { writeAtomicJSON(SPAWN_REGISTRY, _spawnCache); } catch { /* */ }
   }
 }
+
+// ── Identity bindings ───────────────────────────────────────────────────────
+// Maps a stable connection token (carried by the client on every SSE connect
+// via `?token=`/`?agent=` or the `x-wikichat-token` header) to a registered
+// identity. This is what lets an agent register ONCE and then be recognised
+// automatically on every reconnect — the transport sessionId changes, but the
+// token does not, so the server re-attaches the same name/role.
+//
+// Stored centrally in ~/.wikichat (the "mairie"), like the registry.
+
+const IDENTITY_BINDINGS_FILE = path.join(os.homedir(), ".wikichat", "identity-bindings.json");
+let _bindings = null; // Map<token, { name, role, boundAt, lastSeen }>
+
+function _loadBindings() {
+  if (_bindings) return _bindings;
+  _bindings = new Map();
+  try {
+    if (fs.existsSync(IDENTITY_BINDINGS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(IDENTITY_BINDINGS_FILE, "utf8"));
+      for (const [tok, v] of Object.entries(raw)) _bindings.set(tok, v);
+    }
+  } catch { /* corrupt — start fresh */ }
+  return _bindings;
+}
+
+let _bindingsTimer = null;
+function _saveBindingsDebounced() {
+  if (_bindingsTimer) return;
+  _bindingsTimer = setTimeout(() => {
+    _bindingsTimer = null;
+    try {
+      fs.mkdirSync(path.dirname(IDENTITY_BINDINGS_FILE), { recursive: true });
+      writeAtomicJSON(IDENTITY_BINDINGS_FILE, Object.fromEntries(_loadBindings()));
+    } catch { /* non-blocking */ }
+  }, 1500);
+}
+
+/** Look up the identity bound to a connection token, or null. */
+export function getIdentityBinding(token) {
+  if (!token) return null;
+  return _loadBindings().get(token) || null;
+}
+
+/** Bind (or update) a connection token → identity. Called from register(). */
+export function saveIdentityBinding(token, name, role) {
+  if (!token || !name || name.startsWith("session-")) return;
+  const b = _loadBindings();
+  const prev = b.get(token) || {};
+  b.set(token, {
+    name, role: role ?? prev.role ?? null,
+    boundAt: prev.boundAt || new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+  });
+  _saveBindingsDebounced();
+}
+
+/** Refresh lastSeen for a token without changing the identity. */
+export function touchIdentityBinding(token) {
+  const b = _loadBindings();
+  const v = b.get(token);
+  if (v) { v.lastSeen = new Date().toISOString(); _saveBindingsDebounced(); }
+}

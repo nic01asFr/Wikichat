@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "wikichat": {
-      "type": "sse",
-      "url": "http://localhost:3777/sse"
-    }
-  }
-}
