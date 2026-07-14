@@ -28,6 +28,7 @@ import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
 import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
+import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools } from "./src/pilote.mjs";
 // [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -374,8 +375,27 @@ setInterval(async () => {
     }
     if (changed) saveProject(proj);
   }
+  // Stale marking (15 min) + eviction (default 30 min). A session is only ever
+  // removed by the SSE `res.on("close")` handler; when a connection drops without
+  // firing `close` (network blip, Claude Code reconnecting under a fresh sessionId),
+  // the orphaned entry lingers in the Map forever — just flagged "stale". Over long
+  // uptimes these ghosts accumulate. We evict any session quiet past the threshold,
+  // replicating the close-handler cleanup (snapshot → transport → waiters → delete).
+  // Eviction is non-destructive: a registered session's identity is snapshotted and
+  // restored on reconnect via its bind token, so a resident evicted by mistake simply
+  // re-attaches. lastSeen is bumped on every POST /messages, so polling daemons stay
+  // fresh and are never evicted in normal operation.
+  const EVICT_MS = parseInt(process.env.WIKICHAT_SESSION_EVICT_MS || `${30 * 60 * 1000}`);
   for (const [id, s] of state.sessions) {
-    if (Date.now() - new Date(s.lastSeen) > 15 * 60 * 1000 && s.availability !== "stale") {
+    const quietMs = Date.now() - new Date(s.lastSeen);
+    if (quietMs > EVICT_MS) {
+      const wasRegistered = !s.name.startsWith("session-");
+      if (wasRegistered) { try { saveSnapshot(s); } catch { /* best-effort */ } }
+      state.sessions.delete(id);
+      transports.delete(id);
+      clearWaiters(id);
+      console.log(`[WikiChat] evicted stale session ${s.name} (quiet ${Math.round(quietMs / 60000)}min, total: ${state.sessions.size})`);
+    } else if (quietMs > 15 * 60 * 1000 && s.availability !== "stale") {
       s.availability = "stale";
     }
   }
@@ -477,6 +497,17 @@ app.get("/style-guide.html", (_req, res) => { res.setHeader("Content-Type", "tex
 app.get("/concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "concepts.html"))); });
 app.get("/hybrid-concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "hybrid-concepts.html"))); });
 app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "console.html"))); });
+app.get("/pilote", handlePilotePage);
+app.get("/pilote/api/data", handlePiloteData);
+app.get("/pilote/api/tools", handlePiloteTools);
+app.post("/pilote/api/agent", handlePiloteCreate);
+app.post("/pilote/api/architect", handlePiloteArchitect);
+app.post("/pilote/api/agent/:id/toggle", handlePiloteToggle);
+app.post("/pilote/api/agent/:id/fire", handlePiloteFire);
+app.post("/pilote/api/agent/:id/continue", handlePiloteContinue);
+app.post("/pilote/api/agent/:id/decide", handlePiloteDecide);
+app.post("/pilote/api/agent/:id/apply", handlePiloteApply);
+app.delete("/pilote/api/agent/:id", handlePiloteDelete);
 app.get("/regie", (_req, res) => res.redirect("/console"));
 
 // MCP SSE endpoint

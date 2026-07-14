@@ -425,7 +425,10 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     spawnedBy = "wikichat-service",
     resumeSessionId = null, // If set, resumes an existing Claude session
     parentDepth = 0,
+    model = null,           // --model (alias sonnet/opus/haiku ou id complet)
+    allowedTools = null,    // --allowedTools (tableau ou chaîne CSV)
   } = options;
+  const maxTurns = options.maxTurns ?? options.max_turns ?? null; // --max-turns (bornage contexte)
 
   const claudeBin = findClaudeBin();
   if (!claudeBin) {
@@ -491,7 +494,10 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     let stderr = "";
 
     const mcpConfigPath = path.join(projectPath, ".mcp.json");
-    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name];
+    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, "--output-format", "json"];
+    if (model) baseArgs.push("--model", model);
+    if (allowedTools) baseArgs.push("--allowedTools", Array.isArray(allowedTools) ? allowedTools.join(",") : String(allowedTools));
+    if (maxTurns) baseArgs.push("--max-turns", String(maxTurns));
     if (resumeSessionId) {
       baseArgs.push("--resume", resumeSessionId);
     }
@@ -521,16 +527,20 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     child.on("close", (code) => {
       clearTimeout(timer);
       const success = code === 0;
+      // Capture le session-id Claude depuis la sortie --output-format json (resume ultérieur)
+      let claudeSessionId = null;
+      try { const j = JSON.parse(stdout); claudeSessionId = j.session_id || j.sessionId || null; } catch { /* stdout non-json */ }
       try {
         upsertSpawnRegistry({
           ...spawnEntry,
           status: success ? "done" : "failed",
           exit_code: code,
+          ...(claudeSessionId ? { claude_session_id: claudeSessionId } : {}),
           ended_at: new Date().toISOString(),
         });
       } catch { /* */ }
       _releaseSlot(); _releaseQuota(spawnedBy);
-      resolve({ success, stdout, stderr, exitCode: code ?? -1 });
+      resolve({ success, stdout, stderr, exitCode: code ?? -1, sessionId: claudeSessionId });
     });
 
     child.on("error", (err) => {
