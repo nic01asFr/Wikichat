@@ -28,7 +28,7 @@ import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
 import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
-import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools } from "./src/pilote.mjs";
+import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
 // [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -204,6 +204,9 @@ onWake(() => {
 onSleep(() => {
   console.log("[Dormant] SLEEP — triggers will refuse to fire until wake");
 });
+// Rattrapage : les agents du pilote dont un cron a été manqué pendant le sommeil
+// sont relancés une fois dès le réveil (calculé depuis schedule + last_fired).
+startPiloteCatchup();
 startDormantWatch();
 
 // Channel #dispatch : every user message becomes a dispatch automatically.
@@ -500,6 +503,8 @@ app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html");
 app.get("/pilote", handlePilotePage);
 app.get("/pilote/api/data", handlePiloteData);
 app.get("/pilote/api/tools", handlePiloteTools);
+app.post("/pilote/api/daemon", handlePiloteDaemon);
+app.get("/pilote/api/agent/:id/transcript", handlePiloteTranscript);
 app.post("/pilote/api/agent", handlePiloteCreate);
 app.post("/pilote/api/architect", handlePiloteArchitect);
 app.post("/pilote/api/agent/:id/toggle", handlePiloteToggle);

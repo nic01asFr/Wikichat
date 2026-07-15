@@ -20,6 +20,17 @@
   .scr::-webkit-scrollbar-thumb:hover{background:#4a3d2d;background-clip:padding-box}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   @keyframes flashok{0%{background:#4bb98a;color:#0f231a}100%{}}
+  #toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:9px;z-index:100;max-width:360px}
+  .toast{display:flex;align-items:flex-start;gap:10px;background:#221b14;border:1px solid #3a2f22;border-left:3px solid #6f665b;border-radius:10px;padding:11px 13px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:12.5px;color:#ece7e1;animation:toastin .2s ease}
+  .toast.ok{border-left-color:#4bb98a}
+  .toast.err{border-left-color:#d9534f}
+  .toast.info{border-left-color:#6b9bd1}
+  .toast.pending{border-left-color:#d97757}
+  .toast .tmsg{flex:1;line-height:1.45}
+  .toast .tspin{width:13px;height:13px;border:2px solid #4a3d2d;border-top-color:#d97757;border-radius:50%;animation:spin .7s linear infinite;flex:none;margin-top:2px}
+  .toast .tclose{cursor:pointer;color:#8a8175;font-size:15px;line-height:1;flex:none}
+  @keyframes toastin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes spin{to{transform:rotate(360deg)}}
   kbd{font-family:'IBM Plex Mono',monospace;font-size:10.5px;background:#120e0a;border:1px solid #3a2f22;border-radius:5px;padding:1px 5px;color:#a89f94}
   button{font-family:inherit}
   input{font-family:inherit}
@@ -95,14 +106,8 @@
     }
   };
 
-  var MEM_DESCS = [
-    "claude -p à chaque run ; ne reprend que le curseur portable (fichier).",
-    "claude -p --continue : reprend la dernière session de ce dossier.",
-    "claude -p --resume <id> : reprend une session précise (repli si expirée)."
-  ];
-
   var state = {
-    sel:"finances", memTab:0, daemonOn:true,
+    sel:"finances", daemonOn:true, gateOpen:true,
     enabled:{ finances:true, veille:true, digest:false },
     queues:{ finances:["q1","q2","q3"], veille:["v1","v2"], digest:[] },
     showNew:false, seq:0,
@@ -201,9 +206,17 @@
       var nextId=ids.filter(function(id){ return state.enabled[id] && AGENTS[id].base==="actif"; })[0] || ids.filter(function(id){ return state.enabled[id]; })[0];
       if(nextId){ wake=statusOf(AGENTS[nextId]).next; wakeAgent=AGENTS[nextId].name; }
     }
-    var d = state.daemonOn
-      ? { label:"Daemon actif", color:"#4bb98a", bg:"#1a1712", armed:armed, total:total, wake:wake, wakeAgent:wakeAgent, btn:"Mettre en pause" }
-      : { label:"Daemon en pause", color:"#d9a441", bg:"#1f1a12", armed:0, total:total, wake:"—", wakeAgent:"aucun réveil", btn:"Réactiver" };
+    // 3 états réels, pas 2 : un cron « armé » ne part PAS si la gate dormante est
+    // fermée (aucune session Claude Code). On le dit au lieu de promettre l'heure.
+    var d;
+    if(!state.daemonOn){
+      d={ label:"Daemon en pause", color:"#d9a441", bg:"#1f1a12", armed:0, total:total, wake:"—", wakeAgent:"aucun réveil", btn:"Réactiver" };
+    } else if(SERVED && state.gateOpen===false){
+      d={ label:"En attente d'une session", color:"#d9a441", bg:"#1f1a12", armed:armed, total:total,
+          wake:wake, wakeAgent:"rattrapé à la prochaine session", btn:"Mettre en pause", gateShut:true };
+    } else {
+      d={ label:"Daemon actif", color:"#4bb98a", bg:"#1a1712", armed:armed, total:total, wake:wake, wakeAgent:wakeAgent, btn:"Mettre en pause" };
+    }
 
     return ''+
     '<div style="flex:none;display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:12px 20px;background:'+d.bg+';border-bottom:1px solid #2b2319">'+
@@ -212,6 +225,7 @@
       '<span style="font-size:12.5px;color:#a89f94"><b style="color:#ece7e1;font-weight:600">'+d.armed+'</b>/'+d.total+' crons armés</span>'+
       '<span style="width:1px;height:16px;background:#2b2319"></span>'+
       '<span style="font-size:12.5px;color:#a89f94">Prochain réveil&nbsp;<b style="color:#ece7e1;font-weight:600">'+esc(d.wake)+'</b>&nbsp;<span style="color:#6f665b">· '+esc(d.wakeAgent)+'</span></span>'+
+      (d.gateShut?'<span title="Un cron ne se déclenche que si une session Claude Code est ouverte. Les runs manqués sont rattrapés une fois au réveil." style="font-size:10.5px;font-weight:600;letter-spacing:.4px;color:#d9a441;background:rgba(217,164,65,.12);border:1px solid rgba(217,164,65,.3);padding:3px 8px;border-radius:6px">GATE FERMÉE — NE SE DÉCLENCHERA PAS</span>':'')+
       '<button data-act="daemon" style="margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:transparent;border:1px solid #3a2f22;color:#d7cfc4;font-size:12.5px;font-weight:500;padding:6px 13px;border-radius:8px;cursor:pointer">'+d.btn+'</button>'+
     '</div>';
   }
@@ -235,14 +249,33 @@
     if(count>0){
       body = '<div style="display:flex;flex-direction:column;gap:8px">'+items.map(function(q){
         var iconBg=q.kind==="money"?"rgba(75,185,138,.13)":"#2a221a", iconColor=q.kind==="money"?"#4bb98a":"#b8afa3", amtColor=q.kind==="money"?"#4bb98a":"#8a8175";
+        var needs=q.needs||[];
+        var blocked=needs.some(function(n){ return n.value===null||n.value===undefined||n.value===""; });
+        var hasLegacy=needs.some(function(n){ return !n.path; });
+        var needsHtml=needs.length?('<div style="margin-top:8px;display:flex;flex-direction:column;gap:7px">'+needs.map(function(n){
+          var q1='<div style="font-size:11px;color:#d9a441;display:flex;align-items:flex-start;gap:5px;line-height:1.4"><span>⚠</span><span>'+esc(n.question)+'</span></div>';
+          if(!n.path) return q1;
+          var inpStyle="background:#120e0a;border:1px solid #3a2f22;border-radius:7px;padding:5px 8px;color:#ece7e1;font-family:inherit;font-size:12px;outline:none;max-width:320px";
+          var ctrl;
+          if(n.options&&n.options.length){
+            ctrl='<select data-need-path="'+esc(n.path)+'" style="'+inpStyle+'"><option value="">— choisir '+esc(n.field||"une valeur")+' —</option>'+
+              n.options.map(function(o){ return '<option value="'+esc(o)+'"'+(n.value===o?' selected':'')+'>'+esc(o)+'</option>'; }).join("")+'</select>';
+          } else {
+            ctrl='<input data-need-path="'+esc(n.path)+'" value="'+esc(n.value==null?"":n.value)+'" placeholder="'+esc(n.field||"valeur")+'" style="'+inpStyle+'">';
+          }
+          return q1+'<div>'+ctrl+'</div>';
+        }).join("")+'</div>'):'';
         return ''+
-        '<div data-qrow="'+q.id+'" style="display:flex;align-items:center;gap:13px;padding:12px 13px;border:1px solid #2b2319;border-radius:10px;background:#191410">'+
+        '<div data-qrow="'+q.id+'"'+(hasLegacy?' data-legacy="1"':'')+' style="display:flex;align-items:'+(needsHtml?"flex-start":"center")+';gap:13px;padding:12px 13px;border:1px solid #2b2319;border-radius:10px;background:#191410">'+
           '<span style="flex:none;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;background:'+iconBg+';color:'+iconColor+'">'+esc(q.icon)+'</span>'+
-          '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#ece7e1">'+esc(q.title)+'</div><div style="font-size:11.5px;color:#8a8175;margin-top:2px">'+esc(q.sub)+'</div></div>'+
+          '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#ece7e1">'+esc(q.title)+'</div><div style="font-size:11.5px;color:#8a8175;margin-top:2px">'+esc(q.sub)+'</div>'+needsHtml+'</div>'+
           '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;font-weight:600;color:'+amtColor+';white-space:nowrap">'+esc(q.amount)+'</span>'+
-          '<div style="display:flex;gap:7px;flex:none">'+
-            '<button data-act="q-ok" data-id="'+q.id+'" style="background:#4bb98a;color:#0f231a;border:none;font-size:12px;font-weight:600;padding:6px 13px;border-radius:8px;cursor:pointer">Valider</button>'+
-            '<button data-act="q-no" data-id="'+q.id+'" style="background:transparent;color:#b8afa3;border:1px solid #3a2f22;font-size:12px;font-weight:500;padding:6px 12px;border-radius:8px;cursor:pointer">Rejeter</button>'+
+          '<div style="display:flex;flex-direction:column;gap:6px;flex:none;align-items:stretch">'+
+            '<div style="display:flex;gap:7px">'+
+              '<button data-act="q-ok" data-id="'+q.id+'"'+(blocked?' data-blocked="1"':'')+' title="'+(blocked?"Précise les champs manquants pour valider":"")+'" style="background:#4bb98a;color:#0f231a;border:none;font-size:12px;font-weight:600;padding:6px 13px;border-radius:8px;cursor:'+(blocked?"not-allowed":"pointer")+';opacity:'+(blocked?".45":"1")+'">Valider</button>'+
+              '<button data-act="q-no" data-id="'+q.id+'" style="background:transparent;color:#b8afa3;border:1px solid #3a2f22;font-size:12px;font-weight:500;padding:6px 12px;border-radius:8px;cursor:pointer">Rejeter</button>'+
+            '</div>'+
+            (blocked?'<button data-act="q-force" data-id="'+q.id+'" style="background:transparent;border:none;color:#6f665b;font-size:10px;text-decoration:underline;cursor:pointer;padding:0">valider quand même</button>':'')+
           '</div>'+
         '</div>';
       }).join("")+'</div>';
@@ -255,13 +288,17 @@
 
   function configGridHTML(a){
     var toolsChips = a.scope.tools.map(function(t){
-      return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;background:#2a221a;border:1px solid #3a2f22"><span style="font-size:12px;font-weight:600;color:#ece7e1">'+esc(t.name)+'</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#8a8175">'+esc(t.perm)+'</span></span>';
+      var isMcp=String(t.name).indexOf("mcp__")===0;
+      var label=isMcp?String(t.name).replace(/^mcp__/,"").replace(/^claude_ai_/,"").replace(/_/g," "):t.name;
+      var tag=isMcp?"MCP":(t.perm||"intégré");
+      return '<span title="'+esc(t.name)+'" style="display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;background:#2a221a;border:1px solid #3a2f22"><span style="font-size:12px;font-weight:600;color:#ece7e1">'+esc(label)+'</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#8a8175">'+esc(tag)+'</span></span>';
     }).join("");
 
-    var memTabs = ["Nouveau","--continue","--resume"].map(function(label,i){
-      var sel=i===state.memTab;
-      return '<button data-act="memtab" data-i="'+i+'" style="flex:1;padding:6px 6px;border-radius:6px;border:none;cursor:pointer;font-size:11.5px;font-weight:600;background:'+(sel?ACCENT:"transparent")+';color:'+(sel?"#1a120d":"#a89f94")+'">'+label+'</button>';
-    }).join("");
+    // État de continuité RÉEL (ce n'était qu'un faux réglage : des onglets qui ne
+    // configuraient rien et se réinitialisaient au rafraîchissement).
+    var memMode = a.canResume
+      ? { label:"Frais + curseur — reprise possible", desc:"Chaque run cron repart propre (claude -p) et ne récupère que le curseur. Le bouton « Continuer » reprend la dernière session via --resume." }
+      : { label:"Frais + curseur", desc:"Chaque run cron repart propre (claude -p) et ne récupère que le curseur portable. Aucune session récupérable pour l'instant." };
 
     var missionLines = a.mission.map(function(line){
       return '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;line-height:1.65;color:#c4bbaf;white-space:pre-wrap">'+esc(line)+'</div>';
@@ -292,8 +329,8 @@
         '<div style="font-size:10.5px;font-weight:600;letter-spacing:1.3px;color:#7d7468;margin-bottom:11px">MÉMOIRE &amp; CONTINUITÉ</div>'+
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:11px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.6px;color:#4bb98a"><span style="width:6px;height:6px;border-radius:50%;background:#4bb98a"></span>SESSION</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;padding:2px 8px;border-radius:6px;background:#120e0a;color:#d7cfc4">'+esc(a.memory.session)+'</span><span style="font-size:11px;color:#8a8175">'+esc(a.memory.recover)+'</span></div>'+
         '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#5f574c;margin:-4px 0 11px;word-break:break-all">'+esc(a.memory.sessionFile)+'</div>'+
-        '<div style="display:flex;gap:5px;padding:4px;background:#120e0a;border-radius:8px;margin-bottom:6px">'+memTabs+'</div>'+
-        '<div style="font-size:11px;color:#8a8175;padding:5px 2px 10px;border-bottom:1px solid #241d15">'+esc(MEM_DESCS[state.memTab])+'</div>'+
+        '<div style="display:flex;align-items:center;gap:7px;padding:6px 9px;background:#120e0a;border:1px solid #241d15;border-radius:8px;margin-bottom:6px"><span style="font-size:10px;font-weight:700;letter-spacing:.5px;color:'+ACCENT+'">MODE</span><span style="font-size:11.5px;font-weight:600;color:#ece7e1">'+esc(memMode.label)+'</span></div>'+
+        '<div style="font-size:11px;color:#8a8175;padding:5px 2px 10px;border-bottom:1px solid #241d15;line-height:1.5">'+esc(memMode.desc)+'</div>'+
         kv("Guidage",a.memory.guide,"#e8bfa8",true)+
         kv("Faits appris",a.memory.facts,"#e8bfa8",true)+
         kv("Bornage contexte",a.memory.turns,"#d7cfc4",true)+
@@ -343,7 +380,7 @@
       '<div style="display:flex;align-items:center;gap:8px">'+
         '<button data-act="run" style="display:flex;align-items:center;gap:6px;background:'+ACCENT+';color:#1a120d;border:none;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer">▶ Lancer</button>'+
         '<button data-act="continue"'+(canResume?'':' title="Aucune session récupérable"')+' style="display:flex;align-items:center;gap:5px;background:#221b14;color:#d7cfc4;border:1px solid #3a2f22;font-size:12.5px;font-weight:500;padding:8px 12px;border-radius:8px;cursor:'+(canResume?'pointer':'not-allowed')+';opacity:'+(canResume?'1':'.45')+'">↻ Continuer</button>'+
-        '<button data-act="noop" style="display:flex;align-items:center;gap:5px;background:#221b14;color:#d7cfc4;border:1px solid #3a2f22;font-size:12.5px;font-weight:500;padding:8px 12px;border-radius:8px;cursor:pointer">⧉ Transcript</button>'+
+        '<button data-act="transcript" style="display:flex;align-items:center;gap:5px;background:#221b14;color:#d7cfc4;border:1px solid #3a2f22;font-size:12.5px;font-weight:500;padding:8px 12px;border-radius:8px;cursor:pointer">⧉ Transcript</button>'+
         '<button data-act="toggle-active" style="display:flex;align-items:center;gap:7px;background:transparent;border:none;cursor:pointer;padding:4px 2px 4px 4px"><span style="width:36px;height:21px;border-radius:12px;background:'+(on?"#4bb98a":"#3a2f22")+';position:relative;display:inline-block"><span style="position:absolute;top:2px;left:'+(on?"17px":"2px")+';width:17px;height:17px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.4)"></span></span></button>'+
       '</div>'+
     '</div>';
@@ -355,7 +392,7 @@
         queueHTML(a)+
         configGridHTML(a)+
         historyHTML(a)+
-        '<p style="text-align:center;font-size:11px;color:#5f574c;margin:22px 0 0;line-height:1.6">Maquette — chaque champ = un flag Claude réel ou un fichier <span style="font-family:\'IBM Plex Mono\',monospace">.pilote/</span> local. Aucune écriture réelle dans Gmail ou Grist.</p>'+
+        '<p style="text-align:center;font-size:11px;color:#5f574c;margin:22px 0 0;line-height:1.6">Le pilote orchestre ; les agents proposent dans <span style="font-family:\'IBM Plex Mono\',monospace">.wikichat/</span> — aucune écriture réelle dans Gmail ou Grist sans ta validation.</p>'+
       '</div>'+
     '</main>';
   }
@@ -521,24 +558,55 @@
           var sp=r.spec;
           state.form={ name:sp.name||"", desc:sp.desc||"", dir:sp.dir||"", freq:sp.freq||"0 8 * * *", model:sp.model||"sonnet", tools:(sp.tools&&sp.tools.length?sp.tools:["Bash"]), mission:sp.mission||"", intent:intent };
           renderModal();
+          toast("Agent conçu — relis et ajuste avant de créer","ok");
         } else {
           if(btn){ btn.textContent="Concevoir l'agent"; btn.style.opacity="1"; btn.disabled=false; }
-          alert("L'assistant n'a pas pu concevoir l'agent"+((r&&r.error)?" : "+r.error:"")+".");
+          toast("L'assistant n'a pas pu concevoir l'agent"+((r&&r.error)?" : "+r.error:""),"err");
         }
       })
-      .catch(function(){ if(btn){ btn.textContent="Concevoir l'agent"; btn.style.opacity="1"; btn.disabled=false; } alert("Échec de l'assistant (serveur requis)."); });
+      .catch(function(){ if(btn){ btn.textContent="Concevoir l'agent"; btn.style.opacity="1"; btn.disabled=false; } toast("Échec de l'assistant (serveur requis)","err"); });
   }
   function bindInput(id,key){ var el=document.getElementById(id); if(el) el.addEventListener("input",function(){ state.form[key]=el.value; patchModalDerived(); }); }
 
   function closeModal(){ state.showNew=false; renderModal(); }
 
+  // Visionneuse de transcript : lit la dernière session de l'agent et l'affiche.
+  function showTranscript(){
+    if(!isReal()){ toast("Transcript disponible sur un agent réel","info"); return; }
+    var tt=toast("Lecture du transcript…","pending");
+    apiJSON("/pilote/api/agent/"+state.sel+"/transcript").then(function(r){
+      tt.close();
+      if(!r||!r.ok){ toast("Transcript indisponible","bad"); return; }
+      if(!r.turns||!r.turns.length){ toast(r.note||"Aucun transcript pour cet agent","info"); return; }
+      var host=document.getElementById("modalHost");
+      host.innerHTML='<div data-act="tr-close-bg" style="position:fixed;inset:0;background:rgba(12,9,6,.72);display:flex;align-items:flex-start;justify-content:center;padding:44px 20px;z-index:50;backdrop-filter:blur(2px)">'+
+        '<div class="scr" style="width:100%;max-width:720px;max-height:calc(100vh - 88px);overflow-y:auto;background:#1b1611;border:1px solid #3a2f22;border-radius:15px;box-shadow:0 24px 64px rgba(0,0,0,.55)">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #2b2319;position:sticky;top:0;background:#1b1611">'+
+            '<div><div style="font-size:15px;font-weight:700">Transcript — '+esc(AGENTS[state.sel].name)+'</div>'+
+            '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:#6f665b;margin-top:3px">'+esc(r.sessionId||"")+'</div></div>'+
+            '<button data-act="tr-close" style="background:transparent;border:none;color:#8a8175;font-size:20px;line-height:1;cursor:pointer;padding:2px 6px">×</button>'+
+          '</div>'+
+          '<div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">'+
+            r.turns.map(function(x){
+              var isU=x.role==="user";
+              return '<div><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:'+(isU?"#6b9bd1":ACCENT)+';margin-bottom:4px">'+(isU?"UTILISATEUR / SYSTÈME":"AGENT")+'</div>'+
+                '<div style="white-space:pre-wrap;font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;line-height:1.55;color:#c4bbaf;background:#120e0a;border:1px solid #241d15;border-radius:8px;padding:9px 11px">'+esc(x.text)+'</div></div>';
+            }).join("")+
+          '</div>'+
+        '</div></div>';
+      host.querySelector('[data-act="tr-close-bg"]').addEventListener("click",function(e){ if(e.target===this) host.innerHTML=""; });
+      host.querySelector('[data-act="tr-close"]').addEventListener("click",function(){ host.innerHTML=""; });
+    }).catch(function(){ tt.close(); toast("Transcript indisponible","bad"); });
+  }
+
   function createAgent(){
     var f=state.form; if(!f.name.trim()) return;
     if(SERVED){
+      var nm=f.name.trim();
       apiJSON("/pilote/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(f)})
         .then(function(r){ state.showNew=false; if(r&&r.id) state.sel=r.id; renderModal(); return loadData(); })
-        .then(function(){ renderApp(); })
-        .catch(function(){ alert("Échec de création de l'agent (voir la console serveur)."); });
+        .then(function(){ renderApp(); toast("Agent « "+nm+" » créé — clique « Lancer » pour un premier run","ok",{ms:5000}); })
+        .catch(function(){ toast("Échec de création de l'agent (voir console serveur)","err"); });
       return;
     }
     var id="agent"+(state.seq+1);
@@ -551,7 +619,7 @@
       mission:["1. À définir dans MISSION.md du dossier."],
       queue:[], history:[]
     };
-    state.seq++; state.showNew=false; state.sel=id; state.memTab=0;
+    state.seq++; state.showNew=false; state.sel=id;
     state.enabled[id]=true; state.queues[id]=[];
     renderModal(); renderApp();
   }
@@ -559,9 +627,38 @@
   // ── Données réelles (repli gracieux sur la démo) ─────────────────────
   function apiJSON(url,opts){ return fetch(url,opts).then(function(r){ if(!r.ok) throw new Error("http "+r.status); return r.json(); }); }
 
+  // ── Retour utilisateur : toasts ──────────────────────────────────────
+  var _toastHost=null;
+  function toastHost(){ if(!_toastHost){ _toastHost=document.createElement("div"); _toastHost.id="toasts"; document.body.appendChild(_toastHost); } return _toastHost; }
+  function toast(msg, kind, opts){
+    opts=opts||{}; kind=kind||"info";
+    var el=document.createElement("div"); el.className="toast "+kind;
+    el.innerHTML=(kind==="pending"?'<span class="tspin"></span>':'')+'<span class="tmsg"></span><span class="tclose">×</span>';
+    el.querySelector(".tmsg").textContent=msg;
+    toastHost().appendChild(el);
+    var timer=null;
+    function remove(){ if(!el.parentNode) return; el.style.transition="opacity .2s"; el.style.opacity="0"; setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); },200); }
+    function schedule(ms){ if(timer) clearTimeout(timer); if(ms) timer=setTimeout(remove,ms); }
+    el.querySelector(".tclose").addEventListener("click",remove);
+    if(kind!=="pending") schedule(opts.ms||3800);
+    return { update:function(m,k){ k=k||"info"; el.className="toast "+k; var sp=el.querySelector(".tspin"); if(sp) sp.remove(); el.querySelector(".tmsg").textContent=m; schedule(opts.ms||3800); }, close:remove };
+  }
+  // Action serveur avec toast pending → ok/err + rechargement des données.
+  function action(url, opts, msgs){
+    var tt=toast(msgs.pending||"…","pending");
+    return apiJSON(url, opts||{method:"POST"}).then(function(r){
+      tt.update((typeof msgs.ok==="function"?msgs.ok(r):msgs.ok)||"Fait","ok");
+      return loadData().then(renderApp);
+    }).catch(function(err){ tt.update(msgs.err||"Échec de l'action","err"); throw err; });
+  }
+
   function loadData(){
     return apiJSON("/pilote/api/data").then(function(d){
       SERVED=true;
+      // La pause est un état SERVEUR (crons réellement désarmés) — plus un état client
+      // qui « oubliait » au rafraîchissement en laissant croire que tout était suspendu.
+      if(d && d.daemon && typeof d.daemon.paused==="boolean") state.daemonOn=!d.daemon.paused;
+      if(d && typeof d.active==="boolean") state.gateOpen=d.active; // gate dormante réelle
       if(d && d.agents && d.agents.length){
         DEMO=false;
         var obj={}, en={}, q={};
@@ -576,42 +673,83 @@
   function isReal(){ var a=AGENTS[state.sel]; return !DEMO && a && a.real; }
 
   // ── Delegated events on the app shell ────────────────────────────────
+  // Déverrouille « Valider » dès que tous les champs manquants sont renseignés,
+  // sans re-render (sinon la saisie en cours serait perdue).
+  function refreshRowGate(el){
+    var row=el.closest&&el.closest("[data-qrow]"); if(!row) return;
+    var ctrls=row.querySelectorAll("[data-need-path]");
+    var filled=Array.prototype.every.call(ctrls,function(x){ return x.value!==""&&x.value!=null; });
+    var blocked=!filled||row.getAttribute("data-legacy")==="1";
+    var ok=row.querySelector('[data-act="q-ok"]'); if(!ok) return;
+    if(blocked){ ok.setAttribute("data-blocked","1"); ok.style.opacity=".45"; ok.style.cursor="not-allowed"; }
+    else { ok.removeAttribute("data-blocked"); ok.style.opacity="1"; ok.style.cursor="pointer"; }
+  }
+  ["input","change"].forEach(function(ev){
+    document.getElementById("app").addEventListener(ev,function(e){
+      if(e.target&&e.target.getAttribute&&e.target.getAttribute("data-need-path")!=null) refreshRowGate(e.target);
+    });
+  });
+
   document.getElementById("app").addEventListener("click",function(e){
     var t=e.target.closest("[data-act]"); if(!t) return;
     var act=t.getAttribute("data-act");
-    if(act==="sel"){ state.sel=t.getAttribute("data-id"); state.memTab=0; renderApp(); }
+    var a=AGENTS[state.sel];
+    if(act==="sel"){ state.sel=t.getAttribute("data-id"); renderApp(); }
     else if(act==="new"){ state.showNew=true; state.form=blankForm(); renderModal(); }
-    else if(act==="daemon"){ state.daemonOn=!state.daemonOn; renderApp(); }
+    else if(act==="transcript"){ showTranscript(); }
+    else if(act==="daemon"){
+      var pausing=state.daemonOn; // on veut mettre en pause si actuellement actif
+      if(SERVED){
+        action("/pilote/api/daemon",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paused:pausing})},
+          {pending:pausing?"Mise en pause…":"Réactivation…",ok:pausing?"Crons désarmés — les agents ne se déclencheront pas":"Crons réarmés"}).catch(function(){});
+      } else { state.daemonOn=!state.daemonOn; renderApp(); }
+    }
     else if(act==="toggle-active"){
-      if(isReal()){ apiJSON("/pilote/api/agent/"+state.sel+"/toggle",{method:"POST"}).then(loadData).then(renderApp).catch(function(){}); }
+      if(isReal()){ var willOn=!state.enabled[state.sel]; action("/pilote/api/agent/"+state.sel+"/toggle",{method:"POST"},{pending:"…",ok:willOn?"Agent activé":"Agent désactivé"}).catch(function(){}); }
       else { state.enabled[state.sel]=!state.enabled[state.sel]; renderApp(); }
     }
-    else if(act==="validate-all"){ state.queues[state.sel]=[]; renderApp(); }
-    else if(act==="q-ok"||act==="q-no"){
-      var id=t.getAttribute("data-id");
+    else if(act==="validate-all"){
       if(isReal()){
-        apiJSON("/pilote/api/agent/"+state.sel+"/decide",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actionId:id,decision:act==="q-ok"?"approve":"reject"})}).then(loadData).then(renderApp).catch(function(){});
+        var ids=(a&&a.queue?a.queue:[]).map(function(q){ return q.id; });
+        if(!ids.length) return;
+        var tt=toast("Validation de "+ids.length+" proposition(s)…","pending");
+        Promise.all(ids.map(function(id){ return apiJSON("/pilote/api/agent/"+state.sel+"/decide",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actionId:id,decision:"approve"})}).catch(function(){}); }))
+          .then(function(){ tt.update(ids.length+" proposition(s) validée(s)","ok"); return loadData().then(renderApp); });
+      } else { state.queues[state.sel]=[]; renderApp(); }
+    }
+    else if(act==="q-ok"||act==="q-no"||act==="q-force"){
+      var id=t.getAttribute("data-id");
+      if(act==="q-ok" && t.getAttribute("data-blocked")) return; // champs manquants : validation verrouillée
+      var approve=(act!=="q-no");
+      var forced=(act==="q-force");
+      var payload={ actionId:id, decision:approve?"approve":"reject" };
+      if(approve){
+        var row=t.closest("[data-qrow]");
+        if(row){
+          var res={};
+          Array.prototype.forEach.call(row.querySelectorAll("[data-need-path]"),function(el){
+            if(el.value!==""&&el.value!=null) res[el.getAttribute("data-need-path")]=el.value;
+          });
+          if(Object.keys(res).length) payload.resolved=res;
+        }
+        if(forced) payload.forced=true;
+      }
+      if(isReal()){
+        action("/pilote/api/agent/"+state.sel+"/decide",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)},{pending:approve?"Validation…":"Rejet…",ok:approve?"Validé — clique « Appliquer » pour exécuter":"Proposition rejetée"}).catch(function(){});
       } else {
         state.queues[state.sel]=(state.queues[state.sel]||[]).filter(function(x){ return x!==id; }); renderApp();
       }
     }
     else if(act==="apply"){
-      if(isReal()){
-        t.textContent="Application…"; t.style.opacity="0.7";
-        apiJSON("/pilote/api/agent/"+state.sel+"/apply",{method:"POST"}).then(loadData).then(renderApp).catch(function(){ renderApp(); });
-      }
+      if(isReal()){ t.textContent="Application…"; t.disabled=true; action("/pilote/api/agent/"+state.sel+"/apply",{method:"POST"},{pending:"Application en cours… (l'agent exécute les écritures validées)",ok:"Actions appliquées"}).catch(function(){}); }
     }
-    else if(act==="memtab"){ state.memTab=Number(t.getAttribute("data-i")); renderApp(); }
     else if(act==="run"){
-      t.style.animation="flashok .3s ease"; setTimeout(function(){ t.style.animation=""; },300);
-      if(isReal()){ apiJSON("/pilote/api/agent/"+state.sel+"/fire",{method:"POST"}).then(loadData).then(renderApp).catch(function(){}); }
+      if(isReal()){ t.disabled=true; action("/pilote/api/agent/"+state.sel+"/fire",{method:"POST"},{pending:"Lancement de « "+(a?a.name:"agent")+" »… (1-3 min)",ok:"Run terminé"}).catch(function(){}); }
+      else { toast("Démo — lancement simulé","info"); }
     }
     else if(act==="continue"){
-      var ca=AGENTS[state.sel];
-      if(isReal() && ca && ca.canResume){
-        t.style.animation="flashok .3s ease"; setTimeout(function(){ t.style.animation=""; },300);
-        apiJSON("/pilote/api/agent/"+state.sel+"/continue",{method:"POST"}).then(loadData).then(renderApp).catch(function(){});
-      } else if(DEMO){ t.style.animation="flashok .3s ease"; setTimeout(function(){ t.style.animation=""; },300); }
+      if(isReal() && a && a.canResume){ t.disabled=true; action("/pilote/api/agent/"+state.sel+"/continue",{method:"POST"},{pending:"Reprise de la session…",ok:"Session reprise"}).catch(function(){}); }
+      else if(DEMO){ toast("Démo — reprise simulée","info"); }
     }
   });
 

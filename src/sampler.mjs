@@ -429,6 +429,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     allowedTools = null,    // --allowedTools (tableau ou chaîne CSV)
   } = options;
   const maxTurns = options.maxTurns ?? options.max_turns ?? null; // --max-turns (bornage contexte)
+  const appendSystemPrompt = options.appendSystemPrompt ?? options.append_system_prompt ?? null; // contrat proposeur générique
 
   const claudeBin = findClaudeBin();
   if (!claudeBin) {
@@ -498,6 +499,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     if (model) baseArgs.push("--model", model);
     if (allowedTools) baseArgs.push("--allowedTools", Array.isArray(allowedTools) ? allowedTools.join(",") : String(allowedTools));
     if (maxTurns) baseArgs.push("--max-turns", String(maxTurns));
+    if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
     if (resumeSessionId) {
       baseArgs.push("--resume", resumeSessionId);
     }

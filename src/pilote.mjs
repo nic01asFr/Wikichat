@@ -15,7 +15,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { listTriggers, getTrigger, registerTrigger, setEnabled, deleteTrigger, fireTrigger } from "./triggers.mjs";
 import { loadSpawnRegistry } from "./persistence.mjs";
-import { isActive } from "./dormant.mjs";
+import { isActive, onWake } from "./dormant.mjs";
 import { spawnHeadless } from "./sampler.mjs";
 
 // ── Page ────────────────────────────────────────────────────────────────────
@@ -27,11 +27,81 @@ export function handlePilotePage(_req, res) {
 // Espace de travail neutre de l'architecte (évite de polluer le repo courant).
 const ARCHITECT_DIR = path.join(os.tmpdir(), "wikichat-architect");
 
+// Applications en vol (une seule par agent — garde anti-doublon).
+const _applying = new Set();
+// État de pause du pilote, persisté pour survivre aux redémarrages.
+const PAUSE_FILE = path.join(os.homedir(), ".wikichat", "pilote-pause.json");
+
+// ── Contrat proposeur générique ─────────────────────────────────────────────
+// Injecté via --append-system-prompt dans TOUT agent créé depuis le pilote (pas
+// dans l'applicateur). La SOP de chaque agent reste purement métier ; la plomberie
+// (proposer, apply-spec auto-configuré, needs, curseur, jamais d'écriture directe)
+// est héritée d'ici, en un seul endroit, pour tous les agents.
+const PROPOSER_CONTRACT = [
+  "CONTRAT PROPOSEUR (WikiChat Pilote) — s'applique à toi, en plus de ta mission :",
+  "- Tu PROPOSES ; tu n'exécutes JAMAIS toi-même d'écriture externe (Grist/Gmail/GitHub/API). Lecture + proposition + écriture de fichiers locaux uniquement.",
+  "- Idempotence : lis puis réécris un curseur .wikichat/cursor.json pour ne pas retraiter les mêmes données d'un run à l'autre.",
+  "- Pour CHAQUE écriture externe souhaitée, produis un objet action AUTO-CONFIGURÉ :",
+  "   1) introspecte d'abord le schéma/format de la cible avec tes outils de LECTURE (ex Grist : list_tables puis list_columns) — ne devine pas les colonnes,",
+  "   2) remplis apply = { \"tool\": \"<outil d'écriture>\", \"doc\"|\"target\": \"...\", \"table\": \"...\", \"fields\": { valeurs exactes } },",
+  "   3) mets dans \"needs\" un tableau d'objets STRUCTURÉS, un par champ que tu n'as PAS pu résoudre avec certitude : {\"field\":\"<nom>\",\"path\":\"apply.fields.<Colonne>\",\"question\":\"<question courte>\",\"options\":[<valeurs valides issues de ton introspection, si applicable>],\"value\":null}. Le \"path\" DOIT pointer le champ exact à corriger dans apply. Propose les options RÉELLES lues dans la cible (ex : valeurs de la table Categories) — l'utilisateur tranchera dans l'interface ; ne devine jamais à sa place.",
+  "- ID STABLE : chaque action porte un \"id\" déterministe, dérivé de la donnée source (ex \"prelev-bpmed-20260706-107.24\") — le MÊME fait source doit toujours produire le MÊME id, d'un run à l'autre.",
+  "- FUSION, JAMAIS D'ÉCRASEMENT : lis d'abord .wikichat/proposed-actions.json s'il existe. CONSERVE toutes les entrées existantes (surtout status \"applied\" / \"rejected\" / \"approved\" — c'est l'historique et le garde-fou anti-doublon). N'AJOUTE que les actions dont l'id n'est pas déjà présent. Ne re-propose JAMAIS un id déjà présent, quel que soit son status.",
+  "- Écris le tableau FUSIONNÉ dans .wikichat/proposed-actions.json : objets {id,title,sub,kind,amount,status:\"pending\",apply,needs}. Écriture atomique via Bash (fichier tmp puis mv), PUIS vérifie par `cat` — ne conclus pas tant que le JSON ne s'affiche pas.",
+  "- Ne mets JAMAIS toi-même status \"approved\" ou \"applied\" : seul l'utilisateur valide, seul l'applicateur applique."
+].join("\n");
+
 // ── Détection réelle des outils disponibles ─────────────────────────────────
 // Built-ins Claude Code sûrs pour des agents planifiés + serveurs MCP réels de
 // l'utilisateur (via `claude mcp list`, mis en cache 5 min car il fait des
 // health-checks réseau lents).
 const BUILTIN_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"];
+
+// ── Scopes lecture/écriture par serveur MCP ─────────────────────────────────
+// L'agent proposeur ne doit PAS pouvoir écrire : on ne lui accorde que les outils
+// de LECTURE (granularité mcp__serveur__outil). Seul l'applicateur reçoit les
+// outils d'écriture. C'est ce qui transforme « il ne doit pas écrire » (consigne
+// dans un prompt) en « il ne peut pas écrire » (permission CLI).
+// NB BigMCP est une passerelle : son meta-outil `execute` peut invoquer n'importe
+// quel outil (y compris d'écriture) → il est classé en WRITE, jamais donné au proposeur.
+const MCP_TOOL_SCOPES = {
+  "mcp__claude_ai_Gmail": {
+    read: ["search_threads", "get_thread", "get_message", "list_labels", "list_drafts"],
+    write: ["label_thread", "label_message", "unlabel_thread", "unlabel_message", "create_draft",
+            "apply_sensitive_thread_label", "apply_sensitive_message_label", "create_label"]
+  },
+  "mcp__claude_ai_BigMCP": {
+    read: ["search", "describe_tool",
+           "Grist__list_organizations", "Grist__list_workspaces", "Grist__list_documents",
+           "Grist__describe_document", "Grist__list_tables", "Grist__list_columns",
+           "Grist__get_table_schema", "Grist__list_records", "Grist__execute_sql_query",
+           "Grist__filter_sql_query", "Grist__export_schema"],
+    write: ["execute",
+            "Grist__add_grist_records", "Grist__add_grist_records_safe",
+            "Grist__update_grist_records", "Grist__delete_grist_records",
+            "Grist__create_table", "Grist__create_column", "Grist__modify_column"]
+  }
+};
+
+/**
+ * Développe une sélection coarse (["Bash","mcp__claude_ai_Gmail"]) en tokens
+ * --allowedTools effectifs. mode="read" → outils de lecture seuls ;
+ * mode="write" → lecture + écriture (réservé à l'applicateur).
+ * Un serveur inconnu de la carte est laissé tel quel (coarse) — on ne peut pas
+ * garantir la lecture seule pour lui, c'est signalé par unscoped.
+ */
+export function expandTools(list, mode) {
+  const out = [], unscoped = [];
+  (Array.isArray(list) ? list : []).forEach((t) => {
+    if (BUILTIN_TOOLS.includes(t)) { out.push(t); return; }
+    const scope = MCP_TOOL_SCOPES[t];
+    if (!scope) { out.push(t); if (String(t).indexOf("mcp__") === 0) unscoped.push(t); return; }
+    scope.read.forEach((s) => out.push(t + "__" + s));
+    if (mode === "write") scope.write.forEach((s) => out.push(t + "__" + s));
+  });
+  return { tools: [...new Set(out)], unscoped };
+}
+
 let _mcpCache = null, _mcpAt = 0;
 
 function detectMcpServers() {
@@ -137,6 +207,45 @@ function isPiloteTrigger(t) {
   return t && t.type === "cron" && t.action && t.action.type === "spawn_session";
 }
 
+// Normalise les "needs" en objets exploitables par l'UI. Un need résoluble porte
+// un "path" (ex "apply.fields.Categorie") ; les anciens needs en texte libre sont
+// conservés en lecture seule (non résolubles → validation à forcer explicitement).
+function normalizeNeeds(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((n, i) => {
+    if (typeof n === "string") {
+      return { field: null, path: null, question: n, options: [], value: null, legacy: true };
+    }
+    n = n || {};
+    return {
+      field: n.field || null,
+      path: (typeof n.path === "string" && n.path.indexOf("apply.") === 0) ? n.path : null,
+      question: n.question || n.field || ("champ " + (i + 1)),
+      options: Array.isArray(n.options) ? n.options.map(String) : [],
+      value: (n.value === undefined || n.value === "") ? null : n.value,
+      legacy: false
+    };
+  });
+}
+
+// Écrit une valeur à un chemin pointé, restreint à "apply.*" (garde anti-pollution).
+function setApplyPath(action, dotted, value) {
+  if (typeof dotted !== "string" || dotted.indexOf("apply.") !== 0) return false;
+  const parts = dotted.split(".");
+  const unsafe = (k) => k === "__proto__" || k === "constructor" || k === "prototype";
+  let cur = action;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (unsafe(k)) return false;
+    if (typeof cur[k] !== "object" || cur[k] === null) cur[k] = {};
+    cur = cur[k];
+  }
+  const last = parts[parts.length - 1];
+  if (unsafe(last)) return false;
+  cur[last] = value;
+  return true;
+}
+
 function readProposedActions(dir) {
   try {
     if (!dir || dir.startsWith("~")) return [];
@@ -151,7 +260,9 @@ function readProposedActions(dir) {
       title: a.title || a.summary || "Action proposée",
       sub: a.sub || a.detail || "",
       amount: a.amount || "",
-      status: a.status || "pending"
+      status: a.status || "pending",
+      needs: normalizeNeeds(a.needs),
+      apply: a.apply || null
     })).filter((x) => x.status === "pending");
   } catch { return []; }
 }
@@ -181,8 +292,15 @@ function triggerToAgent(t, registry, now) {
 
   const nextDate = t.enabled ? cronNext(cfg.schedule, now) : null;
 
-  const tools = Array.isArray(p.allowedTools) && p.allowedTools.length
-    ? p.allowedTools.map((n) => ({ name: n, perm: "--allowedTools" }))
+  // On affiche la sélection lisible (serveurs), pas les dizaines de tokens granulaires.
+  const scopeSel = (Array.isArray(p.servers) && p.servers.length) ? p.servers
+    : (Array.isArray(p.allowedTools) ? p.allowedTools : []);
+  const scoped = Array.isArray(p.servers) && p.servers.length; // créé avec le split lecture/écriture
+  const tools = scopeSel.length
+    ? scopeSel.map((n) => ({
+        name: n.indexOf("mcp__") === 0 ? n.replace(/^mcp__/, "").replace(/^claude_ai_/, "") : n,
+        perm: n.indexOf("mcp__") === 0 ? (scoped ? "lecture seule" : "accès complet") : "intégré"
+      }))
     : [{ name: "hérités du dossier", perm: ".mcp.json" }];
 
   const mission = String(p.initial_task || p.prompt || "(mission définie dans la SOP du dossier)")
@@ -257,11 +375,72 @@ export function handlePiloteData(_req, res) {
     });
   } catch { /* */ }
 
+  const paused = readPause().paused;
   res.json({
     active: safeActive(),
-    daemon: { armed, total: agents.length, wake: humanNext(wakeDate, now), wakeAgent },
+    daemon: { armed, total: agents.length, wake: humanNext(wakeDate, now), wakeAgent, paused },
     agents
   });
+}
+
+// ── Pause réelle du pilote ──────────────────────────────────────────────────
+// Mettre en pause DÉSACTIVE réellement les triggers cron des agents (et mémorise
+// lesquels l'étaient) ; réactiver les restaure. Persisté → survit au redémarrage.
+function readPause() {
+  try { return JSON.parse(fs.readFileSync(PAUSE_FILE, "utf8")); }
+  catch { return { paused: false, wasEnabled: [] }; }
+}
+function writePause(o) {
+  try { fs.mkdirSync(path.dirname(PAUSE_FILE), { recursive: true }); fs.writeFileSync(PAUSE_FILE, JSON.stringify(o, null, 2)); }
+  catch { /* non bloquant */ }
+}
+
+// ── Rattrapage au réveil ────────────────────────────────────────────────────
+// Un cron ne peut pas partir pendant que la gate dormante est fermée (pas de
+// session active) : le run est simplement sauté. Plutôt que de stocker une file
+// de jobs (qui dupliquerait l'état), on recalcule ce qui a été manqué à partir
+// de schedule + last_fired — les deux seules sources de vérité — et on relance
+// UNE fois par agent. Le curseur de chaque agent absorbe le retard accumulé.
+async function catchupMissed() {
+  if (readPause().paused) return;
+  const now = new Date();
+  const due = listTriggers().filter(isPiloteTrigger).filter((t) => t.enabled !== false).filter((t) => {
+    const since = t.last_fired ? new Date(t.last_fired) : (t.created_at ? new Date(t.created_at) : null);
+    if (!since || isNaN(since.getTime())) return false;
+    const next = cronNext((t.config || {}).schedule, since);
+    return !!(next && next <= now);
+  });
+  for (const t of due) {
+    // Pas de force : on hérite des garde-fous existants (cooldown, cap/jour, dormant).
+    try { await fireTrigger(t.id, { source: "catchup" }); } catch { /* non bloquant */ }
+  }
+}
+
+/** À appeler une fois au boot : relance les agents en retard dès que la gate s'ouvre. */
+export function startPiloteCatchup() {
+  onWake(() => { catchupMissed().catch(() => { /* non bloquant */ }); });
+}
+
+export function handlePiloteDaemon(req, res) {
+  const want = !!(req.body && req.body.paused);
+  const st = readPause();
+  try {
+    if (want && !st.paused) {
+      const wasEnabled = listTriggers().filter(isPiloteTrigger).filter((t) => t.enabled !== false).map((t) => t.id);
+      wasEnabled.forEach((id) => setEnabled(id, false));
+      writePause({ paused: true, wasEnabled, at: new Date().toISOString() });
+      return res.json({ ok: true, paused: true, disabled: wasEnabled.length });
+    }
+    if (!want && st.paused) {
+      const ids = st.wasEnabled || [];
+      ids.forEach((id) => { if (getTrigger(id)) setEnabled(id, true); });
+      writePause({ paused: false, wasEnabled: [] });
+      return res.json({ ok: true, paused: false, restored: ids.length });
+    }
+    res.json({ ok: true, paused: st.paused });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 }
 
 function safeRegistry() { try { return loadSpawnRegistry(); } catch { return []; } }
@@ -297,8 +476,12 @@ export function handlePiloteCreate(req, res) {
   if (!name) return res.status(400).json({ ok: false, error: "nom requis" });
   const schedule = String(b.freq || "0 8 * * *").trim();
   const tools = Array.isArray(b.tools) && b.tools.length ? b.tools : ["Bash"];
+  const readScope = expandTools(tools, "read"); // le proposeur ne reçoit que la lecture
   try {
     const spec = {
+      // id fourni → remplacement en place (registerTrigger conserve id + stats) :
+      // permet de migrer/éditer un agent sans casser son historique ni sa session.
+      ...(b.id ? { id: String(b.id) } : {}),
       type: "cron",
       config: { schedule, tz: b.tz || "Europe/Paris" },
       action: {
@@ -309,8 +492,10 @@ export function handlePiloteCreate(req, res) {
           role: b.desc || "",
           mode: "headless",
           model: b.model || "sonnet",
-          allowedTools: tools,
+          servers: tools,                // sélection coarse — source pour l'applicateur
+          allowedTools: readScope.tools, // proposeur : LECTURE SEULE (garantie par permission)
           max_turns: b.max_turns != null ? Number(b.max_turns) : 15,
+          append_system_prompt: PROPOSER_CONTRACT,
           initial_task: b.mission || "",
           prompt: b.mission || ""
         }
@@ -321,7 +506,7 @@ export function handlePiloteCreate(req, res) {
       description: b.desc || name
     };
     const t = registerTrigger(spec);
-    res.json({ ok: true, id: t.id });
+    res.json({ ok: true, id: t.id, readOnly: readScope.tools, unscoped: readScope.unscoped });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -336,6 +521,8 @@ export function handlePiloteDecide(req, res) {
   const dir = (t.action && t.action.params && t.action.params.repo_path) || "";
   const body = req.body || {};
   const decision = body.decision === "reject" ? "rejected" : "approved";
+  const resolved = (body.resolved && typeof body.resolved === "object") ? body.resolved : null;
+  const patched = {};
   if (!dir || dir.startsWith("~")) return res.json({ ok: true, persisted: false, note: "dossier non résolu — décision non persistée" });
   try {
     const p = path.join(dir, ".wikichat", "proposed-actions.json");
@@ -344,12 +531,23 @@ export function handlePiloteDecide(req, res) {
     const arr = Array.isArray(raw) ? raw : (raw.actions || []);
     let found = false;
     arr.forEach((a, i) => {
-      if ((a.id || ("p" + i)) === body.actionId) { a.status = decision; a.decided_at = new Date().toISOString(); found = true; }
+      if ((a.id || ("p" + i)) !== body.actionId) return;
+      // Résolutions saisies par l'utilisateur : on patche apply.* AVANT d'approuver,
+      // pour que l'applicateur écrive exactement ce qui a été choisi.
+      if (decision === "approved" && resolved) {
+        Object.keys(resolved).forEach((k) => {
+          if (setApplyPath(a, k, resolved[k])) {
+            patched[k] = resolved[k];
+            if (Array.isArray(a.needs)) a.needs.forEach((n) => { if (n && n.path === k) n.value = resolved[k]; });
+          }
+        });
+      }
+      a.status = decision; a.decided_at = new Date().toISOString(); found = true;
     });
     if (!found) return res.status(404).json({ ok: false, error: "action introuvable" });
     fs.writeFileSync(p, JSON.stringify(raw, null, 2));
-    try { fs.appendFileSync(path.join(dir, ".wikichat", "decisions.jsonl"), JSON.stringify({ at: new Date().toISOString(), actionId: body.actionId, decision }) + "\n"); } catch { /* */ }
-    res.json({ ok: true, persisted: true, decision });
+    try { fs.appendFileSync(path.join(dir, ".wikichat", "decisions.jsonl"), JSON.stringify({ at: new Date().toISOString(), actionId: body.actionId, decision, resolved: patched, forced: !!body.forced }) + "\n"); } catch { /* */ }
+    res.json({ ok: true, persisted: true, decision, resolved: patched });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -365,6 +563,10 @@ export async function handlePiloteApply(req, res) {
   const dir = p.repo_path || "";
   if (!dir || dir.startsWith("~")) return res.status(400).json({ ok: false, error: "dossier de travail non résolu" });
   if (countApproved(dir) === 0) return res.json({ ok: true, applied: 0, note: "aucune action validée à appliquer" });
+  // Verrou anti-doublon : une seule application en vol par agent. Sans ça, deux
+  // clics (ou deux appels) lancent deux applicateurs qui écrivent chacun la ligne.
+  if (_applying.has(t.id)) return res.status(409).json({ ok: false, error: "une application est déjà en cours pour cet agent" });
+  _applying.add(t.id);
 
   const applyPrompt = [
     "Tâche : appliquer les actions VALIDÉES par l'utilisateur.",
@@ -382,13 +584,18 @@ export async function handlePiloteApply(req, res) {
       name: (p.name || t.id) + "-apply",
       role: "applicateur",
       model: p.model || "sonnet",
-      allowedTools: p.allowedTools || null,
+      // Seul l'applicateur obtient les outils d'ÉCRITURE (le proposeur est en lecture seule).
+      allowedTools: expandTools(p.servers || p.allowedTools, "write").tools,
       maxTurns: p.max_turns || 15,
       spawnedBy: "trigger:" + t.id + ":apply"
     });
-    res.json({ ok: !!r.success, exitCode: r.exitCode, sessionId: r.sessionId || null });
+    // Contrôle post-application : ce qui reste "approved" n'a PAS été appliqué.
+    const leftover = countApproved(dir);
+    res.json({ ok: !!r.success, exitCode: r.exitCode, sessionId: r.sessionId || null, notApplied: leftover });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    _applying.delete(t.id);
   }
 }
 
@@ -415,10 +622,62 @@ export async function handlePiloteContinue(req, res) {
       model: p.model || "sonnet",
       allowedTools: p.allowedTools || null,
       maxTurns: p.max_turns || 15,
+      appendSystemPrompt: p.append_system_prompt || null,
       resumeSessionId: sid,
       spawnedBy: "trigger:" + t.id + ":resume"
     });
     res.json({ ok: !!r.success, exitCode: r.exitCode, resumedFrom: sid, sessionId: r.sessionId || null });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+// ── Transcript : retrouve le .jsonl de la dernière session et en extrait les tours ──
+// Claude Code stocke les sessions sous ~/.claude/projects/<slug>/<sessionId>.jsonl ;
+// le slug dépend du cwd, donc on cherche le fichier par son nom plutôt que de le deviner.
+function findSessionFile(sessionId) {
+  const root = path.join(os.homedir(), ".claude", "projects");
+  const target = sessionId + ".jsonl";
+  try {
+    for (const d of fs.readdirSync(root)) {
+      const f = path.join(root, d, target);
+      if (fs.existsSync(f)) return f;
+    }
+  } catch { /* pas de dossier projects */ }
+  return null;
+}
+
+export function handlePiloteTranscript(req, res) {
+  const t = getTrigger(req.params.id);
+  if (!t) return res.status(404).json({ ok: false, error: "trigger introuvable" });
+  const spawns = safeRegistry()
+    .filter((e) => String(e.spawned_by || "").indexOf("trigger:" + t.id + ":") === 0)
+    .sort((a, b) => new Date(b.spawned_at || 0) - new Date(a.spawned_at || 0));
+  const withSession = spawns.find((e) => e.claude_session_id || e.session_id);
+  if (!withSession) return res.json({ ok: true, turns: [], note: "aucune session enregistrée pour cet agent" });
+  const sid = withSession.claude_session_id || withSession.session_id;
+  const file = findSessionFile(sid);
+  if (!file) return res.json({ ok: true, sessionId: sid, turns: [], note: "transcript introuvable (session purgée ?)" });
+  try {
+    const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean);
+    const turns = [];
+    for (const line of lines) {
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      const m = o.message || o;
+      const role = m.role || o.type;
+      if (role !== "user" && role !== "assistant") continue;
+      let text = "";
+      const c = m.content;
+      if (typeof c === "string") text = c;
+      else if (Array.isArray(c)) {
+        text = c.map((b) => b && b.type === "text" ? b.text
+          : (b && b.type === "tool_use" ? "→ " + b.name
+          : (b && b.type === "tool_result" ? "← résultat" : ""))).filter(Boolean).join("\n");
+      }
+      text = String(text || "").trim();
+      if (text) turns.push({ role, text: text.slice(0, 1200) });
+    }
+    res.json({ ok: true, sessionId: sid, file, at: withSession.spawned_at || null, turns: turns.slice(-40) });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -493,11 +752,8 @@ export async function handlePiloteArchitect(req, res) {
     "Règles de conception impératives :",
     "- Moindre privilège : n'autorise QUE les outils strictement nécessaires (allowedTools).",
     "- Modèle adapté : 'haiku' pour surveillance/tri simple, 'sonnet' pour classement/extraction/rédaction, 'opus' uniquement pour raisonnement complexe.",
-    "- Agent NON destructif : il PROPOSE ses actions dans .wikichat/proposed-actions.json (tableau d'objets {id, title, sub, kind, amount, status:'pending', apply:{...}}) et n'exécute JAMAIS d'écriture externe (Grist/Gmail/API) sans validation humaine.",
-    "- Application DÉTERMINISTE : chaque proposition DOIT porter un objet \"apply\" machine-exécutable décrivant l'écriture EXACTE que l'applicateur fera après validation — jamais une consigne vague. Ex Grist : apply={\"tool\":\"add_grist_records\",\"doc\":\"<docId>\",\"table\":\"<Table>\",\"fields\":{...}} où fields mappe les VRAIES colonnes (obtenues via list_columns à l'exécution). Ex Gmail : apply={\"op\":\"archive|label\",\"threadId\":\"...\",\"label\":\"...\"}. L'applicateur exécutera cet objet TEL QUEL, sans deviner.",
-    "- Idempotence : lit et met à jour un curseur .wikichat/<slug>-cursor.json pour ne pas retraiter les mêmes données.",
-    "- Persistance VÉRIFIÉE : la mission se termine TOUJOURS par — écrire proposed-actions.json via Bash, PUIS le relire avec `cat` et ne conclure que si le JSON s'affiche (un agent headless résume sinon sans persister le fichier).",
     "- Bornage : max_turns entre 8 et 20.",
+    "- PLOMBERIE HÉRITÉE : un contrat système commun est déjà injecté dans l'agent (il PROPOSE dans .wikichat/proposed-actions.json ; pour chaque écriture il produit un objet apply auto-configuré + needs APRÈS introspection du schéma cible ; il gère un curseur ; il écrit puis vérifie par cat ; il n'écrit JAMAIS directement dans Grist/Gmail). NE répète PAS cette plomberie dans la mission.",
     "",
     "Le champ \"tools\" ne contient QUE des identifiants EXACTS de la liste ci-dessous (outils réellement disponibles), jamais de noms inventés. Inclus TOUJOURS Bash (lecture/écriture du curseur et de proposed-actions.json), et le strict nécessaire en plus (moindre privilège ; préfère les connecteurs 'connected') :",
     toolList,
@@ -506,7 +762,7 @@ export async function handlePiloteArchitect(req, res) {
     "Besoin de l'utilisateur :",
     intent,
     "",
-    "La 'mission' doit être une procédure numérotée claire et exécutable : lecture du curseur, traitement, PROPOSITION dans .wikichat/proposed-actions.json, mise à jour du curseur, interdiction d'écrire sans validation.",
+    "La 'mission' décrit UNIQUEMENT la LOGIQUE MÉTIER, en étapes numérotées : quelles données lire (et où), comment les traiter/classer/décider, et QUOI proposer. Ne mentionne pas la mécanique proposed-actions/apply/curseur/cat (héritée du contrat).",
     "",
     "Réponds STRICTEMENT par un unique objet JSON valide, sans prose ni balise markdown, de la forme :",
     '{"name":"","desc":"","dir":"~/...","freq":"m h * * *","tz":"Europe/Paris","model":"haiku|sonnet|opus","tools":["Bash"],"max_turns":10,"cooldown_s":3600,"max_per_day":24,"mission":"1. ...\\n2. ..."}'
