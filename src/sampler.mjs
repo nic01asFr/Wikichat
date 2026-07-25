@@ -33,12 +33,17 @@ let _activeRespawns = 0;
 const MAX_CONCURRENT_RESPAWNS = 3;
 
 // ── Resource budget — global ceiling on live + spawning sessions ──────────────
-const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10");
+const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "30");
 let _pendingSpawns = 0; // processes spawned but not yet MCP-connected
 
-/** Count current load: connected MCP sessions + processes still booting */
+/** Count current load: named MCP sessions + processes still booting.
+ *  Anonymous sessions (name starts with "session-") are excluded — they are
+ *  transient IDE/browser connections that should not consume spawn budget. */
 export function currentLoad() {
-  return state.sessions.size + _pendingSpawns;
+  const namedCount = [...state.sessions.values()].filter(
+    s => s.name && !s.name.startsWith("session-")
+  ).length;
+  return namedCount + _pendingSpawns;
 }
 
 /**
@@ -168,6 +173,43 @@ export function findClaudeBin() {
   return null;
 }
 
+/**
+ * On Windows, npm CLI shims are .cmd files that call: node "path/to/cli.js" %*
+ * Resolving the underlying script lets us spawn node directly — no cmd /c
+ * intermediary, no console window flash, completely background.
+ * Returns { cmd, scriptPath } or null if unresolvable.
+ */
+function resolveWindowsNodeShim(cmdPath) {
+  try {
+    const content = fs.readFileSync(cmdPath, "utf8");
+    const match = content.match(/node(?:\.exe)?\s+"([^"]+)"/i);
+    if (!match) return null;
+    let scriptPath = match[1].replace(/%~dp0/gi, path.dirname(cmdPath) + path.sep);
+    // Normalise separators
+    scriptPath = path.normalize(scriptPath);
+    if (fs.existsSync(scriptPath)) return { cmd: process.execPath, scriptPath };
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Build spawn args for the Claude binary.
+ * On Windows .cmd files: resolve to node + script to avoid cmd /c console flash.
+ */
+export function buildSpawnArgs(claudeBin, extraArgs) {
+  const isWindows = process.platform === "win32";
+  const needsShell = isWindows && (claudeBin.endsWith(".cmd") || claudeBin.endsWith(".bat"));
+  if (needsShell) {
+    const resolved = resolveWindowsNodeShim(claudeBin);
+    if (resolved) {
+      return { cmd: resolved.cmd, args: [resolved.scriptPath, ...extraArgs], resolved: true };
+    }
+    // Fallback: cmd /c (may flash briefly)
+    return { cmd: "cmd", args: ["/c", claudeBin, ...extraArgs], resolved: false };
+  }
+  return { cmd: claudeBin, args: extraArgs, resolved: true };
+}
+
 // ── MCP config injection (safe) ───────────────────────────────────────────────
 
 /**
@@ -197,11 +239,92 @@ function ensureMcpJson(projectPath, port = 3777) {
 const AGENT_PREAMBLE = `
 PROTOCOLE OBLIGATOIRE — MCP-FIRST:
 1. register() sur WikiChat MCP IMMÉDIATEMENT au démarrage. C'est ta première action.
-2. Utilise les tools MCP WikiChat (send_message, share_artifact, etc.) pour TOUTE communication.
-3. Écris aussi ton résultat dans .wikichat/artifacts/<timestamp>_<titre>.md comme backup local.
-4. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
+2. Déclare ta présence : declare_capabilities(skills=[...], current_task="<ce que tu fais>", current_project="<projet>", availability="available").
+   → Permet aux autres agents de te trouver via list_sessions(topic=...) et de te contacter.
+3. Utilise les tools MCP WikiChat (send_message, share_artifact, etc.) pour TOUTE communication.
+4. Pour coordonner avec d'autres : list_sessions(topic="<sujet>") pour trouver qui peut aider,
+   contact_agent(target="<nom>", also_invite=[...], thread="<sujet>") pour ouvrir une discussion suivie.
+5. Écris aussi ton résultat dans .wikichat/artifacts/<timestamp>_<titre>.md comme backup local.
+6. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
    format: {"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>","data":{"title":"...","content":"..."}}
 `;
+
+// ── KB context injection ──────────────────────────────────────────────────────
+
+const KB_DIR = path.join(os.homedir(), ".wikichat", "knowledge");
+
+/**
+ * Load relevant KB axes for a project and return a compact context block.
+ *
+ * Detection strategy (no LLM, pure filesystem, ~0ms):
+ *   1. Explicit topics list (options.kb_topics) — authoritative.
+ *   2. Project name / slug extracted from projectPath basename.
+ *   3. Keywords from first 30 lines of CLAUDE.md (words ≥5 chars, top frequency).
+ * Match: any *-axis.md whose stem contains a keyword (or vice-versa).
+ * Output: TL;DR + DÉCISIONS CLOSES section of each matched axis, capped at 40
+ * lines per axis so the injected block stays small (< 200 lines total).
+ */
+function loadKBContext(projectPath, options = {}) {
+  try {
+    if (!fs.existsSync(KB_DIR)) return "";
+    const axes = fs.readdirSync(KB_DIR).filter(f => f.endsWith("-axis.md"));
+    if (axes.length === 0) return "";
+
+    // Build keyword list
+    const keywords = new Set();
+    if (Array.isArray(options.kb_topics)) {
+      options.kb_topics.forEach(t => keywords.add(String(t).toLowerCase()));
+    }
+    if (projectPath) {
+      keywords.add(path.basename(projectPath).toLowerCase());
+      // Parse CLAUDE.md for frequency keywords
+      try {
+        const cm = path.join(projectPath, "CLAUDE.md");
+        if (fs.existsSync(cm)) {
+          const words = fs.readFileSync(cm, "utf8").split("\n").slice(0, 30).join(" ")
+            .toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/\s+/);
+          const freq = {};
+          for (const w of words) { if (w.length >= 5) freq[w] = (freq[w] || 0) + 1; }
+          Object.entries(freq).filter(([, n]) => n >= 2)
+            .sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .forEach(([w]) => keywords.add(w));
+        }
+      } catch { /* CLAUDE.md unreadable — skip */ }
+    }
+    if (keywords.size === 0) return "";
+
+    // Match axes
+    const matched = axes.filter(f => {
+      const stem = f.replace(/-axis\.md$/, "");
+      return [...keywords].some(k => stem.includes(k) || k.includes(stem));
+    });
+    if (matched.length === 0) return "";
+
+    // Extract compact content: TL;DR + DÉCISIONS CLOSES, max 40 lines each
+    const blocks = [];
+    for (const f of matched.slice(0, 3)) { // cap at 3 axes
+      try {
+        const raw = fs.readFileSync(path.join(KB_DIR, f), "utf8");
+        const lines = raw.split("\n");
+        const out = [];
+        let inSection = false, sectionLines = 0;
+        for (const ln of lines) {
+          if (/^##\s+(TL;DR|DÉCISIONS CLOSES|DECISIONS CLOSES)/i.test(ln)) {
+            inSection = true; sectionLines = 0; out.push(ln); continue;
+          }
+          if (inSection && /^##\s/.test(ln)) { inSection = false; }
+          if (inSection && sectionLines < 40) { out.push(ln); sectionLines++; }
+        }
+        if (out.length > 0) {
+          const topic = f.replace(/-axis\.md$/, "");
+          blocks.push(`### KB: ${topic}\n${out.join("\n").trim()}`);
+        }
+      } catch { /* unreadable axis */ }
+    }
+    if (blocks.length === 0) return "";
+    return `\n\n## Contexte KB (axes pertinents — lis avant d'agir)\n${blocks.join("\n\n")}\n`;
+  } catch { return ""; }
+}
 
 // ── Role injection ───────────────────────────────────────────────────────────
 
@@ -235,8 +358,10 @@ export const PROMPT_TEMPLATES = {
    */
   task: (name, task, options = {}) => {
     const roleContent = options.projectPath ? loadRole(options.projectPath, options.role) : "";
+    const kbContext = options.projectPath ? loadKBContext(options.projectPath, options) : "";
     return AGENT_PREAMBLE +
       (roleContent || `Tu es ${name}, agent WikiChat. `) +
+      kbContext +
       `Ta mission: ${task}. ` +
       `register() puis effectue la mission. ` +
       `Partage le résultat via share_artifact sur WikiChat. ` +
@@ -300,7 +425,11 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     spawnedBy = "wikichat-service",
     resumeSessionId = null, // If set, resumes an existing Claude session
     parentDepth = 0,
+    model = null,           // --model (alias sonnet/opus/haiku ou id complet)
+    allowedTools = null,    // --allowedTools (tableau ou chaîne CSV)
   } = options;
+  const maxTurns = options.maxTurns ?? options.max_turns ?? null; // --max-turns (bornage contexte)
+  const appendSystemPrompt = options.appendSystemPrompt ?? options.append_system_prompt ?? null; // contrat proposeur générique
 
   const claudeBin = findClaudeBin();
   if (!claudeBin) {
@@ -365,20 +494,19 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     let stdout = "";
     let stderr = "";
 
-    // On Windows, .cmd files must be invoked via cmd /c
-    const isWindows = process.platform === "win32";
-    const needsShell = isWindows && (claudeBin.endsWith(".cmd") || claudeBin.endsWith(".bat"));
     const mcpConfigPath = path.join(projectPath, ".mcp.json");
-    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name];
+    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, "--output-format", "json"];
+    if (model) baseArgs.push("--model", model);
+    if (allowedTools) baseArgs.push("--allowedTools", Array.isArray(allowedTools) ? allowedTools.join(",") : String(allowedTools));
+    if (maxTurns) baseArgs.push("--max-turns", String(maxTurns));
+    if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
     if (resumeSessionId) {
       baseArgs.push("--resume", resumeSessionId);
     }
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
     }
-    const spawnArgs = needsShell
-      ? { cmd: "cmd", args: ["/c", claudeBin, ...baseArgs] }
-      : { cmd: claudeBin, args: baseArgs };
+    const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
 
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
@@ -401,16 +529,20 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     child.on("close", (code) => {
       clearTimeout(timer);
       const success = code === 0;
+      // Capture le session-id Claude depuis la sortie --output-format json (resume ultérieur)
+      let claudeSessionId = null;
+      try { const j = JSON.parse(stdout); claudeSessionId = j.session_id || j.sessionId || null; } catch { /* stdout non-json */ }
       try {
         upsertSpawnRegistry({
           ...spawnEntry,
           status: success ? "done" : "failed",
           exit_code: code,
+          ...(claudeSessionId ? { claude_session_id: claudeSessionId } : {}),
           ended_at: new Date().toISOString(),
         });
       } catch { /* */ }
       _releaseSlot(); _releaseQuota(spawnedBy);
-      resolve({ success, stdout, stderr, exitCode: code ?? -1 });
+      resolve({ success, stdout, stderr, exitCode: code ?? -1, sessionId: claudeSessionId });
     });
 
     child.on("error", (err) => {
@@ -520,7 +652,6 @@ export function spawnDaemon(projectPath, options = {}) {
 
   try {
     const isWindows = process.platform === "win32";
-    const needsShell = isWindows && (claudeBin.endsWith(".cmd") || claudeBin.endsWith(".bat"));
     const model = options.model || "haiku";
     const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, "--model", model];
     if (fs.existsSync(mcpConfigPath)) {
@@ -531,14 +662,10 @@ export function spawnDaemon(projectPath, options = {}) {
     }
     baseArgs.push("--max-budget-usd", "5");
 
-    const spawnArgs = needsShell
-      ? { cmd: "cmd", args: ["/c", claudeBin, ...baseArgs] }
-      : { cmd: claudeBin, args: baseArgs };
+    const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
 
-    // detached: false on Windows — keeps the daemon process tied to the
-    // server's lifetime. On Windows, detached children survive parent death
-    // (orphan claude.exe), causing budget leaks. The lifecycle trigger
-    // re-spawns them at next server boot, which is the desired behavior.
+    // detached: false on Windows — keeps the daemon tied to the server's lifetime.
+    // On Windows detached children survive parent death (orphan claude.exe).
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
@@ -578,14 +705,15 @@ export function spawnDaemon(projectPath, options = {}) {
             `register(name="${name}"${role ? `, role="${role}"` : ""}) puis poll_messages.`,
             `Sois CONCIS. Boucle poll_messages(timeout_seconds=30).`,
           ].join("\n");
-          const newArgs = needsShell
-            ? ["/c", claudeBin, "-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name, ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []), "--model", model, "--max-budget-usd", "5"]
-            : ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name, ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []), "--model", model, "--max-budget-usd", "5"];
-          const newChild = spawn(needsShell ? "cmd" : claudeBin, newArgs, {
+          const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
+            ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
+            "--model", model, "--max-budget-usd", "5"];
+          const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
+          const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
             cwd: projectPath,
             stdio: ["ignore", "pipe", "pipe"],
             env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
-            windowsHide: true, detached: true, shell: false,
+            windowsHide: true, detached: !isWindows, shell: false,
           });
           newChild.stdout.on("data", () => {});
           newChild.stderr.on("data", () => {});

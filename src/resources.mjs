@@ -77,8 +77,9 @@ export function registerResources(server, sessionId) {
       // Mentions
       const mentionPattern = new RegExp(`@${myName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
       const sinceDate = session?.lastSeen ? new Date(session.lastSeen) : null;
+      const myNameLc = myName.toLowerCase();
       let msgs = state.messages.filter(m =>
-        !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(sessionId)
+        !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(myNameLc)
       );
       if (sinceDate) msgs = msgs.filter(m => new Date(m.timestamp) > sinceDate);
       const mentions = msgs.filter(m => m.from !== sessionId && mentionPattern.test(m.content));

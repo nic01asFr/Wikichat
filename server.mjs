@@ -19,15 +19,16 @@ import { readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join, extname } from "path";
 import { homedir } from "os";
 
-import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive } from "./src/state.mjs";
-import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE } from "./src/persistence.mjs";
-import { loadMemories, flushMemories } from "./src/identity.mjs";
+import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive, isAgentInDMChannel, inboxFor } from "./src/state.mjs";
+import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE, getIdentityBinding, saveIdentityBinding, touchIdentityBinding } from "./src/persistence.mjs";
+import { loadMemories, flushMemories, restoreIdentity, remember, recall } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
 import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
+import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
 // [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -41,9 +42,19 @@ import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daem
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
+import { ensureUserOverlay } from "./src/overlay-installer.mjs";
+import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
+import { auditProject, auditMany } from "./src/repo-audit.mjs";
+import { runHarmonizer, formatHarmonizerSummary } from "./src/harmonizer.mjs";
 
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+
+// Auto-install Claude Code overlay (skill + slash commands + ~/.claude/CLAUDE.md
+// section) so any session that opens with wikichat MCP attached uses it
+// naturally. Idempotent — skips if already installed. Disable via
+// WIKICHAT_NO_OVERLAY_INSTALL=1.
+ensureUserOverlay();
 
 loadChannels();   // Restore persisted channels
 loadMessages();   // Restore recent messages
@@ -51,6 +62,10 @@ rebuildChannelCounts(); // Build O(1) channel count cache
 setOnMessagePush(saveMessagesDebounced); // Auto-persist on new messages
 loadProjects();
 loadMemories();   // Restore persistent agent memories (remember/recall)
+const _spawnGc = gcSpawnRegistry(); // Drop legacy/stale entries from spawn_registry
+if (_spawnGc.dropped || _spawnGc.fixed) {
+  console.log(`[boot] spawn_registry GC : dropped=${_spawnGc.dropped} fixed=${_spawnGc.fixed} kept=${_spawnGc.total}`);
+}
 
 // Configure trigger engine (Phase 5) — wire spawn handler + budget guard
 configureTriggers({
@@ -189,6 +204,9 @@ onWake(() => {
 onSleep(() => {
   console.log("[Dormant] SLEEP — triggers will refuse to fire until wake");
 });
+// Rattrapage : les agents du pilote dont un cron a été manqué pendant le sommeil
+// sont relancés une fois dès le réveil (calculé depuis schedule + last_fired).
+startPiloteCatchup();
 startDormantWatch();
 
 // Channel #dispatch : every user message becomes a dispatch automatically.
@@ -360,17 +378,41 @@ setInterval(async () => {
     }
     if (changed) saveProject(proj);
   }
+  // Stale marking (15 min) + eviction (default 30 min). A session is only ever
+  // removed by the SSE `res.on("close")` handler; when a connection drops without
+  // firing `close` (network blip, Claude Code reconnecting under a fresh sessionId),
+  // the orphaned entry lingers in the Map forever — just flagged "stale". Over long
+  // uptimes these ghosts accumulate. We evict any session quiet past the threshold,
+  // replicating the close-handler cleanup (snapshot → transport → waiters → delete).
+  // Eviction is non-destructive: a registered session's identity is snapshotted and
+  // restored on reconnect via its bind token, so a resident evicted by mistake simply
+  // re-attaches. lastSeen is bumped on every POST /messages, so polling daemons stay
+  // fresh and are never evicted in normal operation.
+  const EVICT_MS = parseInt(process.env.WIKICHAT_SESSION_EVICT_MS || `${30 * 60 * 1000}`);
   for (const [id, s] of state.sessions) {
-    if (Date.now() - new Date(s.lastSeen) > 15 * 60 * 1000 && s.availability !== "stale") {
+    const quietMs = Date.now() - new Date(s.lastSeen);
+    if (quietMs > EVICT_MS) {
+      const wasRegistered = !s.name.startsWith("session-");
+      if (wasRegistered) { try { saveSnapshot(s); } catch { /* best-effort */ } }
+      state.sessions.delete(id);
+      transports.delete(id);
+      clearWaiters(id);
+      console.log(`[WikiChat] evicted stale session ${s.name} (quiet ${Math.round(quietMs / 60000)}min, total: ${state.sessions.size})`);
+    } else if (quietMs > 15 * 60 * 1000 && s.availability !== "stale") {
       s.availability = "stale";
     }
   }
-  // DM channel garbage collection — remove empty DM channels with no active participants
-  const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
-  for (const [name, ch] of state.channels) {
+  // DM channel garbage collection — only drop channels that are TRULY empty
+  // (no message left in the buffer). Previously this deleted any DM channel with
+  // no message in the last 30 min, even when older messages were still buffered —
+  // which threw away the channel's `participants` list and silently broke DM
+  // visibility for those still-present messages (read_messages/poll_messages fall
+  // back to participants when the key doesn't contain the reader's current name).
+  // A channel can't outlive its messages, so memory stays bounded by the buffer cap.
+  for (const [name] of state.channels) {
     if (!name.startsWith("dm:")) continue;
-    const hasRecentMsg = state.messages.some(m => m.channel === name && new Date(m.timestamp) > thirtyMinAgo);
-    if (!hasRecentMsg) {
+    const hasAnyMsg = state.messages.some(m => m.channel === name);
+    if (!hasAnyMsg) {
       state.channels.delete(name);
     }
   }
@@ -457,6 +499,21 @@ app.post("/api/dispatch", express.json(), async (req, res) => {
 app.get("/style-guide.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "style-guide.html"))); });
 app.get("/concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "concepts.html"))); });
 app.get("/hybrid-concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "hybrid-concepts.html"))); });
+app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "console.html"))); });
+app.get("/pilote", handlePilotePage);
+app.get("/pilote/api/data", handlePiloteData);
+app.get("/pilote/api/tools", handlePiloteTools);
+app.post("/pilote/api/daemon", handlePiloteDaemon);
+app.get("/pilote/api/agent/:id/transcript", handlePiloteTranscript);
+app.post("/pilote/api/agent", handlePiloteCreate);
+app.post("/pilote/api/architect", handlePiloteArchitect);
+app.post("/pilote/api/agent/:id/toggle", handlePiloteToggle);
+app.post("/pilote/api/agent/:id/fire", handlePiloteFire);
+app.post("/pilote/api/agent/:id/continue", handlePiloteContinue);
+app.post("/pilote/api/agent/:id/decide", handlePiloteDecide);
+app.post("/pilote/api/agent/:id/apply", handlePiloteApply);
+app.delete("/pilote/api/agent/:id", handlePiloteDelete);
+app.get("/regie", (_req, res) => res.redirect("/console"));
 
 // MCP SSE endpoint
 app.get("/sse", async (req, res) => {
@@ -464,7 +521,17 @@ app.get("/sse", async (req, res) => {
   const sid = transport.sessionId;
   const mcpServer = new McpServer({ name: "mcp-wikichat", version: "2.0.0" });
 
-  state.sessions.set(sid, {
+  // Stable identity token carried by the client on EVERY connect (survives the
+  // transport sessionId changing across reconnects). Two delivery styles, same
+  // mechanism: `?agent=<Name>` is the identity directly; `?token=`/header is an
+  // opaque token bound to a name on first register(). See src/persistence.mjs.
+  const directName = (req.query.agent || "").trim() || null;
+  const bindToken = directName
+    || (req.query.token || "").trim()
+    || (req.headers["x-wikichat-token"] || "").toString().trim()
+    || null;
+
+  const session = {
     sessionId: sid,
     name: `session-${sid.slice(0, 6)}`,
     connectedAt: new Date(), lastSeen: new Date(),
@@ -474,9 +541,37 @@ app.get("/sse", async (req, res) => {
     skills: [], current_task: null, current_project: null,
     availability: "available",
     storage_path: null,
-  });
+    bindToken, // used by register() to persist the token→identity binding
+  };
+  state.sessions.set(sid, session);
   transports.set(sid, { transport, server: mcpServer });
-  console.log(`[WikiChat] +session ${sid.slice(0, 8)} (total: ${state.sessions.size})`);
+
+  // Auto-restore identity from the token if we know it (or if ?agent=Name is
+  // authoritative). This is what makes "register once, recognised forever" work:
+  // the agent never has to re-register after a reconnect.
+  let claimName = null, claimRole = null;
+  if (directName) {
+    claimName = directName; // authoritative on every connect
+  } else if (bindToken) {
+    const ident = getIdentityBinding(bindToken);
+    if (ident) { claimName = ident.name; claimRole = ident.role; }
+  }
+  if (claimName) {
+    const holder = getSessionByName(claimName);
+    if (!holder || holder.id === sid) {
+      session.name = claimName;
+      if (claimRole) session.role = claimRole;
+      session.availability = "available";
+      try { restoreIdentity(session, claimName); } catch { /* best-effort */ }
+      try { saveIdentityBinding(bindToken, claimName, session.role); } catch { /* */ }
+      sysMsg("system", `${claimName} connecté — identité ${directName ? "fixée" : "restaurée"} automatiquement.`);
+    } else {
+      // Name currently held by another live session: don't steal it. Stay
+      // anonymous; register() will arbitrate (stale-takeover) if appropriate.
+      console.log(`[WikiChat] identité "${claimName}" occupée — ${sid.slice(0, 8)} reste anonyme`);
+    }
+  }
+  console.log(`[WikiChat] +session ${sid.slice(0, 8)}${session.name.startsWith("session-") ? "" : ` (${session.name})`} (total: ${state.sessions.size})`);
   pushDashboardUpdate();
 
   res.on("close", () => {
@@ -725,13 +820,86 @@ app.post("/api/chat", (req, res) => {
 
 // GET /api/messages — fetch messages filtered by channel
 app.get("/api/messages", (req, res) => {
-  const { channel, limit = "50" } = req.query;
+  const { channel, limit = "50", since_id, since_minutes } = req.query;
   let msgs = state.messages;
   if (channel && channel !== "__all__") {
     msgs = msgs.filter(m => m.channel === channel);
   }
+  // since_id : return only messages AFTER this id (exclusive) — enables incremental polling.
+  // If the id is not found (server restart, eviction) → return empty so caller knows
+  // it needs to re-sync. The caller should fall back to since_minutes on empty response.
+  if (since_id) {
+    const idx = msgs.findIndex(m => m.id === since_id);
+    if (idx >= 0) msgs = msgs.slice(idx + 1);
+    else msgs = []; // id not in current buffer → caller must re-sync
+  }
+  // since_minutes : return only messages from last N minutes
+  if (since_minutes) {
+    const cutoff = Date.now() - parseFloat(since_minutes) * 60 * 1000;
+    msgs = msgs.filter(m => new Date(m.timestamp).getTime() >= cutoff);
+  }
   const n = Math.min(parseInt(limit) || 50, 200);
   res.json(msgs.slice(-n));
+});
+
+// GET /api/inbox — messages addressed to a specific agent (DMs, @mentions,
+// broadcasts), for the Stop-hook "mailbox check". Lets an active-but-not-polling
+// agent learn it's being contacted at its next turn boundary, no human in the loop.
+//
+// Cursor protocol: pass the last id you saw via since_id; the response gives the
+// new lastId to store. Without since_id, pass since_minutes=N to catch recent
+// unread on first activation (so already-pending messages aren't missed); with
+// neither, an empty baseline + current lastId is returned (arm without replay).
+app.get("/api/inbox", (req, res) => {
+  const agent = (req.query.agent || "").toString().trim();
+  if (!agent) { res.status(400).json({ error: "agent required" }); return; }
+  const sinceMin = parseFloat(req.query.since_minutes) || 0;
+
+  // Unified cursor : the server owns ONE cursor per identity, in the same
+  // persistent identity memory used by the `poll` MCP tool. So push (this hook
+  // endpoint) and pull (poll) share a single position — a message delivered one
+  // way is never re-delivered the other way. An explicit since_id query param
+  // still overrides (legacy callers), but the server cursor is the default and
+  // is always advanced afterwards.
+  const explicitSince = (req.query.since_id || "").toString().trim() || null;
+  const serverCursor = recall(agent, "__inbox_cursor");
+  const sinceId = explicitSince || serverCursor || null;
+
+  const result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+
+  // Advance the shared cursor to the newest id we just accounted for (covers
+  // resync/baseline too — arm at the head without replaying history).
+  if (result.lastId) remember(agent, "__inbox_cursor", result.lastId);
+
+  const messages = result.messages.map(m => ({
+    id: m.id, from: m.fromName, channel: m.isDM ? "DM" : m.channel, isDM: !!m.isDM,
+    content: m.content, timestamp: m.timestamp,
+    status: m.status ?? null, expects_reply: m.expects_reply ?? null, eta_seconds: m.eta_seconds ?? null,
+  }));
+
+  res.json({
+    agent, count: messages.length, messages,
+    lastId: result.lastId ?? sinceId,
+    ...(result.resynced ? { resynced: true } : {}),
+    ...(result.baseline ? { baseline: true } : {}),
+  });
+});
+
+// POST /api/identity — an agent (via its Stop hook) reports its stable Claude
+// session id + cwd, bound to its WikiChat name. This is the missing link that
+// makes `contact_agent` able to RESUME an offline agent: the agent itself can't
+// read $CLAUDE_SESSION_ID, but the hook gets it from stdin and reports it here.
+// Stored in the identity memory (same place register() persists it).
+app.post("/api/identity", express.json(), (req, res) => {
+  const { name, claude_session_id, cwd } = req.body || {};
+  if (!name || String(name).startsWith("session-")) { res.status(400).json({ error: "name required" }); return; }
+  if (claude_session_id) {
+    remember(name, "__claude_session_id", claude_session_id);
+    const found = getSessionByName(name);
+    if (found) { const live = state.sessions.get(found.id); if (live) live.claude_session_id = claude_session_id; }
+  }
+  if (cwd) remember(name, "__cwd", cwd);
+  res.json({ ok: true, name });
 });
 
 // POST /api/spawn/daemon — launch a persistent background agent
@@ -912,6 +1080,221 @@ app.get("/api/knowledge/:topic/:file", async (req, res) => {
   } catch (e) {
     res.status(404).json({ error: "File not found" });
   }
+});
+
+// ── REGIE / IDEATION REST API ──────────────────────────────────────────────────
+// Drives the /console UI : ideas + project meta + audit + harmonize, all
+// without going through the MCP layer. Read-mostly + a few targeted POSTs.
+
+// Projects with régie meta (lifecycle, axes, purpose, publish, health) and live agents
+app.get("/api/regie/projects", (_req, res) => {
+  const out = [];
+  for (const p of state.projects.values()) {
+    const liveAgents = [...state.sessions.values()]
+      .filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase())
+      .map(s => ({ id: s.sessionId, name: s.name, role: s.role }));
+    const trackedAgents = p.agents ? Object.keys(p.agents).length : 0;
+    out.push({
+      name: p.name,
+      description: p.description,
+      purpose: p.purpose || null,
+      axes: p.axes || [],
+      lifecycle: p.lifecycle || null,
+      publish: p.publish || null,
+      relations: p.relations || [],
+      health: p.health || null,
+      tasks_active: [...(p.tasks?.values() || [])].filter(t => t.status === "active").length,
+      blockers: (p.blockers || []).length,
+      decisions: (p.decisions || []).length,
+      open_questions: (p.open_questions || []).length,
+      closed: !!p.closure,
+      tracked_agents: trackedAgents,
+      live_agents: liveAgents,
+      updatedAt: p.updatedAt,
+      repo: p.repo || null,
+    });
+  }
+  out.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  res.json({ projects: out });
+});
+
+// PATCH a single project's meta — backs the "edit lifecycle / purpose / axes" UI inline edits
+app.patch("/api/regie/projects/:name", express.json(), (req, res) => {
+  const proj = state.projects.get(req.params.name);
+  if (!proj) return res.status(404).json({ error: "project not found" });
+  const { purpose, axes, lifecycle, publish, relations } = req.body || {};
+  if (purpose !== undefined) proj.purpose = purpose;
+  if (axes !== undefined) proj.axes = Array.isArray(axes) ? axes : [];
+  if (lifecycle !== undefined) {
+    const valid = ["ideation", "mvp", "active", "maintenance", "archived", "closed"];
+    if (!valid.includes(lifecycle)) return res.status(400).json({ error: "invalid lifecycle" });
+    proj.lifecycle = lifecycle;
+  }
+  if (publish !== undefined) {
+    proj.publish = proj.publish || {};
+    for (const k of Object.keys(publish)) {
+      if (publish[k] === null) { delete proj.publish[k]; continue; }
+      if (typeof publish[k] === "object" && !Array.isArray(publish[k])) {
+        proj.publish[k] = { ...(proj.publish[k] || {}), ...publish[k] };
+      } else {
+        proj.publish[k] = publish[k];
+      }
+    }
+  }
+  if (relations !== undefined) proj.relations = relations;
+  proj.updatedAt = new Date();
+  proj.updatedBy = "console";
+  saveProject(proj);
+  res.json({ ok: true, project: proj.name });
+});
+
+// Ideas — list with filters
+app.get("/api/regie/ideas", (req, res) => {
+  const { status, axis, project, since_days, limit, query } = req.query;
+  let out;
+  if (query) {
+    out = searchIdeas(String(query), { limit: parseInt(limit) || 20 });
+  } else {
+    out = listIdeas({
+      status: status || undefined,
+      axis: axis || undefined,
+      project: project || undefined,
+      since_days: since_days ? parseInt(since_days) : undefined,
+      limit: limit ? parseInt(limit) : 50,
+    });
+  }
+  res.json({ ideas: out, stats: ideaStats() });
+});
+
+// Ideas — create
+app.post("/api/regie/ideas", express.json(), (req, res) => {
+  const { title, body, axes, related_projects, source, created_by } = req.body || {};
+  if (!title) return res.status(400).json({ error: "title required" });
+  try {
+    const idea = createIdea({ title, body, axes, related_projects, source, created_by: created_by || "console" });
+    res.status(201).json({ idea });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Ideas — partial update
+app.patch("/api/regie/ideas/:id", express.json(), (req, res) => {
+  try {
+    const updated = updateIdea(req.params.id, req.body || {});
+    if (!updated) return res.status(404).json({ error: "idea not found" });
+    res.json({ idea: updated });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Ideas — hard delete
+app.delete("/api/regie/ideas/:id", (req, res) => {
+  const ok = deleteIdea(req.params.id);
+  if (!ok) return res.status(404).json({ error: "idea not found" });
+  res.json({ ok: true });
+});
+
+// Audit a single project (uses project.repo > registry path)
+app.post("/api/regie/audit", express.json(), async (req, res) => {
+  const { project, persist = true } = req.body || {};
+  if (!project) return res.status(400).json({ error: "project required" });
+  const proj = state.projects.get(project);
+  if (!proj) return res.status(404).json({ error: "project not found" });
+
+  // Resolve repo path : project.repo > registry path
+  let repoPath = proj.repo;
+  if (!repoPath) {
+    try {
+      const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
+      const lower = project.toLowerCase();
+      const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const match = reg.projects?.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
+      if (match?.path) repoPath = match.path;
+    } catch { /* */ }
+  }
+  if (!repoPath) return res.status(400).json({ error: "no repo_path known for this project" });
+
+  const audit = await auditProject(repoPath);
+  if (persist && audit.exists) {
+    proj.health = audit;
+    proj.updatedAt = new Date();
+    saveProject(proj);
+  }
+  res.json({ audit });
+});
+
+// Audit all projects in registry (batch, concurrency-capped)
+app.post("/api/regie/audit-all", express.json(), async (req, res) => {
+  const { persist = false, concurrency = 4 } = req.body || {};
+  try {
+    const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
+    const projects = (reg.projects || []).filter(p => p.path && p.name).map(p => ({ name: p.name, path: p.path }));
+    const startedAt = Date.now();
+    const audits = await auditMany(projects, concurrency);
+    if (persist) {
+      for (const [name, audit] of audits) {
+        const proj = state.projects.get(name);
+        if (proj && audit.exists) {
+          proj.health = audit;
+          proj.updatedAt = new Date();
+          saveProject(proj);
+        }
+      }
+    }
+    const out = [...audits.entries()].map(([name, audit]) => ({ name, ...audit }));
+    res.json({ audits: out, count: out.length, elapsed_ms: Date.now() - startedAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run a Harmonizer pass — clusters ideas, optionally posts a summary on #ideation
+app.post("/api/regie/harmonize", express.json(), async (req, res) => {
+  const { threshold, min_cluster_size, post_to_channel = true } = req.body || {};
+  const report = await runHarmonizer({ threshold, min_cluster_size });
+  const summary = formatHarmonizerSummary(report);
+  if (post_to_channel && state.channels.has("ideation") && report.clusters.length > 0) {
+    pushMessage({
+      id: randomUUID(), from: "system", fromName: "Harmonizer (console)",
+      channel: "ideation",
+      content: summary,
+      timestamp: new Date(),
+    });
+    notifyWaiters("ideation", null);
+  }
+  res.json({ report, summary });
+});
+
+// Live sessions snapshot — used by the console left rail
+app.get("/api/regie/sessions", (_req, res) => {
+  const out = [];
+  for (const s of state.sessions.values()) {
+    out.push({
+      id: s.sessionId,
+      name: s.name,
+      role: s.role,
+      agent_type: s.agent_type,
+      availability: s.availability,
+      current_project: s.current_project,
+      lastSeen: s.lastSeen,
+      anonymous: !s.name || s.name.startsWith("session-"),
+    });
+  }
+  out.sort((a, b) => Number(a.anonymous) - Number(b.anonymous) || a.name.localeCompare(b.name));
+  res.json({ sessions: out });
+});
+
+// Channels snapshot for the rail
+app.get("/api/regie/channels", (_req, res) => {
+  const out = [...state.channels.values()].map(c => ({
+    name: c.name,
+    description: c.description,
+    isSystem: !!c.isSystem,
+    isDM: c.name.startsWith("dm:"),
+  }));
+  res.json({ channels: out });
 });
 
 // Global artifacts (wikichat project itself)

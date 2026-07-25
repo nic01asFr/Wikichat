@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="fr"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WikiChat — Catalogue composants</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<style>/* latin-ext */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("51dc56a6-875a-4464-b364-d6258feb2d93") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("905a0aa3-23e0-41cb-b978-558eb608e087") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("f7aec34a-a56b-4f34-9b90-2fb6f38e7072") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("9f671650-46c3-4d47-b0b2-8d5ee0910571") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("3b0f791d-7515-404d-ab87-d028d0e59df0") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("5d0ee36b-d1e8-40fc-915d-a546bd07effc") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("2c055ac8-0814-4a5e-835c-7072171890aa") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("5ffea70c-e15c-4dd0-ac17-bfa7de98f0bd") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("28f36580-7e7f-4729-a61f-6610e60cad12") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("964f4f8e-ec77-44ec-af26-36e8d0f7397a") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("dc0df248-edec-43b8-babf-9a662259ae21") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("3b0f791d-7515-404d-ab87-d028d0e59df0") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("5d0ee36b-d1e8-40fc-915d-a546bd07effc") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("2c055ac8-0814-4a5e-835c-7072171890aa") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("5ffea70c-e15c-4dd0-ac17-bfa7de98f0bd") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("28f36580-7e7f-4729-a61f-6610e60cad12") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("964f4f8e-ec77-44ec-af26-36e8d0f7397a") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("dc0df248-edec-43b8-babf-9a662259ae21") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("3b0f791d-7515-404d-ab87-d028d0e59df0") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("5d0ee36b-d1e8-40fc-915d-a546bd07effc") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("2c055ac8-0814-4a5e-835c-7072171890aa") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("5ffea70c-e15c-4dd0-ac17-bfa7de98f0bd") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("28f36580-7e7f-4729-a61f-6610e60cad12") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("964f4f8e-ec77-44ec-af26-36e8d0f7397a") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("dc0df248-edec-43b8-babf-9a662259ae21") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("3b0f791d-7515-404d-ab87-d028d0e59df0") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("5d0ee36b-d1e8-40fc-915d-a546bd07effc") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("2c055ac8-0814-4a5e-835c-7072171890aa") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("5ffea70c-e15c-4dd0-ac17-bfa7de98f0bd") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("28f36580-7e7f-4729-a61f-6610e60cad12") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("964f4f8e-ec77-44ec-af26-36e8d0f7397a") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("dc0df248-edec-43b8-babf-9a662259ae21") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("db64fd6c-6ba7-43f1-a27b-8bc7a961ad9d") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("4e2ad29e-18de-437e-8a5d-a304ef7eb7f9") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("7c91efff-d18c-4c98-b079-d480d60324b1") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("f901bec8-1522-44c1-b104-cbccac26eeb5") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("88cf8fb4-b089-474c-af61-4b800078693b") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("420e8404-7091-453e-9631-4bcdb930b8ec") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("db64fd6c-6ba7-43f1-a27b-8bc7a961ad9d") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("4e2ad29e-18de-437e-8a5d-a304ef7eb7f9") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("7c91efff-d18c-4c98-b079-d480d60324b1") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("f901bec8-1522-44c1-b104-cbccac26eeb5") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("88cf8fb4-b089-474c-af61-4b800078693b") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("420e8404-7091-453e-9631-4bcdb930b8ec") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+:root{
+  --bg-0:#0F0D11;--bg-1:#171419;--bg-2:#1F1B21;--bg-3:#2A252C;--bg-4:#3A3439;
+  --border:#272127;--border-strong:#3A3439;
+  --paper:#F4ECE3;--paper-soft:#E8DFD2;
+  --fg-strong:#F1E9DF;--fg:#B6ACA3;--fg-mute:#766E68;--fg-disabled:#534B47;
+  --accent:#E89A5C;--accent-strong:#F0AE73;--accent-fg:#1A0F08;
+  --accent-soft:rgba(232,154,92,.12);--accent-line:rgba(232,154,92,.28);
+  --idea:#C9A6E8;--idea-soft:rgba(201,166,232,.13);
+  --ok:#8AB58B;--warn:#D9AF5C;--bad:#D17B70;--info:#85B0CC;
+  --ok-soft:rgba(138,181,139,.14);--warn-soft:rgba(217,175,92,.14);
+  --bad-soft:rgba(209,123,112,.14);--info-soft:rgba(133,176,204,.14);
+  --font-sans:'Inter','Segoe UI',system-ui,sans-serif;
+  --font-serif:'Instrument Serif',Georgia,serif;
+  --font-mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg-0);color:var(--fg);font:13.5px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent-soft);color:var(--fg-strong)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:8px}
+a{color:inherit;text-decoration:none}
+code{font:500 12px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+
+/* layout */
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+nav.toc{position:sticky;top:0;align-self:start;height:100vh;padding:32px 18px 32px 24px;border-right:1px solid var(--border);background:var(--bg-1);overflow-y:auto}
+nav.toc .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px;font:600 14px/1 var(--font-sans);color:var(--fg-strong)}
+nav.toc .brand .mark{width:30px;height:30px;border-radius:7px;background:var(--paper);color:var(--bg-0);display:flex;align-items:center;justify-content:center;font:italic 400 19px/1 var(--font-serif);position:relative}
+nav.toc .brand .mark::before,nav.toc .brand .mark::after{content:"";position:absolute;width:3px;height:3px;border-radius:50%;background:var(--accent);bottom:5px}
+nav.toc .brand .mark::before{left:7px}
+nav.toc .brand .mark::after{left:16px}
+nav.toc .brand .pos{color:var(--fg-mute);font-weight:400;font-size:12.5px}
+nav.toc h4{margin:18px 0 6px;font:600 10.5px/1 var(--font-sans);letter-spacing:.16em;text-transform:uppercase;color:var(--fg-disabled)}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc li{padding:5px 0;border-left:1px solid transparent;padding-left:11px;margin-left:-12px}
+nav.toc li.active{border-left-color:var(--accent)}
+nav.toc a{color:var(--fg-mute);font-size:12.5px}
+nav.toc li:hover a,nav.toc li.active a{color:var(--fg-strong)}
+nav.toc .num{color:var(--fg-disabled);font-family:var(--font-mono);font-size:10.5px;margin-right:8px}
+
+main{padding:48px 56px 120px;max-width:1080px}
+header.hd{margin-bottom:48px}
+header.hd .eyebrow{font:600 11px/1 var(--font-sans);letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute);margin-bottom:10px}
+header.hd h1{margin:0;font:400 56px/1.05 var(--font-serif);color:var(--fg-strong);letter-spacing:-.02em}
+header.hd .lede{margin:18px 0 0;color:var(--fg-mute);font-size:15px;line-height:1.6;max-width:640px}
+
+section.sec{margin-bottom:64px;scroll-margin-top:32px}
+section.sec h2{display:flex;align-items:baseline;gap:14px;margin:0 0 6px;font:400 32px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.015em}
+section.sec h2 .sn{font:500 11px/1 var(--font-mono);color:var(--fg-disabled);text-transform:uppercase;letter-spacing:.1em}
+section.sec .blurb{margin:0 0 28px;color:var(--fg-mute);font-size:14px;line-height:1.6;max-width:640px}
+
+.row{display:flex;flex-direction:column;gap:18px;margin-bottom:24px}
+.cmp{display:grid;grid-template-columns:1fr 280px;gap:0;background:var(--bg-1);border:1px solid var(--border);border-radius:14px;overflow:hidden;scroll-margin-top:32px}
+.cmp .canvas{padding:32px;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:14px;background:radial-gradient(ellipse 70% 60% at 30% 30%,rgba(255,236,210,.02),transparent),var(--bg-0);border-right:1px solid var(--border);min-height:160px;position:relative}
+.cmp .canvas.col{flex-direction:column;align-items:flex-start;gap:14px}
+.cmp .canvas.tight{padding:20px;min-height:0}
+.cmp .canvas.cluster-bg{background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(232,154,92,.05),transparent),var(--bg-0)}
+.cmp .meta{padding:22px 24px;display:flex;flex-direction:column;gap:14px}
+.cmp .meta .tag{font:500 10.5px/1 var(--font-mono);color:var(--accent);letter-spacing:.06em;text-transform:uppercase}
+.cmp .meta h3{margin:0;font:500 18px/1.2 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
+.cmp .meta p{margin:0;color:var(--fg-mute);font-size:12.5px;line-height:1.55}
+.cmp .meta .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px}
+.cmp .meta .kv .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:11px}
+.cmp .meta .kv .v{color:var(--fg);font-family:var(--font-mono);font-size:11px}
+.cmp .meta h5{margin:6px 0 4px;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-disabled)}
+.cmp .meta ul{margin:0;padding:0 0 0 14px;color:var(--fg);font-size:12.5px;line-height:1.55}
+.cmp .meta ul.dont li{color:var(--bad)}
+.cmp .meta ul.dont li::marker{color:var(--bad)}
+.variant-label{font:500 10px/1 var(--font-mono);color:var(--fg-disabled);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.variant{display:flex;flex-direction:column;align-items:center;gap:8px}
+
+/* tokens */
+.tokens{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+.token-card{background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:22px 24px}
+.token-card h3{margin:0 0 14px;font:500 16px/1 var(--font-serif);color:var(--fg-strong)}
+.swatches{display:flex;flex-wrap:wrap;gap:14px}
+.sw{display:flex;flex-direction:column;gap:6px;width:120px}
+.sw .chip{width:100%;height:54px;border-radius:8px;border:1px solid var(--border)}
+.sw .name{font:500 11.5px/1.2 var(--font-mono);color:var(--fg-strong)}
+.sw .hex{font:400 10.5px/1 var(--font-mono);color:var(--fg-disabled)}
+.type-row{display:flex;flex-direction:column;gap:14px}
+.type-row .ex{padding:14px 0;border-top:1px solid var(--border)}
+.type-row .ex:first-child{border-top:0;padding-top:0}
+.type-row .lbl{font:500 10.5px/1 var(--font-mono);color:var(--fg-disabled);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
+.type-row .smp{color:var(--fg-strong)}
+.motion-row{display:grid;grid-template-columns:auto 1fr auto;gap:8px 18px;align-items:center;font-size:12.5px}
+.motion-row .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:11.5px}
+.motion-row .v{color:var(--fg-strong);font-family:var(--font-mono);font-size:11.5px}
+.motion-row .u{color:var(--fg);font-size:12px}
+
+/* ── extracted component styles (verbatim from canvas) ── */
+.kbd{font-family:var(--font-mono);font-size:11px;padding:1px 5px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;color:var(--fg-mute)}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.ico{width:14px;height:14px;flex-shrink:0;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.ico.sm{width:12px;height:12px}.ico.lg{width:16px;height:16px}.ico.xl{width:18px;height:18px}
+
+.badge{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:500}
+.badge.ok{background:var(--ok-soft);color:#a8cdab}.badge.ok .dot{background:var(--ok)}
+.badge.warn{background:var(--warn-soft);color:#e6c889}.badge.warn .dot{background:var(--warn)}
+.badge.bad{background:var(--bad-soft);color:#e3a59c}.badge.bad .dot{background:var(--bad)}
+.badge.info{background:var(--info-soft);color:#aac8db}.badge.info .dot{background:var(--info)}
+.badge.idea{background:var(--idea-soft);color:#dcc4ed}.badge.idea .dot{background:var(--idea)}
+.badge.muted{background:var(--bg-3);color:var(--fg-mute)}.badge.muted .dot{background:var(--fg-mute)}
+
+.proj{width:248px;background:linear-gradient(180deg,var(--bg-1),var(--bg-2));border:1px solid var(--border);border-radius:16px;padding:16px 18px 14px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.03)}
+.proj.selected{border-color:var(--accent);box-shadow:0 14px 36px rgba(0,0,0,.45),0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,.04)}
+.proj.archived{opacity:.45}
+.proj.archived h4{font-style:italic}
+.proj .head{display:flex;align-items:flex-start;gap:8px;margin-bottom:4px}
+.proj h4{margin:0;font:500 19px/1.2 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em;flex:1}
+.proj .pin{color:var(--accent);margin-top:6px}
+.proj .desc{margin:0 0 12px;color:var(--fg-mute);font-size:12px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.proj .pmrow{display:flex;align-items:center;gap:10px;font:500 11px/1 var(--font-mono);color:var(--fg-mute);margin-bottom:10px}
+.proj .pmrow .v{color:var(--fg)}
+.proj .pmrow .sep{width:2px;height:2px;background:var(--border-strong);border-radius:50%}
+.proj .meter{height:3px;background:var(--bg-3);border-radius:2px;overflow:hidden;margin-bottom:10px}
+.proj .meter .f{height:100%;border-radius:2px}
+.proj .meter .f.ok{background:var(--ok)}.proj .meter .f.warn{background:var(--warn)}.proj .meter .f.bad{background:var(--bad)}
+.proj .badges{display:flex;flex-wrap:wrap;gap:5px}
+
+.idea{width:170px;background:linear-gradient(180deg,#F2E7D6,#E8DCC8);color:#2A2118;border-radius:6px;padding:10px 12px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.28),0 1px 0 rgba(255,255,255,.5) inset;transform:rotate(-1.5deg)}
+.idea.r2{transform:rotate(1.2deg)}
+.idea.r3{transform:rotate(-.6deg)}
+.idea .id{font:500 9.5px/1 var(--font-mono);color:#8B7355;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em}
+.idea .t{font:500 12.5px/1.35 var(--font-sans);color:#2A2118}
+.idea.clustered{background:linear-gradient(180deg,#EDD9F0,#DEC7E5);border-left:3px solid var(--idea)}
+.idea.clustered .id{color:#7A5A8E}
+
+.agent{position:relative;display:inline-flex;align-items:center;gap:7px;background:rgba(15,13,17,.85);border:1px solid var(--border-strong);border-radius:18px;padding:3px 11px 3px 4px;cursor:pointer;backdrop-filter:blur(6px)}
+.agent .ava{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 10px/1 var(--font-sans);color:#0F0D11}
+.agent .n{font:500 12px/1 var(--font-sans);color:var(--fg-strong)}
+.agent .r{font:11px/1 var(--font-mono);color:var(--fg-mute);margin-left:2px}
+.agent.live::before{content:"";position:absolute;left:-3px;top:-3px;width:9px;height:9px;background:var(--ok);border-radius:50%;border:2px solid var(--bg-0);box-shadow:0 0 8px rgba(138,181,139,.6);animation:pulse 2s ease-in-out infinite}
+.agent.daemon::before{content:"";position:absolute;left:-3px;top:-3px;width:9px;height:9px;background:var(--accent);border-radius:50%;border:2px solid var(--bg-0)}
+.agent.dead::before{content:"";position:absolute;left:-3px;top:-3px;width:9px;height:9px;background:var(--fg-disabled);border-radius:50%;border:2px solid var(--bg-0)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+
+.cluster-frame{position:relative;width:280px;height:140px;border:1px dashed var(--border-strong);border-radius:24px;padding:14px}
+.cluster-frame .lab{position:absolute;top:-8px;left:18px;background:var(--bg-0);padding:0 8px;color:var(--fg-mute);font:600 10px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase}
+.cluster-frame.warm{border-color:rgba(232,154,92,.28)}
+.cluster-frame.warm .lab{color:var(--accent)}
+
+.link-cmp{position:relative;width:200px;height:1px;background:linear-gradient(90deg,transparent,var(--border-strong) 20%,var(--border-strong) 80%,transparent)}
+.link-cmp.warm{background:linear-gradient(90deg,transparent,var(--accent-line) 20%,var(--accent-line) 80%,transparent)}
+.link-cmp .lbl{position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:var(--bg-0);padding:0 8px;font:500 10px/1 var(--font-mono);color:var(--fg-disabled);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
+.link-cmp.warm .lbl{color:var(--accent)}
+
+.hud-pill{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 12px;background:rgba(23,20,25,.85);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);color:var(--fg);font-size:12.5px}
+.hud-pill strong{color:var(--fg-strong);font-weight:600}
+.hud-pill.alert{border-color:rgba(209,123,112,.32);color:var(--bad)}
+
+/* avatars */
+.ava-demo{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:700 12px/1 var(--font-sans);color:#0F0D11}
+
+/* foot */
+.foot{margin-top:80px;padding:32px 0 0;border-top:1px solid var(--border);color:var(--fg-mute);font-size:12px;display:flex;align-items:center;gap:14px}
+.foot .grow{flex:1}
+</style>
+</head>
+<body>
+
+
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-pin" viewBox="0 0 16 16"><path d="M8 2v6l-3 2v1h6v-1l-3-2V2zM8 11v3" fill="none" stroke="currentColor" stroke-width="1.6"></path></symbol>
+    <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2l6.5 11h-13z" fill="none" stroke="currentColor" stroke-width="1.6"></path><path d="M8 6v3M8 11.5v.1" stroke="currentColor" stroke-width="1.6"></path></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"></circle><path d="M11 11l3 3" stroke="currentColor" stroke-width="1.6"></path></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+
+  <nav class="toc" id="toc">
+    <div class="brand">
+      <span class="mark">w</span>
+      <span>wikichat <span class="pos">/ catalogue</span></span>
+    </div>
+
+    <h4>Foundations</h4>
+    <ol>
+      <li><a href="#tokens"><span class="num">00</span>Tokens</a></li>
+    </ol>
+
+    <h4>Atomes</h4>
+    <ol>
+      <li><a href="#kbd"><span class="num">01</span>Kbd</a></li>
+      <li><a href="#dot"><span class="num">02</span>Dot</a></li>
+      <li><a href="#badge"><span class="num">03</span>Badge</a></li>
+      <li><a href="#avatar"><span class="num">04</span>Avatar</a></li>
+      <li><a href="#meter"><span class="num">05</span>Meter</a></li>
+    </ol>
+
+    <h4>Pièces</h4>
+    <ol>
+      <li><a href="#proj"><span class="num">06</span>ProjectCard</a></li>
+      <li><a href="#idea"><span class="num">07</span>IdeaNote</a></li>
+      <li><a href="#agent"><span class="num">08</span>AgentPill</a></li>
+      <li><a href="#cluster"><span class="num">09</span>ClusterZone</a></li>
+      <li><a href="#link"><span class="num">10</span>RelationLine</a></li>
+      <li><a href="#hud-pill"><span class="num">11</span>HudPill</a></li>
+    </ol>
+
+    <h4>Organismes</h4>
+    <ol>
+      <li><a href="#cmd-trigger"><span class="num">12</span>CmdTrigger</a></li>
+      <li><a href="#cmd-palette"><span class="num">13</span>CmdPalette</a></li>
+      <li><a href="#peek"><span class="num">14</span>PeekPanel</a></li>
+      <li><a href="#minimap"><span class="num">15</span>Minimap</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hd">
+      <div class="eyebrow">Pass 0 · catalogue composants</div>
+      <h1>Atomes, pièces, organismes</h1>
+      <p class="lede">Extraction depuis <code>wikichat-canvas.html</code>. Chaque composant est rendu à taille réelle, avec ses variantes, props, états, do/don't. Le but : verrouiller le langage avant d'attaquer les 4 vues manquantes du Lot 1, et donner à la spec markdown quelque chose à pointer.</p>
+    </header>
+
+    <!-- 00 tokens -->
+    <section class="sec" id="tokens">
+      <h2><span class="sn">00</span>Tokens</h2>
+      <p class="blurb">Palette éditoriale chaude. Un seul accent (ambre) pour tout signal positif/action, lavande pour les idées, papier crème pour les surfaces "carnet". Type-stack ternaire : serif italique bas-de-casse pour les titres et la marque, Inter pour l'UI, JetBrains Mono pour métadonnées et code.</p>
+
+      <div class="tokens">
+        <div class="token-card">
+          <h3>Surfaces</h3>
+          <div class="swatches">
+            <div class="sw"><div class="chip" style="background:var(--bg-0)"></div><span class="name">--bg-0</span><span class="hex">#0F0D11</span></div>
+            <div class="sw"><div class="chip" style="background:var(--bg-1)"></div><span class="name">--bg-1</span><span class="hex">#171419</span></div>
+            <div class="sw"><div class="chip" style="background:var(--bg-2)"></div><span class="name">--bg-2</span><span class="hex">#1F1B21</span></div>
+            <div class="sw"><div class="chip" style="background:var(--bg-3)"></div><span class="name">--bg-3</span><span class="hex">#2A252C</span></div>
+            <div class="sw"><div class="chip" style="background:var(--paper)"></div><span class="name">--paper</span><span class="hex">#F4ECE3</span></div>
+            <div class="sw"><div class="chip" style="background:var(--paper-soft)"></div><span class="name">--paper-soft</span><span class="hex">#E8DFD2</span></div>
+          </div>
+        </div>
+
+        <div class="token-card">
+          <h3>Texte</h3>
+          <div class="swatches">
+            <div class="sw"><div class="chip" style="background:var(--fg-strong)"></div><span class="name">--fg-strong</span><span class="hex">#F1E9DF</span></div>
+            <div class="sw"><div class="chip" style="background:var(--fg)"></div><span class="name">--fg</span><span class="hex">#B6ACA3</span></div>
+            <div class="sw"><div class="chip" style="background:var(--fg-mute)"></div><span class="name">--fg-mute</span><span class="hex">#766E68</span></div>
+            <div class="sw"><div class="chip" style="background:var(--fg-disabled)"></div><span class="name">--fg-disabled</span><span class="hex">#534B47</span></div>
+          </div>
+        </div>
+
+        <div class="token-card">
+          <h3>Accents &amp; signaux</h3>
+          <div class="swatches">
+            <div class="sw"><div class="chip" style="background:var(--accent)"></div><span class="name">--accent</span><span class="hex">#E89A5C amber</span></div>
+            <div class="sw"><div class="chip" style="background:var(--idea)"></div><span class="name">--idea</span><span class="hex">#C9A6E8 lavande</span></div>
+            <div class="sw"><div class="chip" style="background:var(--ok)"></div><span class="name">--ok</span><span class="hex">#8AB58B</span></div>
+            <div class="sw"><div class="chip" style="background:var(--warn)"></div><span class="name">--warn</span><span class="hex">#D9AF5C</span></div>
+            <div class="sw"><div class="chip" style="background:var(--bad)"></div><span class="name">--bad</span><span class="hex">#D17B70</span></div>
+            <div class="sw"><div class="chip" style="background:var(--info)"></div><span class="name">--info</span><span class="hex">#85B0CC</span></div>
+          </div>
+        </div>
+
+        <div class="token-card">
+          <h3>Type</h3>
+          <div class="type-row">
+            <div class="ex"><div class="lbl">serif · titres &amp; marque</div><div class="smp" style="font:italic 400 28px/1.1 var(--font-serif)">Instrument Serif</div></div>
+            <div class="ex"><div class="lbl">sans · UI &amp; body</div><div class="smp" style="font:500 16px/1.4 var(--font-sans)">Inter — 13.5px de base</div></div>
+            <div class="ex"><div class="lbl">mono · meta &amp; code</div><div class="smp" style="font:500 14px/1 var(--font-mono)">JetBrains Mono · b4bd59ca</div></div>
+          </div>
+        </div>
+
+        <div class="token-card">
+          <h3>Rayons &amp; ombres</h3>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <div class="variant"><div style="width:60px;height:60px;background:var(--bg-2);border:1px solid var(--border);border-radius:4px"></div><span class="variant-label">4 · kbd</span></div>
+            <div class="variant"><div style="width:60px;height:60px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px"></div><span class="variant-label">8 · pill</span></div>
+            <div class="variant"><div style="width:60px;height:60px;background:var(--bg-2);border:1px solid var(--border);border-radius:11px"></div><span class="variant-label">11 · badge</span></div>
+            <div class="variant"><div style="width:60px;height:60px;background:var(--bg-2);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.32)"></div><span class="variant-label">14 · panneau</span></div>
+            <div class="variant"><div style="width:60px;height:60px;background:var(--bg-2);border:1px solid var(--border);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.32)"></div><span class="variant-label">16 · projet</span></div>
+            <div class="variant"><div style="width:60px;height:60px;background:var(--bg-2);border:1px solid var(--border);border-radius:50%"></div><span class="variant-label">∞ · avatar</span></div>
+          </div>
+        </div>
+
+        <div class="token-card">
+          <h3>Motion</h3>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div class="motion-row"><span class="k">hover</span><span class="v">140ms</span><span class="u">ease-out · transform · border</span></div>
+            <div class="motion-row"><span class="k">overlay</span><span class="v">180ms</span><span class="u">ease-out · opacity + translateY(-4px)</span></div>
+            <div class="motion-row"><span class="k">view-change</span><span class="v">220ms</span><span class="u">cubic-bezier(.2,.7,.2,1) · crossfade</span></div>
+            <div class="motion-row"><span class="k">peek-slide</span><span class="v">200ms</span><span class="u">ease-out · translateX(20px) + opacity</span></div>
+            <div class="motion-row"><span class="k">pulse · live</span><span class="v">2000ms</span><span class="u">ease-in-out · infinite</span></div>
+            <div class="motion-row"><span class="k">paper · flip</span><span class="v">320ms</span><span class="u">cubic-bezier(.6,-.2,.2,1.4) · pour entrée note</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 01 kbd -->
+    <section class="sec" id="kbd">
+      <div class="cmp">
+        <div class="canvas">
+          <div class="variant"><span class="kbd">⌘K</span><span class="variant-label">cmd</span></div>
+          <div class="variant"><span class="kbd">↵</span><span class="variant-label">enter</span></div>
+          <div class="variant"><span class="kbd">⌘↵</span><span class="variant-label">action</span></div>
+          <div class="variant"><span class="kbd">esc</span><span class="variant-label">esc</span></div>
+          <div class="variant"><span class="kbd">↑↓</span><span class="variant-label">nav</span></div>
+          <div class="variant"><span class="kbd">tab</span><span class="variant-label">tab</span></div>
+        </div>
+        <div class="meta">
+          <span class="tag">01 · atom</span>
+          <h3>Kbd</h3>
+          <p>Glyph d'un raccourci clavier. Toujours mono, toujours muted. Jamais en taille bouton — c'est de la métadonnée, pas une affordance.</p>
+          <div class="kv"><span class="k">tag</span><span class="v">.kbd</span><span class="k">font</span><span class="v">mono 11</span><span class="k">bg</span><span class="v">white .05</span></div>
+          <h5>Don't</h5>
+          <ul class="dont"><li>l'utiliser comme bouton cliquable</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 dot -->
+    <section class="sec" id="dot">
+      <div class="cmp">
+        <div class="canvas">
+          <div class="variant"><span class="dot" style="background:var(--ok)"></span><span class="variant-label">ok</span></div>
+          <div class="variant"><span class="dot" style="background:var(--warn)"></span><span class="variant-label">warn</span></div>
+          <div class="variant"><span class="dot" style="background:var(--bad)"></span><span class="variant-label">bad</span></div>
+          <div class="variant"><span class="dot" style="background:var(--info)"></span><span class="variant-label">info</span></div>
+          <div class="variant"><span class="dot" style="background:var(--idea)"></span><span class="variant-label">idea</span></div>
+          <div class="variant"><span class="dot" style="background:var(--accent);box-shadow:0 0 8px rgba(232,154,92,.6)"></span><span class="variant-label">live (glow)</span></div>
+          <div class="variant"><span class="dot" style="background:var(--fg-disabled)"></span><span class="variant-label">muted</span></div>
+        </div>
+        <div class="meta">
+          <span class="tag">02 · atom</span>
+          <h3>Dot</h3>
+          <p>Pastille 6×6. Couleur = sémantique. Le glow ambre est réservé aux états "live" (agent en vol, capture en cours).</p>
+          <div class="kv"><span class="k">size</span><span class="v">6×6</span><span class="k">radius</span><span class="v">50%</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 badge -->
+    <section class="sec" id="badge">
+      <div class="cmp">
+        <div class="canvas">
+          <span class="badge ok"><span class="dot"></span>88</span>
+          <span class="badge warn"><span class="dot"></span>42</span>
+          <span class="badge bad"><span class="dot"></span>1 blocker</span>
+          <span class="badge info"><span class="dot"></span>2 spawns</span>
+          <span class="badge idea"><span class="dot"></span>clustered</span>
+          <span class="badge muted"><span class="dot"></span>archived</span>
+          <span class="badge muted" style="font-family:var(--font-mono);font-size:11px">#geomatique</span>
+        </div>
+        <div class="meta">
+          <span class="tag">03 · atom</span>
+          <h3>Badge</h3>
+          <p>Pill compacte avec dot + label. Sémantiques fixes : <code>ok</code>, <code>warn</code>, <code>bad</code>, <code>info</code>, <code>idea</code>, <code>muted</code>. Le label est toujours court (≤12 c).</p>
+          <div class="kv"><span class="k">height</span><span class="v">21</span><span class="k">px-x</span><span class="v">8</span><span class="k">radius</span><span class="v">11</span></div>
+          <h5>Don't</h5>
+          <ul class="dont"><li>inventer des couleurs hors palette</li><li>mettre &gt; 3 mots — utiliser un autre composant</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 avatar -->
+    <section class="sec" id="avatar">
+      <div class="cmp">
+        <div class="canvas">
+          <div class="variant"><span class="ava-demo" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span><span class="variant-label">Alice · dev</span></div>
+          <div class="variant"><span class="ava-demo" style="background:linear-gradient(135deg,#85B0CC,#8AB58B)">B</span><span class="variant-label">Bob · qa</span></div>
+          <div class="variant"><span class="ava-demo" style="background:linear-gradient(135deg,#D9AF5C,#C9A6E8)">C</span><span class="variant-label">Carla · daemon</span></div>
+          <div class="variant"><span class="ava-demo" style="background:linear-gradient(135deg,#85B0CC,#E89A5C);width:22px;height:22px;font-size:10px">EB</span><span class="variant-label">22 · agent pill</span></div>
+          <div class="variant"><span class="ava-demo" style="background:var(--bg-3);color:var(--fg-mute);font-weight:500">?</span><span class="variant-label">vide</span></div>
+        </div>
+        <div class="meta">
+          <span class="tag">04 · atom</span>
+          <h3>Avatar</h3>
+          <p>Dégradé deux teintes dérivé du hash du nom de l'agent. Initiale en noir charbon (jamais blanc, contraste avec fond clair). Tailles : 22 (pill), 30 (header), 40 (chat).</p>
+          <div class="kv"><span class="k">sizes</span><span class="v">22 / 30 / 40</span><span class="k">type</span><span class="v">700 sans</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 proj -->
+    <section class="sec" id="proj">
+      <div class="cmp">
+        <div class="canvas">
+          <div class="proj">
+            <div class="head"><h4>Wikichat</h4></div>
+            <p class="desc">Service local multi-agents. Bus de coordination + mémoire transverse.</p>
+            <div class="pmrow">tasks <span class="v">5</span><span class="sep"></span>ideas <span class="v">7</span><span class="sep"></span>agents <span class="v">6</span></div>
+            <div class="meter"><div class="f ok" style="width:88%"></div></div>
+            <div class="badges"><span class="badge ok"><span class="dot"></span>88</span><span class="badge info"><span class="dot"></span>2 spawns</span></div>
+          </div>
+          <div class="proj selected">
+            <div class="head"><h4>Wikichat</h4><svg class="ico sm pin"><use href="#i-pin"></use></svg></div>
+            <p class="desc">État sélectionné — bordure ambre + glow.</p>
+            <div class="pmrow">tasks <span class="v">5</span><span class="sep"></span>ideas <span class="v">7</span></div>
+            <div class="meter"><div class="f ok" style="width:88%"></div></div>
+            <div class="badges"><span class="badge ok"><span class="dot"></span>88</span></div>
+          </div>
+          <div class="proj">
+            <div class="head"><h4>Archipel</h4><svg class="ico sm" style="color:var(--warn);margin-top:6px"><use href="#i-warn"></use></svg></div>
+            <p class="desc">État alerte — icône warn dans le head, 1 blocker.</p>
+            <div class="pmrow">tasks <span class="v">2</span><span class="sep"></span>ideas <span class="v">4</span><span class="sep"></span>agents <span class="v">4</span></div>
+            <div class="meter"><div class="f warn" style="width:42%"></div></div>
+            <div class="badges"><span class="badge warn"><span class="dot"></span>42</span><span class="badge bad"><span class="dot"></span>1 blocker</span></div>
+          </div>
+          <div class="proj archived">
+            <div class="head"><h4>old-portmap</h4></div>
+            <p class="desc">v1 abandonnée, gardée pour ref.</p>
+            <div class="pmrow">tasks <span class="v">0</span></div>
+            <div class="badges"><span class="badge muted"><span class="dot"></span>archived</span></div>
+          </div>
+          <div class="proj" style="opacity:.6">
+            <div class="head"><h4 style="color:var(--fg-mute);font-style:italic">— pas de projets —</h4></div>
+            <p class="desc">Empty state. Variante : aucune ligne meta, pas de meter, badges remplacés par un CTA "Créer le premier projet".</p>
+            <div class="badges"><span class="badge muted"><span class="dot"></span>vide</span></div>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="tag">06 · pièce</span>
+          <h3>ProjectCard</h3>
+          <p>Carte 248 px de large, papier sombre. Titre serif, description 2 lignes max, ligne meta mono, meter de santé, badges. Le head accueille au choix : pin (épinglé), warn (alerte), spinner (en cours).</p>
+          <div class="kv">
+            <span class="k">w</span><span class="v">248</span>
+            <span class="k">radius</span><span class="v">16</span>
+            <span class="k">states</span><span class="v">default · selected · archived · alert · empty</span>
+            <span class="k">props</span><span class="v">title, desc, tasks, ideas, agents, health, badges[], pinned</span>
+          </div>
+          <h5>Do</h5>
+          <ul><li>health pilote la couleur du meter ET le 1<sup>er</sup> badge</li><li>desc clamp 2 lignes — pas d'exception</li></ul>
+          <h5>Don't</h5>
+          <ul class="dont"><li>plus de 3 badges visibles — overflow vers peek</li><li>card sans desc (utiliser variante "compact" alors)</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 idea -->
+    <section class="sec" id="idea">
+      <div class="cmp">
+        <div class="canvas" style="gap:24px">
+          <div class="idea"><div class="id">b4bd59ca · raw</div><div class="t">Indexer la KB par embeddings</div></div>
+          <div class="idea r2 clustered"><div class="id">7c2a1f9d · clustered</div><div class="t">Réutiliser portmap-vec pour search transverse</div></div>
+          <div class="idea r3"><div class="id">d23a981c · scoped</div><div class="t">CLI wrap autour des spawns</div></div>
+          <div class="idea" style="opacity:.4"><div class="id">e91c4b8d · trashed</div><div class="t" style="text-decoration:line-through">Push CLAUDE.md depuis registry</div></div>
+        </div>
+        <div class="meta">
+          <span class="tag">07 · pièce</span>
+          <h3>IdeaNote</h3>
+          <p>Post-it papier crème, légèrement rotated (-1.5° / +1.2° / -.6°, pseudo-aléatoire stable par id). ID hash + statut en haut, titre en bas. Cliqué : zoom + rotation 0°.</p>
+          <div class="kv">
+            <span class="k">w</span><span class="v">170</span>
+            <span class="k">states</span><span class="v">raw · scoped · clustered · trashed</span>
+            <span class="k">props</span><span class="v">id, title, status, axes[], project?</span>
+          </div>
+          <h5>Do</h5>
+          <ul><li>clustered = bord lavande gauche + fond rosé</li><li>rotation déterministe par id (stable au rerender)</li></ul>
+          <h5>Don't</h5>
+          <ul class="dont"><li>animer la rotation en boucle — kitsch</li><li>tronquer le titre — agrandir la note plutôt</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 08 agent -->
+    <section class="sec" id="agent">
+      <div class="cmp">
+        <div class="canvas" style="gap:24px">
+          <div class="variant"><div class="agent live"><span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span><span class="n">Alice</span><span class="r">dev</span></div><span class="variant-label">live · interactive</span></div>
+          <div class="variant"><div class="agent live"><span class="ava" style="background:linear-gradient(135deg,#85B0CC,#8AB58B)">B</span><span class="n">Bob</span><span class="r">qa · 18m</span></div><span class="variant-label">live · headless</span></div>
+          <div class="variant"><div class="agent daemon"><span class="ava" style="background:linear-gradient(135deg,#D9AF5C,#C9A6E8)">C</span><span class="n">Carla</span><span class="r">daemon · 4j</span></div><span class="variant-label">daemon · long</span></div>
+          <div class="variant"><div class="agent dead"><span class="ava" style="background:var(--bg-3);color:var(--fg-mute)">X</span><span class="n" style="color:var(--fg-mute)">Xavier</span><span class="r">crashed</span></div><span class="variant-label">dead</span></div>
+        </div>
+        <div class="meta">
+          <span class="tag">08 · pièce</span>
+          <h3>AgentPill</h3>
+          <p>Pion vivant. Statut indiqué par la pastille en haut-gauche : vert pulse = live, ambre = daemon (long-running), gris = crashed. Le suffixe mono porte rôle + durée.</p>
+          <div class="kv">
+            <span class="k">states</span><span class="v">live · daemon · dead</span>
+            <span class="k">props</span><span class="v">name, role, kind, since, project</span>
+          </div>
+          <h5>Do</h5>
+          <ul><li>pulse uniquement sur live (pas sur daemon — distrait)</li><li>cliquer = ouvrir chat agent dans le peek</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 cluster -->
+    <section class="sec" id="cluster">
+      <div class="cmp">
+        <div class="canvas cluster-bg" style="gap:24px">
+          <div class="cluster-frame warm"><span class="lab">cœur · WikiChat</span></div>
+          <div class="cluster-frame"><span class="lab">tooling perso</span></div>
+        </div>
+        <div class="meta">
+          <span class="tag">09 · pièce</span>
+          <h3>ClusterZone</h3>
+          <p>Délimitation visuelle d'un groupe de projets sur le canvas. Bord pointillé, label en haut-gauche. Variante <code>warm</code> pour le cluster cœur (contour ambré).</p>
+          <div class="kv"><span class="k">border</span><span class="v">1px dashed</span><span class="k">radius</span><span class="v">24/36</span></div>
+          <h5>Don't</h5>
+          <ul class="dont"><li>cluster &lt; 2 projets — supprimer plutôt</li><li>chevauchements de clusters — re-layout</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 link -->
+    <section class="sec" id="link">
+      <div class="cmp">
+        <div class="canvas col">
+          <div class="link-cmp warm" style="margin:24px 24px 8px"><span class="lbl">depends · auth</span></div>
+          <div class="link-cmp" style="margin:24px 24px 8px"><span class="lbl">data feed</span></div>
+        </div>
+        <div class="meta">
+          <span class="tag">10 · pièce</span>
+          <h3>RelationLine</h3>
+          <p>Trait de relation entre deux projets sur le canvas. Gris = lien factuel (data flow, ref), ambre = dépendance critique. Label optionnel centré.</p>
+          <div class="kv"><span class="k">tones</span><span class="v">muted · warm</span><span class="k">label</span><span class="v">optional, mono 10</span></div>
+          <h5>Don't</h5>
+          <ul class="dont"><li>flèche orientée — l'orientation est implicite par contexte</li><li>plus de 5 liens depuis un projet — masquer en toggle</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 hud-pill -->
+    <section class="sec" id="hud-pill">
+      <div class="cmp">
+        <div class="canvas">
+          <div class="hud-pill"><span class="dot" style="background:var(--ok);box-shadow:0 0 8px rgba(138,181,139,.6)"></span><strong>3</strong>&nbsp;agents · <strong>17</strong> idées</div>
+          <div class="hud-pill alert"><svg class="ico" style="color:var(--bad)"><use href="#i-warn"></use></svg><strong>3</strong> alertes</div>
+          <div class="hud-pill"><span class="dot" style="background:var(--accent)"></span>capture en cours…</div>
+        </div>
+        <div class="meta">
+          <span class="tag">11 · pièce</span>
+          <h3>HudPill</h3>
+          <p>Pastille d'info HUD posée sur le canvas, fond translucide. Hauteur 30, padding 12. Variante <code>alert</code> avec bord rouge.</p>
+          <div class="kv"><span class="k">h</span><span class="v">30</span><span class="k">bg</span><span class="v">bg-1 .85 + blur</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12 cmd-trigger -->
+    <section class="sec" id="cmd-trigger">
+      <div class="cmp">
+        <div class="canvas">
+          <button style="display:flex;align-items:center;gap:10px;width:480px;height:38px;padding:0 14px;background:rgba(23,20,25,.92);border:1px solid var(--border-strong);border-radius:10px;color:var(--fg-mute);backdrop-filter:blur(10px);cursor:text">
+            <svg class="ico lg"><use href="#i-search"></use></svg>
+            <span style="flex:1;text-align:left;font-size:13px"><span style="color:var(--accent);font-weight:500">Capter,</span> naviguer, lancer un spawn…</span>
+            <span class="kbd">⌘K</span>
+          </button>
+        </div>
+        <div class="meta">
+          <span class="tag">12 · organisme</span>
+          <h3>CmdTrigger</h3>
+          <p>Barre persistante en haut au centre — rappel constant que ⌘K est l'entrée principale. Le verbe "Capter" en ambre est l'action première suggérée.</p>
+          <div class="kv"><span class="k">w</span><span class="v">480</span><span class="k">h</span><span class="v">38</span><span class="k">pos</span><span class="v">top:18 · center</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13 cmd-palette -->
+    <section class="sec" id="cmd-palette">
+      <div class="cmp">
+        <div class="canvas tight" style="background:var(--bg-0);min-height:340px">
+          <div style="width:100%;max-width:560px;background:rgba(15,13,17,.96);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden">
+            <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border)">
+              <svg class="ico xl" style="color:var(--accent)"><use href="#i-search"></use></svg>
+              <span style="flex:1;color:var(--fg-strong);font:400 17px/1.4 var(--font-sans)">archipel</span>
+              <span style="display:inline-flex;align-items:center;height:22px;padding:0 7px;background:var(--accent-soft);color:var(--accent);font-family:var(--font-mono);font-size:11px;border-radius:4px;font-weight:500">⌘K</span>
+            </div>
+            <div style="padding:6px 0">
+              <div style="padding:6px 18px;color:var(--fg-disabled);font:600 10px/1 var(--font-sans);letter-spacing:.1em;text-transform:uppercase">Capter</div>
+              <div style="padding:7px 18px;display:grid;grid-template-columns:24px 1fr auto;gap:11px;align-items:center;background:rgba(255,236,210,.04);box-shadow:inset 2px 0 0 var(--accent)">
+                <div style="width:22px;height:22px;border-radius:5px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px">⚡</div>
+                <div><div style="color:var(--fg-strong);font-size:13px;font-weight:500">Capter une idée liée à <span style="color:var(--accent)">Archipel</span></div><div style="color:var(--fg-mute);font-size:11.5px">title + body, axes auto</div></div>
+                <span class="kbd">⌘↵</span>
+              </div>
+              <div style="padding:6px 18px;color:var(--fg-disabled);font:600 10px/1 var(--font-sans);letter-spacing:.1em;text-transform:uppercase;margin-top:4px">Projet</div>
+              <div style="padding:7px 18px;display:grid;grid-template-columns:24px 1fr auto;gap:11px;align-items:center">
+                <div style="width:22px;height:22px;border-radius:5px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px">▦</div>
+                <div><div style="color:var(--fg-strong);font-size:13px;font-weight:500">Archipel</div><div style="color:var(--fg-mute);font-size:11.5px">santé 42 · 2 tasks</div></div>
+                <span class="badge warn"><span class="dot"></span>42</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="tag">13 · organisme</span>
+          <h3>CmdPalette</h3>
+          <p>Overlay ⌘K. Layout : input + résultats groupés (sections : Capter, Projets, Idées, Agents, Commandes). Sélection clavier ↑↓, ↵ ouvre, ⌘↵ déclenche l'action première.</p>
+          <div class="kv">
+            <span class="k">w</span><span class="v">680</span>
+            <span class="k">max-h</span><span class="v">560</span>
+            <span class="k">groups</span><span class="v">capter · proj · idée · agent · cmd</span>
+          </div>
+          <h5>Do</h5>
+          <ul><li>fuzzy match sur title + axes + content</li><li>1<sup>er</sup> résultat préselectionné</li><li>preview à droite si l'élément a du contenu (projet, idée)</li></ul>
+          <h5>Don't</h5>
+          <ul class="dont"><li>plus de 5 résultats par section sans "voir tout"</li><li>résultats tristement chronologiques — toujours pertinence d'abord</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 14 peek -->
+    <section class="sec" id="peek">
+      <div class="cmp">
+        <div class="canvas tight" style="background:var(--bg-0);min-height:380px;align-items:flex-start">
+          <div style="width:300px;background:rgba(23,20,25,.96);border:1px solid var(--border-strong);border-radius:14px;backdrop-filter:blur(14px);overflow:hidden">
+            <div style="padding:14px 16px 12px;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span class="badge ok"><span class="dot"></span>santé 88</span><span class="badge muted">active</span></div>
+              <h2 style="margin:0;font:500 22px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.015em">Wikichat</h2>
+              <p style="margin:4px 0 0;color:var(--fg-mute);font-size:12px;line-height:1.5">Service local multi-agents.</p>
+            </div>
+            <div style="padding:12px 16px">
+              <div style="font:600 10px/1 var(--font-sans);letter-spacing:.1em;text-transform:uppercase;color:var(--fg-mute);margin-bottom:8px">Action rapide</div>
+              <button style="display:flex;align-items:center;gap:9px;padding:8px 11px;background:var(--accent);color:var(--accent-fg);border:0;border-radius:7px;font-size:12.5px;font-weight:600;width:100%;text-align:left;margin-bottom:5px">⚡<span style="flex:1">Capter une idée ici</span><span style="color:rgba(26,15,8,.5);font-family:var(--font-mono);font-size:10.5px">⌘↵</span></button>
+              <button style="display:flex;align-items:center;gap:9px;padding:8px 11px;background:transparent;border:1px solid var(--border);border-radius:7px;color:var(--fg);font-size:12.5px;width:100%;text-align:left">🚀<span style="flex:1">Spawner un agent</span><span style="color:var(--fg-disabled);font-family:var(--font-mono);font-size:10.5px">⌘N</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="tag">14 · organisme</span>
+          <h3>PeekPanel</h3>
+          <p>Slide-in droite sur sélection projet/agent/idée. Header (badges, titre serif, tagline), sections empilées séparées par border, actions primaires en haut.</p>
+          <div class="kv">
+            <span class="k">w</span><span class="v">340</span>
+            <span class="k">slide</span><span class="v">200ms ease-out</span>
+            <span class="k">sections</span><span class="v">état · action · agents · idées · timeline</span>
+          </div>
+          <h5>Do</h5>
+          <ul><li>1<sup>re</sup> action en bouton primaire ambre — sinon ghost</li><li>peek se ferme avec Esc OU click hors</li></ul>
+          <h5>Don't</h5>
+          <ul class="dont"><li>peek + cmd palette ouverts en même temps — palette ferme peek</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 15 minimap -->
+    <section class="sec" id="minimap">
+      <div class="cmp">
+        <div class="canvas">
+          <div style="width:212px;height:130px;background:rgba(23,20,25,.85);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative">
+            <span style="position:absolute;top:6px;left:10px;font:500 9.5px/1 var(--font-mono);color:var(--fg-disabled);text-transform:uppercase;letter-spacing:.08em;z-index:1">vue d'ensemble</span>
+            <div style="position:absolute;inset:8px;background:var(--bg-0);border-radius:6px;overflow:hidden">
+              <span style="position:absolute;left:14%;top:28%;width:5px;height:5px;border-radius:50%;background:var(--paper-soft)"></span>
+              <span style="position:absolute;left:28%;top:32%;width:5px;height:5px;border-radius:50%;background:var(--paper-soft)"></span>
+              <span style="position:absolute;left:55%;top:30%;width:5px;height:5px;border-radius:50%;background:var(--paper-soft)"></span>
+              <span style="position:absolute;left:38%;top:28%;width:4px;height:4px;border-radius:50%;background:var(--idea)"></span>
+              <span style="position:absolute;left:68%;top:32%;width:4px;height:4px;border-radius:50%;background:var(--idea)"></span>
+              <div style="position:absolute;left:8%;top:18%;width:38%;height:48%;border:1.5px solid var(--accent);background:rgba(232,154,92,.07);border-radius:3px"></div>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="tag">15 · organisme</span>
+          <h3>Minimap</h3>
+          <p>Vue d'ensemble bottom-right du canvas. Projets = points crème, idées = points lavande, viewport = cadre ambré. Cliquer = pan vers cette zone.</p>
+          <div class="kv"><span class="k">size</span><span class="v">212×130</span><span class="k">pos</span><span class="v">bottom-right:18</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="foot">
+      <div class="grow">Pass 0 · catalogue extrait de <code>wikichat-canvas.html</code></div>
+      <div>→ Pass 1 · les 5 vues</div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ToC active section highlight
+const links = [...document.querySelectorAll('nav.toc a')];
+const sections = links.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const io = new IntersectionObserver(es => {
+  es.forEach(e => {
+    if (e.isIntersecting) {
+      const id = '#' + e.target.id;
+      links.forEach(a => a.parentElement.classList.toggle('active', a.getAttribute('href') === id));
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+sections.forEach(s => io.observe(s));
+</script>
+
+
+
+</body></html>

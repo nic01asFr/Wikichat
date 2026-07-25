@@ -26,3 +26,12 @@ scripts/personal/
 Thumbs.db
 .vscode/
 .idea/
+docs/audits/
+
+# Brique 1 — staging export mémoire (ne jamais committer ici)
+wikichat-memory-staging/
+
+# Configs locales avec secrets — ne jamais pousser
+.mcp.json
+.env
+.env.*

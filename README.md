@@ -43,6 +43,22 @@ npm start              # serveur seul
 npm run start:team     # serveur + team autonome (Sentinel/Librarian/Orchestrator au boot)
 ```
 
+### Couche Claude Code skills + slash commands (recommandé)
+
+Une fois WikiChat installé, ajoute la couche skill/commands pour avoir un meilleur UX dans tes sessions Claude Code :
+
+```bash
+npm run install-overlay              # → ~/.claude/ (user-level, marche partout)
+npm run install-overlay -- --project # → .claude/ du repo courant uniquement
+```
+
+Cela ajoute :
+- **Skill `wikichat`** auto-activée quand le MCP est détecté → explique à Claude comment se coordonner, register, chercher la KB
+- **`/wikichat-init`** : auto-onboarding au début de session (register + declare_project + briefing + recherche KB pertinente)
+- **`/sk <query>`** : recherche rapide dans la KB transverse
+- **`/close-project [name]`** : clôture structurée du projet courant
+- **`/wikichat-status`** : état du service + ta session en un coup d'œil
+
 Le serveur écoute sur `http://localhost:3777`. Dashboard : `http://localhost:3777/dashboard`. Cockpit (5 panneaux + drill-downs) : `http://localhost:3777/cockpit`.
 
 ### Variables d'environnement

@@ -36,6 +36,7 @@ for (const [name, description] of [
   ["general", "Canal par défaut pour les discussions générales"],
   ["coordination", "Canal pour la coordination de tâches entre agents"],
   ["system", "Événements système : connexions, déconnexions, statuts"],
+  ["ideation", "Idea pool : capture (add_idea), harmonisation (harmonize_ideas), scoping vers projets"],
 ]) {
   state.channels.set(name, {
     name, description, createdBy: "system",
@@ -114,10 +115,104 @@ export function getSessionName(sessionId) {
   return state.sessions.get(sessionId)?.name ?? `session-${sessionId.slice(0, 6)}`;
 }
 
-/** Build or get a DM channel key between two session IDs */
-export function dmChannelKey(idA, idB) {
-  const [a, b] = [idA, idB].sort();
-  return `dm:${a.slice(0, 8)}-${b.slice(0, 8)}`;
+/** Build a stable DM channel key between two AGENTS (by name).
+ *
+ * IMPORTANT : we key by AGENT NAME, not session-id. An agent that disconnects
+ * and reconnects keeps the same DM history because the channel name is derived
+ * from the agent's stable identity, not its ephemeral session-id.
+ *
+ * Format : `dm:alice__bob` (sorted, double-underscore separator to avoid
+ * ambiguity when names contain hyphens like "claude-code").
+ *
+ * Anonymous sessions (`session-XXX`) fall back to id-based keying since they
+ * have no stable identity.
+ */
+export function dmChannelKey(idOrNameA, idOrNameB) {
+  function nameOf(idOrName) {
+    if (!idOrName) return idOrName;
+    const session = state.sessions.get(idOrName);
+    if (session && session.name && !session.name.startsWith("session-")) {
+      return session.name.toLowerCase();
+    }
+    return String(idOrName).toLowerCase();
+  }
+  const [a, b] = [nameOf(idOrNameA), nameOf(idOrNameB)].sort();
+  // Sanitize : keep only alphanum + hyphen, max 32 chars per side. Separator is __
+  const safe = (s) => String(s).replace(/[^a-z0-9-]/g, "").slice(0, 32);
+  return `dm:${safe(a)}__${safe(b)}`;
+}
+
+/** Returns true if the given agent name is one of the participants in the DM channel.
+ *  E.g. "alice" is in "dm:alice__bob" but not in "dm:carol__dave". */
+export function isAgentInDMChannel(channelName, agentName) {
+  if (!channelName?.startsWith("dm:") || !agentName) return false;
+  const safe = String(agentName).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+  const parts = channelName.slice(3).split("__");
+  return parts.includes(safe);
+}
+
+/**
+ * Resolve an arbitrary DM target string to a canonical registered session name.
+ *
+ * DM channels are keyed by agent NAME, and visibility is an exact key/participant
+ * match. So if the sender types a name that differs even slightly from the
+ * recipient's registered name ("Bob" vs "Bob-Dev", "session-abc123" vs the real
+ * name), the message is keyed on a channel the recipient never reads — it's sent
+ * but invisible. This resolver maps the typed target to the recipient's actual
+ * name BEFORE the key is computed, applied identically on send and on read/poll
+ * so both sides agree on the same channel.
+ *
+ * Resolution order (first hit wins, ambiguity falls through to literal):
+ *   1. exact case-insensitive match on a known session name
+ *   2. `session-XXXXXX` form → that session's current name (may be a real name now)
+ *   3. unique prefix match among real names ("Bob" → "Bob-Dev" if it's the only one)
+ *   4. unique substring match
+ *   5. literal target (async DM to an agent not yet connected under this name)
+ *
+ * @returns {{ name: string, matched: boolean, online: boolean }}
+ *   name    — canonical name to key the DM on
+ *   matched — a known session resolved this target (vs. literal fallback)
+ *   online  — the resolved session is currently connected
+ */
+export function resolveAgentName(target) {
+  const fallback = { name: String(target ?? ""), matched: false, online: false };
+  if (!target) return fallback;
+  const tl = String(target).trim().toLowerCase();
+  if (!tl) return fallback;
+
+  const isOnline = (s) => s.availability !== "stale" &&
+    (!s.lastSeen || Date.now() - new Date(s.lastSeen).getTime() < 5 * 60 * 1000);
+
+  // 1) exact case-insensitive match
+  for (const s of state.sessions.values()) {
+    if (s.name && s.name.toLowerCase() === tl) {
+      return { name: s.name, matched: true, online: isOnline(s) };
+    }
+  }
+  // 2) session-XXXXXX → resolve to that session's current name
+  const anon = /^session-([a-f0-9]{6})$/i.exec(tl);
+  if (anon) {
+    const prefix = anon[1];
+    for (const [sid, s] of state.sessions) {
+      if (sid.slice(0, 6) === prefix) {
+        return { name: s.name, matched: true, online: isOnline(s) };
+      }
+    }
+    return fallback;
+  }
+  // 3) unique prefix match among real (non-anonymous) names
+  const realSessions = [...state.sessions.values()].filter(s => s.name && !s.name.startsWith("session-"));
+  const prefixHits = realSessions.filter(s => s.name.toLowerCase().startsWith(tl));
+  if (prefixHits.length === 1) {
+    return { name: prefixHits[0].name, matched: true, online: isOnline(prefixHits[0]) };
+  }
+  // 4) unique substring match
+  const subHits = realSessions.filter(s => s.name.toLowerCase().includes(tl));
+  if (subHits.length === 1) {
+    return { name: subHits[0].name, matched: true, online: isOnline(subHits[0]) };
+  }
+  // 5) literal fallback — async DM, delivered when target registers under this name
+  return fallback;
 }
 
 /** Time helpers */
@@ -160,4 +255,56 @@ export function getEtaSummary(excludeId) {
   return [...state.sessions.values()]
     .filter(s => s.sessionId !== excludeId && s.eta && new Date(s.eta) > now)
     .map(s => `  ⏳ ${s.name}: ${timeUntil(s.eta)}${s.etaReason ? ` (${s.etaReason})` : ""}`);
+}
+
+/**
+ * inboxFor — the single source of truth for "what is addressed to this agent".
+ *
+ * One filter, shared by the Stop-hook endpoint (/api/inbox) and the `poll` MCP
+ * tool, so a message is delivered under exactly the same rule whether it reaches
+ * the agent by push (hook at turn boundary) or pull (explicit poll). "Addressed
+ * to me" = a DM where I'm a participant, a broadcast, or a message that @mentions
+ * me. Ambient channel chatter is deliberately NOT inbox — it stays readable on
+ * demand via read_messages, so a turn-based agent's signal isn't drowned.
+ *
+ * Cursor is the caller's concern: pass the last id you delivered as `sinceId`
+ * and store the returned `lastId` as your new cursor. Resolution:
+ *   - sinceId present & found → slice strictly after it
+ *   - sinceId present & EVICTED → { resynced:true }, empty (never replay history)
+ *   - no sinceId, sinceMinutes>0 → lookback window (first activation catch-up)
+ *   - no sinceId, no window → { baseline:true }, empty (arm cursor, no replay)
+ *
+ * @param {string} name canonical agent name
+ * @returns {{ messages: object[], lastId: string|null, resynced?: boolean, baseline?: boolean }}
+ */
+export function inboxFor(name, { sinceId = null, sinceMinutes = 0 } = {}) {
+  const agentLc = String(name || "").toLowerCase();
+  const newestId = state.messages.at(-1)?.id ?? null;
+  if (!agentLc) return { messages: [], lastId: newestId };
+
+  let candidates;
+  if (sinceId) {
+    const idx = state.messages.findIndex(m => m.id === sinceId);
+    if (idx >= 0) candidates = state.messages.slice(idx + 1);
+    else return { messages: [], lastId: newestId, resynced: true };
+  } else if (sinceMinutes > 0) {
+    const cutoff = Date.now() - sinceMinutes * 60 * 1000;
+    candidates = state.messages.filter(m => new Date(m.timestamp).getTime() >= cutoff);
+  } else {
+    return { messages: [], lastId: newestId, baseline: true };
+  }
+
+  const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const mention = new RegExp(`(^|[^\\w@])@${escaped}([^\\w-]|$)`, "i");
+  const messages = candidates.filter(m => {
+    if (m.from === "system") return false;
+    if (m.fromName && m.fromName.toLowerCase() === agentLc) return false; // never my own
+    if (m.isDM) {
+      const ci = state.channels.get(m.channel);
+      return isAgentInDMChannel(m.channel, name) || !!ci?.participants?.includes(agentLc);
+    }
+    if (m.channel === "__broadcast__") return true;
+    return mention.test(m.content || "");
+  });
+  return { messages, lastId: newestId ?? sinceId };
 }

@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="fr"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WikiChat — Spec long-scroll</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<style>/* latin-ext */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("07b650ef-f7b2-495b-ac6e-391f3c36dd64") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("41ffcc11-1dfb-4cc2-8f70-625d8c18f77d") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("963e1ed0-6673-4ced-8fe6-3652266132c5") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("898b98dc-12f0-44a7-bb33-58f5e86054f0") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("97dd8ad5-3d65-4b99-b304-317eaafa06ca") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("4e3bf0b9-24ab-4152-8486-ae6851049333") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("14d86064-b39e-4288-836e-a3947586fd3d") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("753ade6c-6d9a-4df4-9446-01f9d5a5c8f7") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("96c61e1c-91bb-42a3-bb01-ef6a6082b3c0") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("e7bbad0c-075e-402d-9e8d-4af744a3a860") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("a4e2e414-1fef-49ad-b99f-26ce488837ae") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("97dd8ad5-3d65-4b99-b304-317eaafa06ca") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("4e3bf0b9-24ab-4152-8486-ae6851049333") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("14d86064-b39e-4288-836e-a3947586fd3d") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("753ade6c-6d9a-4df4-9446-01f9d5a5c8f7") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("96c61e1c-91bb-42a3-bb01-ef6a6082b3c0") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("e7bbad0c-075e-402d-9e8d-4af744a3a860") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("a4e2e414-1fef-49ad-b99f-26ce488837ae") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("97dd8ad5-3d65-4b99-b304-317eaafa06ca") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("4e3bf0b9-24ab-4152-8486-ae6851049333") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("14d86064-b39e-4288-836e-a3947586fd3d") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("753ade6c-6d9a-4df4-9446-01f9d5a5c8f7") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("96c61e1c-91bb-42a3-bb01-ef6a6082b3c0") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("e7bbad0c-075e-402d-9e8d-4af744a3a860") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("a4e2e414-1fef-49ad-b99f-26ce488837ae") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("97dd8ad5-3d65-4b99-b304-317eaafa06ca") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("4e3bf0b9-24ab-4152-8486-ae6851049333") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("14d86064-b39e-4288-836e-a3947586fd3d") format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("753ade6c-6d9a-4df4-9446-01f9d5a5c8f7") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("96c61e1c-91bb-42a3-bb01-ef6a6082b3c0") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("e7bbad0c-075e-402d-9e8d-4af744a3a860") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("a4e2e414-1fef-49ad-b99f-26ce488837ae") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("4bb89940-c753-4650-886d-78d4d1d5f14e") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("9707de75-458e-45c7-867e-a86b40241c50") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("6a873ef9-3144-4b3d-bb3a-2c563fa39db9") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("f5102e01-ee5e-453d-b1a3-8a1b0ab456e5") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("6c577027-2895-4475-91f6-e4c36bfbe17c") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("88bb0d52-0d20-4ec6-9f92-1e67bf640fd1") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("4bb89940-c753-4650-886d-78d4d1d5f14e") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("9707de75-458e-45c7-867e-a86b40241c50") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("6a873ef9-3144-4b3d-bb3a-2c563fa39db9") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("f5102e01-ee5e-453d-b1a3-8a1b0ab456e5") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("6c577027-2895-4475-91f6-e4c36bfbe17c") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("88bb0d52-0d20-4ec6-9f92-1e67bf640fd1") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+:root{
+  --bg-0:#0F0D11;--bg-1:#171419;--bg-2:#1F1B21;--bg-3:#2A252C;--bg-4:#3A3439;
+  --border:#272127;--border-strong:#3A3439;
+  --paper:#F4ECE3;--paper-soft:#E8DFD2;
+  --fg-strong:#F1E9DF;--fg:#B6ACA3;--fg-mute:#766E68;--fg-disabled:#534B47;
+  --accent:#E89A5C;--accent-strong:#F0AE73;--accent-fg:#1A0F08;
+  --accent-soft:rgba(232,154,92,.12);--accent-line:rgba(232,154,92,.28);
+  --idea:#C9A6E8;--idea-soft:rgba(201,166,232,.13);
+  --ok:#8AB58B;--warn:#D9AF5C;--bad:#D17B70;--info:#85B0CC;
+  --ok-soft:rgba(138,181,139,.14);--warn-soft:rgba(217,175,92,.14);
+  --bad-soft:rgba(209,123,112,.14);--info-soft:rgba(133,176,204,.14);
+  --font-sans:'Inter','Segoe UI',system-ui,sans-serif;
+  --font-serif:'Instrument Serif',Georgia,serif;
+  --font-mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg-0);color:var(--fg);font:13.5px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent-soft);color:var(--fg-strong)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:8px}
+a{color:inherit;text-decoration:none}
+code{font:500 12px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+.kbd{font-family:var(--font-mono);font-size:11px;padding:1px 5px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;color:var(--fg-mute)}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.badge{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:500}
+.badge.ok{background:var(--ok-soft);color:#a8cdab}.badge.ok .dot{background:var(--ok)}
+.badge.warn{background:var(--warn-soft);color:#e6c889}.badge.warn .dot{background:var(--warn)}
+.badge.bad{background:var(--bad-soft);color:#e3a59c}.badge.bad .dot{background:var(--bad)}
+.badge.info{background:var(--info-soft);color:#aac8db}.badge.info .dot{background:var(--info)}
+.badge.idea{background:var(--idea-soft);color:#dcc4ed}.badge.idea .dot{background:var(--idea)}
+.badge.muted{background:var(--bg-3);color:var(--fg-mute)}.badge.muted .dot{background:var(--fg-mute)}
+
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+nav.toc{position:sticky;top:0;align-self:start;height:100vh;padding:32px 18px 32px 24px;border-right:1px solid var(--border);background:var(--bg-1);overflow-y:auto}
+nav.toc .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px;font:600 14px/1 var(--font-sans);color:var(--fg-strong)}
+nav.toc .brand .mark{width:30px;height:30px;border-radius:7px;background:var(--paper);color:var(--bg-0);display:flex;align-items:center;justify-content:center;font:italic 400 19px/1 var(--font-serif);position:relative}
+nav.toc .brand .mark::before,nav.toc .brand .mark::after{content:"";position:absolute;width:3px;height:3px;border-radius:50%;background:var(--accent);bottom:5px}
+nav.toc .brand .mark::before{left:7px}.nav.toc .brand .mark::after{left:16px}
+nav.toc .brand .mark::after{left:16px}
+nav.toc .brand .pos{color:var(--fg-mute);font-weight:400;font-size:12.5px}
+nav.toc h4{margin:18px 0 6px;font:600 10.5px/1 var(--font-sans);letter-spacing:.16em;text-transform:uppercase;color:var(--fg-disabled)}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc li{padding:5px 0;border-left:1px solid transparent;padding-left:11px;margin-left:-12px}
+nav.toc li.active{border-left-color:var(--accent)}
+nav.toc a{color:var(--fg-mute);font-size:12.5px}
+nav.toc li:hover a,nav.toc li.active a{color:var(--fg-strong)}
+nav.toc .num{color:var(--fg-disabled);font-family:var(--font-mono);font-size:10.5px;margin-right:8px}
+
+main{padding:48px 56px 120px;max-width:1280px}
+header.hd{margin-bottom:48px}
+header.hd .eyebrow{font:600 11px/1 var(--font-sans);letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute);margin-bottom:10px}
+header.hd h1{margin:0;font:400 56px/1.05 var(--font-serif);color:var(--fg-strong);letter-spacing:-.02em}
+header.hd .lede{margin:18px 0 0;color:var(--fg-mute);font-size:15px;line-height:1.6;max-width:680px}
+
+section.view{margin-bottom:88px;scroll-margin-top:32px}
+section.view > .head{display:flex;align-items:flex-start;gap:24px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+section.view > .head .num{font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin-top:14px;min-width:30px}
+section.view > .head h2{margin:0;font:400 40px/1.05 var(--font-serif);color:var(--fg-strong);letter-spacing:-.02em;flex:1}
+section.view > .head .url{font:500 12px/1 var(--font-mono);color:var(--fg-mute);background:var(--bg-1);border:1px solid var(--border);border-radius:5px;padding:5px 9px;margin-top:14px}
+section.view > .lede{margin:0 0 28px;color:var(--fg-mute);font-size:14px;line-height:1.65;max-width:720px}
+
+.notes{margin:18px 0 28px;padding:18px 22px;background:var(--bg-1);border:1px solid var(--border);border-radius:10px;font-size:13px;line-height:1.6;color:var(--fg)}
+.notes h5{margin:0 0 8px;font:600 10.5px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-mute)}
+.notes ul{margin:0;padding:0 0 0 16px}
+.notes li{margin-bottom:5px}
+.notes .grid2{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+
+.artboard{background:var(--bg-0);border:1px solid var(--border-strong);border-radius:14px;overflow:hidden;margin-bottom:24px;position:relative}
+.artboard .ab-head{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--bg-1);border-bottom:1px solid var(--border);font:500 10.5px/1 var(--font-mono);color:var(--fg-disabled);text-transform:uppercase;letter-spacing:.1em}
+.artboard .ab-head .grow{flex:1}
+.artboard .ab-head .lab{color:var(--accent)}
+.artboard .ab-body{padding:0;height:560px;position:relative;overflow:hidden}
+.artboard.tall .ab-body{height:680px}
+.artboard.short .ab-body{height:400px}
+
+/* embedded screen — share styles with canvas */
+.scr{position:absolute;inset:0;font-family:var(--font-sans);color:var(--fg)}
+.scr-topbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--border);background:var(--bg-0)}
+.scr-brand{display:flex;align-items:center;gap:9px;font:600 13px/1 var(--font-sans);color:var(--fg-strong)}
+.scr-brand .mark{width:26px;height:26px;border-radius:6px;background:var(--paper);color:var(--bg-0);display:flex;align-items:center;justify-content:center;font:italic 400 16px/1 var(--font-serif);position:relative}
+.scr-brand .mark::before,.scr-brand .mark::after{content:"";position:absolute;width:2.5px;height:2.5px;border-radius:50%;background:var(--accent);bottom:4px}
+.scr-brand .mark::before{left:6px}.scr-brand .mark::after{left:14px}
+.scr-brand .pos{color:var(--fg-mute);font-weight:400;font-size:12px}
+
+.scr-cmd{display:flex;align-items:center;gap:9px;flex:1;max-width:420px;height:30px;padding:0 12px;background:var(--bg-1);border:1px solid var(--border-strong);border-radius:7px;color:var(--fg-mute);font-size:12px;cursor:text}
+.scr-cmd .accent{color:var(--accent);font-weight:500}
+.scr-cmd .grow{flex:1}
+
+.hud-pill{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 10px;background:var(--bg-1);border:1px solid var(--border);border-radius:7px;color:var(--fg);font-size:12px}
+.hud-pill strong{color:var(--fg-strong);font-weight:600}
+.hud-pill.alert{border-color:rgba(209,123,112,.32);color:var(--bad)}
+
+.empty-art{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;height:100%;padding:32px;gap:12px}
+.empty-art .glyph{width:72px;height:72px;border-radius:18px;background:var(--bg-1);border:1px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--fg-disabled);font:italic 400 36px/1 var(--font-serif);margin-bottom:12px}
+.empty-art h3{margin:0;font:400 26px/1.1 var(--font-serif);color:var(--fg-strong)}
+.empty-art p{margin:0;color:var(--fg-mute);font-size:13px;line-height:1.55;max-width:340px}
+.empty-art .cta{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:13px;margin-top:6px}
+
+/* === view 01 — Aujourd'hui === */
+.today-grid{position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr;gap:18px;padding:18px}
+.today-grid > .full{grid-column:1/-1}
+.today-tile{background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+.today-tile h3{margin:0;font:500 18px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+.today-tile h3 .ct{margin-left:auto;font:500 11px/1 var(--font-mono);color:var(--fg-disabled)}
+.today-greet{padding:24px 28px;background:linear-gradient(180deg,rgba(232,154,92,.06),transparent),var(--bg-1);border:1px solid var(--border);border-radius:14px}
+.today-greet h2{margin:0 0 4px;font:italic 400 28px/1.1 var(--font-serif);color:var(--fg-strong)}
+.today-greet p{margin:0;color:var(--fg-mute);font-size:13px}
+.today-greet em{color:var(--accent);font-style:normal;font-weight:500}
+.today-list{display:flex;flex-direction:column;gap:8px}
+.today-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px}
+.today-row:last-child{border-bottom:0}
+.today-row .t{color:var(--fg-strong);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.today-row .meta{color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px}
+.today-row .act{color:var(--accent);font-size:11px;opacity:0;transition:opacity .14s}
+.today-row:hover .act{opacity:1}
+
+/* === view 02 — Canvas (recap) === */
+.scene-mini{position:absolute;inset:0;background:radial-gradient(ellipse 70% 50% at 30% 20%,rgba(232,154,92,.06),transparent 60%),radial-gradient(ellipse 60% 50% at 80% 80%,rgba(201,166,232,.04),transparent 60%),var(--bg-0)}
+.scene-mini .grid-bg{position:absolute;inset:0;background-image:radial-gradient(circle at 1px 1px,rgba(255,236,210,.04) 1px,transparent 0);background-size:30px 30px}
+.cluster-m{position:absolute;border:1px dashed var(--border-strong);border-radius:24px}
+.cluster-m.warm{border-color:rgba(232,154,92,.22)}
+.cluster-m .lab{position:absolute;top:-8px;left:18px;background:var(--bg-0);padding:0 8px;color:var(--fg-mute);font:600 9.5px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase}
+.cluster-m.warm .lab{color:var(--accent)}
+.proj-m{position:absolute;width:170px;background:linear-gradient(180deg,var(--bg-1),var(--bg-2));border:1px solid var(--border);border-radius:12px;padding:11px 12px 9px;box-shadow:0 6px 18px rgba(0,0,0,.32)}
+.proj-m.selected{border-color:var(--accent);box-shadow:0 12px 24px rgba(0,0,0,.4),0 0 0 2px var(--accent-soft)}
+.proj-m h5{margin:0 0 4px;font:500 14px/1.15 var(--font-serif);color:var(--fg-strong)}
+.proj-m .row{display:flex;align-items:center;gap:6px;font:500 9.5px/1 var(--font-mono);color:var(--fg-mute);margin-bottom:7px}
+.proj-m .meter{height:2px;background:var(--bg-3);border-radius:1px;overflow:hidden}
+.proj-m .meter .f{height:100%}
+.proj-m .meter .f.ok{background:var(--ok)}.proj-m .meter .f.warn{background:var(--warn)}.proj-m .meter .f.bad{background:var(--bad)}
+.idea-m{position:absolute;width:120px;background:linear-gradient(180deg,#F2E7D6,#E8DCC8);color:#2A2118;border-radius:5px;padding:7px 9px;box-shadow:0 3px 10px rgba(0,0,0,.28);transform:rotate(-1.5deg)}
+.idea-m.r2{transform:rotate(1.2deg)}
+.idea-m .id{font:500 8px/1 var(--font-mono);color:#8B7355;margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em}
+.idea-m .t{font:500 10.5px/1.3 var(--font-sans)}
+.agent-m{position:absolute;display:inline-flex;align-items:center;gap:5px;background:rgba(15,13,17,.85);border:1px solid var(--border-strong);border-radius:14px;padding:2px 9px 2px 3px;backdrop-filter:blur(6px)}
+.agent-m .ava{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 9px/1 var(--font-sans);color:#0F0D11}
+.agent-m .n{font:500 11px/1 var(--font-sans);color:var(--fg-strong)}
+.agent-m .r{font:10px/1 var(--font-mono);color:var(--fg-mute)}
+.agent-m.live::before{content:"";position:absolute;left:-3px;top:-3px;width:8px;height:8px;background:var(--ok);border-radius:50%;border:2px solid var(--bg-0);box-shadow:0 0 6px rgba(138,181,139,.6)}
+
+/* === view 03 — Capture overlay === */
+.cap-bg{position:absolute;inset:0;background:rgba(8,7,10,.55);backdrop-filter:blur(10px);display:flex;align-items:flex-start;justify-content:center;padding-top:80px}
+.cap-modal{width:560px;max-width:calc(100% - 40px);background:rgba(15,13,17,.96);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden}
+.cap-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.1em}
+.cap-head .grow{flex:1}
+.cap-body{padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+.cap-title{background:transparent;border:0;outline:0;color:var(--fg-strong);font:400 22px/1.2 var(--font-serif);width:100%}
+.cap-title::placeholder{color:var(--fg-disabled)}
+.cap-body-text{background:transparent;border:0;outline:0;color:var(--fg);font:400 13.5px/1.55 var(--font-sans);width:100%;resize:none;height:80px}
+.cap-body-text::placeholder{color:var(--fg-disabled)}
+.cap-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)}
+.cap-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;cursor:pointer}
+.cap-pill .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px;margin-right:2px}
+.cap-pill.proj{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.cap-pill.axe{background:var(--idea-soft);border-color:transparent;color:#dcc4ed}
+.cap-foot{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.2);font-size:11.5px;color:var(--fg-mute)}
+.cap-foot .grow{flex:1}
+.cap-cta{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:12.5px}
+
+/* === view 04 — Spawn modal === */
+.spawn-bg{position:absolute;inset:0;background:rgba(8,7,10,.55);backdrop-filter:blur(10px);display:flex;align-items:flex-start;justify-content:center;padding-top:60px}
+.spawn-modal{width:640px;background:rgba(15,13,17,.96);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden}
+.spawn-head{padding:18px 22px;border-bottom:1px solid var(--border)}
+.spawn-head .lbl{font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin-bottom:6px}
+.spawn-head h3{margin:0;font:400 24px/1.1 var(--font-serif);color:var(--fg-strong)}
+.spawn-body{padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+.spawn-row{display:flex;align-items:center;gap:14px}
+.spawn-row .k{width:90px;color:var(--fg-mute);font:500 11px/1 var(--font-mono);text-transform:uppercase;letter-spacing:.08em}
+.spawn-row .pickers{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.spawn-pick{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;cursor:pointer}
+.spawn-pick.on{background:var(--accent);color:var(--accent-fg);border-color:transparent;font-weight:600}
+.spawn-row .input{flex:1;padding:8px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:7px;color:var(--fg-strong);font:400 13px/1.4 var(--font-sans)}
+.spawn-preview{padding:14px 16px;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;font:500 12px/1.55 var(--font-mono);color:var(--fg-mute)}
+.spawn-preview .acc{color:var(--accent)}
+.spawn-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.2)}
+.spawn-foot .grow{flex:1}
+.btn-ghost{display:inline-flex;align-items:center;height:30px;padding:0 14px;background:transparent;border:1px solid var(--border-strong);border-radius:7px;color:var(--fg);font-size:12.5px;cursor:pointer}
+.btn-prim{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 14px;background:var(--accent);color:var(--accent-fg);border:0;border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer}
+
+/* === view 05 — Chat === */
+.chat-shell{position:absolute;inset:0;display:grid;grid-template-columns:240px 1fr 280px}
+.chat-rail{background:var(--bg-1);border-right:1px solid var(--border);padding:14px 12px;overflow-y:auto}
+.chat-rail h5{margin:0 0 8px;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-disabled);padding:0 6px}
+.chat-rail .conv{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer;margin-bottom:2px}
+.chat-rail .conv:hover{background:var(--bg-2)}
+.chat-rail .conv.on{background:var(--bg-2)}
+.chat-rail .conv.on::before{content:"";width:2px;background:var(--accent);align-self:stretch;margin-left:-9px;margin-right:7px;border-radius:1px}
+.chat-rail .conv .ava{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 10px/1 var(--font-sans);color:#0F0D11;flex-shrink:0}
+.chat-rail .conv .body{flex:1;min-width:0}
+.chat-rail .conv .n{font:500 12.5px/1.2 var(--font-sans);color:var(--fg-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-rail .conv .s{font:400 11px/1 var(--font-mono);color:var(--fg-mute)}
+.chat-rail .conv .un{width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0;box-shadow:0 0 6px var(--accent)}
+
+.chat-main{display:flex;flex-direction:column;background:var(--bg-0)}
+.chat-head{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border);background:var(--bg-1)}
+.chat-head .ava{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 12px/1 var(--font-sans);color:#0F0D11}
+.chat-head .ttl{font:500 14px/1.2 var(--font-sans);color:var(--fg-strong)}
+.chat-head .sub{font:500 11px/1 var(--font-mono);color:var(--fg-mute)}
+.chat-head .grow{flex:1}
+.chat-head .kill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;background:var(--bad-soft);border:1px solid rgba(209,123,112,.32);border-radius:6px;color:var(--bad);font-size:12px}
+.chat-msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px;position:relative}
+.msg{display:flex;gap:10px;align-items:flex-start}
+.msg .ava{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px/1 var(--font-sans);color:#0F0D11;flex-shrink:0}
+.msg .ava.user{background:var(--bg-3);color:var(--fg);font-weight:600;font-size:12px}
+.msg .body{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
+.msg .nm{display:flex;align-items:baseline;gap:8px}
+.msg .nm .n{font:500 12.5px/1 var(--font-sans);color:var(--fg-strong)}
+.msg .nm .ts{font:400 10.5px/1 var(--font-mono);color:var(--fg-disabled)}
+.msg .txt{color:var(--fg);font-size:13.5px;line-height:1.55}
+.msg .txt code{font-family:var(--font-mono);font-size:12px}
+.msg .att{display:inline-flex;align-items:center;gap:8px;margin-top:4px;padding:8px 12px;background:var(--bg-1);border:1px solid var(--border);border-radius:7px;color:var(--fg-strong);font-size:12px;max-width:fit-content;cursor:pointer}
+.msg .att .icn{color:var(--accent)}
+.unread-mark{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--accent);position:relative}
+.unread-mark::before{content:"non lus depuis 18m";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bg-0);padding:0 12px;font:500 10.5px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.1em}
+.chat-input{padding:14px 18px;border-top:1px solid var(--border);background:var(--bg-1);display:flex;gap:10px;align-items:flex-end}
+.chat-input textarea{flex:1;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--fg-strong);font:400 13px/1.5 var(--font-sans);resize:none;height:40px}
+.chat-input .send{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;background:var(--accent);color:var(--accent-fg);border-radius:8px;border:0;cursor:pointer}
+
+.chat-side{background:var(--bg-1);border-left:1px solid var(--border);padding:16px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.chat-side h5{margin:0;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-mute)}
+.chat-side .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12px}
+.chat-side .kv .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:11px}
+.chat-side .kv .v{color:var(--fg-strong);font-family:var(--font-mono);font-size:11px;text-align:right}
+
+.foot{margin-top:80px;padding:32px 0 0;border-top:1px solid var(--border);color:var(--fg-mute);font-size:12px;display:flex;align-items:center;gap:14px}
+.foot .grow{flex:1}
+</style>
+</head>
+<body>
+
+
+
+<div class="shell">
+
+  <nav class="toc" id="toc">
+    <div class="brand"><span class="mark">w</span><span>wikichat <span class="pos">/ spec</span></span></div>
+
+    <h4>Vues</h4>
+    <ol>
+      <li><a href="#today"><span class="num">01</span>Aujourd'hui</a></li>
+      <li><a href="#canvas"><span class="num">02</span>Canvas</a></li>
+      <li><a href="#capture"><span class="num">03</span>Capture</a></li>
+      <li><a href="#spawn"><span class="num">04</span>Spawn</a></li>
+      <li><a href="#chat"><span class="num">05</span>Chat</a></li>
+    </ol>
+
+    <h4>Cross-cutting</h4>
+    <ol>
+      <li><a href="#routing"><span class="num">06</span>Routing</a></li>
+      <li><a href="#layout"><span class="num">07</span>Layout</a></li>
+      <li><a href="#motion"><span class="num">08</span>Motion</a></li>
+      <li><a href="#states"><span class="num">09</span>Loading · Error</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hd">
+      <div class="eyebrow">Pass 1+2+3 · spec long-scroll</div>
+      <h1>Les 5 vues, en pixels.</h1>
+      <p class="lede">Chaque vue : un artboard hi-fi à taille réelle (default state) + un ou deux variants critiques (empty, alerte, état chargé). Notes de design en marge. Les sections cross-cutting (routing, layout, motion, loading/error) renvoient au cahier markdown qui détaille les algos.</p>
+    </header>
+
+    <!-- ============================================ -->
+    <!-- 01 · AUJOURD'HUI                              -->
+    <!-- ============================================ -->
+    <section class="view" id="today">
+      <div class="head">
+        <span class="num">01</span>
+        <h2>Aujourd'hui</h2>
+        <span class="url">/#today</span>
+      </div>
+      <p class="lede">L'écran d'ouverture du matin. <strong>Job principal</strong> : "donne-moi mes 90 secondes de mise au courant". Tout est zéro-action requise — c'est un journal de bord, pas un dashboard. Les actions latentes apparaissent au hover.</p>
+
+      <div class="artboard">
+        <div class="ab-head"><span class="lab">default</span><span class="grow"></span><span>1280×640</span></div>
+        <div class="ab-body">
+          <div class="scr">
+            <div class="scr-topbar">
+              <div class="scr-brand"><span class="mark">w</span><span>wikichat <span class="pos">/ aujourd'hui</span></span></div>
+              <div style="flex:1"></div>
+              <div class="scr-cmd"><span style="color:var(--fg-mute)">⊙</span><span class="grow"><span class="accent">Capter,</span> naviguer…</span><span class="kbd">⌘K</span></div>
+              <div style="flex:1"></div>
+              <div class="hud-pill"><span class="dot" style="background:var(--ok)"></span><strong>3</strong> agents</div>
+              <div class="hud-pill alert"><strong>3</strong> alertes</div>
+            </div>
+            <div class="today-grid">
+              <div class="full today-greet">
+                <h2>Bonjour. <em>Trois choses</em> demandent ton attention.</h2>
+                <p>Tu as 12 idées en attente de tri, Archipel a un blocker depuis 3 jours, et Carla tourne en daemon depuis 4 jours sans nouvelle.</p>
+              </div>
+
+              <div class="today-tile">
+                <h3>Alertes <span class="ct">3</span></h3>
+                <div class="today-list">
+                  <div class="today-row"><span class="dot" style="background:var(--bad)"></span><span class="t">Archipel · CI rouge depuis 3 jours</span><span class="meta">3j</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--warn)"></span><span class="t">Carla daemon en silence depuis 4 jours</span><span class="meta">4j</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--warn)"></span><span class="t">IISR-Audit · candidat archive (47j)</span><span class="meta">47j</span></div>
+                </div>
+              </div>
+
+              <div class="today-tile">
+                <h3>Idées de la veille à trier <span class="ct">12</span></h3>
+                <div class="today-list">
+                  <div class="today-row"><span class="dot" style="background:var(--idea)"></span><span class="t">Indexer la KB par embeddings</span><span class="meta">b4bd59ca</span><span class="act">→ trier</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--idea)"></span><span class="t">CLI wrap autour des spawns</span><span class="meta">d23a981c</span><span class="act">→ trier</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--idea)"></span><span class="t">Push CLAUDE.md depuis registry</span><span class="meta">e91c4b8d</span><span class="act">→ trier</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--idea)"></span><span class="t">Cache axes par signature contenu</span><span class="meta">a019ee30</span><span class="act">→ trier</span></div>
+                </div>
+              </div>
+
+              <div class="today-tile">
+                <h3>Agents revenus <span class="ct">2</span></h3>
+                <div class="today-list">
+                  <div class="today-row"><span class="dot" style="background:var(--ok);box-shadow:0 0 6px var(--ok)"></span><span class="t">Bob · qa sur Wikichat — terminé</span><span class="meta">18m</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--ok)"></span><span class="t">EmbBench · benchmark — terminé</span><span class="meta">2h</span></div>
+                </div>
+              </div>
+
+              <div class="today-tile">
+                <h3>Projets à risque <span class="ct">2</span></h3>
+                <div class="today-list">
+                  <div class="today-row"><span class="dot" style="background:var(--warn)"></span><span class="t">Archipel · santé 42</span><span class="meta">↓ 18</span></div>
+                  <div class="today-row"><span class="dot" style="background:var(--bad)"></span><span class="t">IISR-Audit · santé 38</span><span class="meta">stalé</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="artboard short">
+        <div class="ab-head"><span class="lab">empty state</span><span class="grow"></span><span>premier matin</span></div>
+        <div class="ab-body">
+          <div class="empty-art">
+            <div class="glyph">w</div>
+            <h3>Bienvenue.</h3>
+            <p>Aucun projet, aucune idée, aucun agent. Capte ta première idée pour démarrer — elle deviendra le germe de ton premier projet.</p>
+            <button class="cta">⚡ Capter ma première idée <span class="kbd" style="background:transparent;border-color:rgba(26,15,8,.2);color:rgba(26,15,8,.5)">⌘K</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <h5>Notes de design · 01</h5>
+        <ul>
+          <li><strong>Tonalité</strong> : un titre serif italique en majeur (« Bonjour. Trois choses… »). Le nombre est dans le <em>copy</em>, pas dans une stat-card. Pas de chiffres orphelins en gros, jamais.</li>
+          <li><strong>Pas de stats vanity</strong>. Chaque ligne montre une chose <em>actionnable</em> (trier, ouvrir, archiver) ou <em>diagnostique</em> (qui a CI rouge ?), rien d'ornemental.</li>
+          <li><strong>Vide ≠ erreur.</strong> L'empty state du tout-premier matin est éditorial, accueillant, dirige vers la seule action utile.</li>
+          <li><strong>Hover révèle l'action</strong> — ne jamais afficher un bouton "→" par défaut, ça encombre. La rangée est cliquable en entier (toute la zone, pas juste le mot).</li>
+          <li><strong>Cap d'items par tuile</strong> : 4. Au-delà, "voir tout (12)" en bas en lien ambré. Pas de scroll dans la tuile.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 02 · CANVAS                                   -->
+    <!-- ============================================ -->
+    <section class="view" id="canvas">
+      <div class="head">
+        <span class="num">02</span>
+        <h2>Canvas</h2>
+        <span class="url">/#canvas?proj=wikichat</span>
+      </div>
+      <p class="lede">L'écran de référence : projets posés dans des cluster-zones, idées flottantes en post-its, agents vivants au-dessus. Pan en drag, ⌘K en command bar, peek panel à droite sur sélection. Détaillé exhaustivement dans <code>wikichat-canvas.html</code> ; ici on montre les 2 états critiques manquants.</p>
+
+      <div class="artboard">
+        <div class="ab-head"><span class="lab">default — vue zoom 1.0 ·  cluster cœur</span><span class="grow"></span><span>fragment 720×560</span></div>
+        <div class="ab-body">
+          <div class="scene-mini">
+            <div class="grid-bg"></div>
+            <div class="cluster-m warm" style="left:30px;top:50px;width:520px;height:300px"><span class="lab">cœur · WikiChat</span></div>
+
+            <div class="proj-m selected" style="left:80px;top:120px">
+              <h5>Wikichat</h5>
+              <div class="row">5 t · 7 i · 6 a</div>
+              <div class="meter"><div class="f ok" style="width:88%"></div></div>
+            </div>
+            <div class="proj-m" style="left:300px;top:140px">
+              <h5>Portmap</h5>
+              <div class="row">1 t · 3 i</div>
+              <div class="meter"><div class="f ok" style="width:81%"></div></div>
+            </div>
+            <div class="proj-m" style="left:80px;top:240px">
+              <h5 style="font-style:italic">portmap-vec</h5>
+              <div class="row">1 t · 2 i</div>
+              <div class="meter"><div class="f warn" style="width:64%"></div></div>
+            </div>
+
+            <div class="idea-m" style="left:280px;top:60px"><div class="id">b4bd59ca · raw</div><div class="t">Indexer KB embeddings</div></div>
+            <div class="idea-m r2" style="left:430px;top:240px"><div class="id">d23a981c · scoped</div><div class="t">CLI wrap des spawns</div></div>
+
+            <div class="agent-m live" style="left:155px;top:103px"><span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span><span class="n">Alice</span><span class="r">dev</span></div>
+            <div class="agent-m live" style="left:380px;top:122px"><span class="ava" style="background:linear-gradient(135deg,#85B0CC,#8AB58B)">B</span><span class="n">Bob</span><span class="r">qa</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="artboard short">
+        <div class="ab-head"><span class="lab">empty state — aucun projet</span><span class="grow"></span></div>
+        <div class="ab-body">
+          <div class="empty-art">
+            <div class="glyph">w</div>
+            <h3>Le canvas est vide.</h3>
+            <p>Crée un projet ou capte une idée. Les projets apparaîtront ici, organisés par clusters.</p>
+            <button class="cta">+ Nouveau projet</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <h5>Notes de design · 02</h5>
+        <ul>
+          <li><strong>Hiérarchie visuelle</strong> : projet (gros, sombre, posé) &gt; idée (petit, papier, flottant) &gt; agent (pin, par-dessus tout). C'est l'inverse du flux : ce qui est <em>contributeur</em> est au-dessus du <em>contenant</em>.</li>
+          <li><strong>Cluster warm</strong> = cluster qui a au moins 1 projet en santé "ok" et &gt; 2 agents actifs. L'ambre signale "ça vit ici".</li>
+          <li><strong>Selection</strong> : un seul projet sélectionné à la fois. Click hors = désélection + close peek. Esc = idem.</li>
+          <li>Le détail complet du canvas (legend, minimap, zoom, command bar) est dans <code>wikichat-canvas.html</code> ; ce fragment isole 2 états manquants.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 03 · CAPTURE                                  -->
+    <!-- ============================================ -->
+    <section class="view" id="capture">
+      <div class="head">
+        <span class="num">03</span>
+        <h2>Capture</h2>
+        <span class="url">/#capture?proj=archipel</span>
+      </div>
+      <p class="lede">Overlay déclenché par <code>⌘K</code> en mode capture, ou par le bouton primaire du peek panel. <strong>Critère de succès</strong> : 5 secondes entre l'envie d'écrire une idée et l'idée enregistrée. Tout le reste (axes, projet, scope) est inféré et corrigible.</p>
+
+      <div class="artboard">
+        <div class="ab-head"><span class="lab">default — projet inféré · axes auto</span><span class="grow"></span></div>
+        <div class="ab-body" style="background:var(--bg-0);height:480px">
+          <div style="position:absolute;inset:0;opacity:.3;background:radial-gradient(ellipse at 30% 20%,rgba(232,154,92,.06),transparent 60%),var(--bg-0)"></div>
+          <div class="cap-bg">
+            <div class="cap-modal">
+              <div class="cap-head">
+                <span>⚡ capter une idée</span>
+                <span class="grow"></span>
+                <span style="color:var(--fg-mute);text-transform:none;font-family:var(--font-sans);letter-spacing:0">17h32 · mer 8 mai</span>
+              </div>
+              <div class="cap-body">
+                <input class="cap-title" placeholder="Titre court — ce que tu veux te rappeler" value="Wrap auth Portmap pour Archipel">
+                <textarea class="cap-body-text" placeholder="Détails (optionnel) — contexte, lien, raison de l'idée">Bloquant pour la suite : Archipel n'a pas accès aux endpoints internes Portmap. Discuter avec Maxime.</textarea>
+                <div class="cap-meta">
+                  <span class="cap-pill proj"><span class="k">@</span>archipel</span>
+                  <span class="cap-pill axe"><span class="k">#</span>auth</span>
+                  <span class="cap-pill axe"><span class="k">#</span>blocker</span>
+                  <span class="cap-pill" style="opacity:.6"><span class="k">+</span> ajouter axe</span>
+                  <span style="flex:1"></span>
+                  <span style="color:var(--fg-mute);font-size:11.5px"><span class="kbd" style="margin-right:6px">⌘P</span>changer projet</span>
+                </div>
+              </div>
+              <div class="cap-foot">
+                <span><span class="kbd">esc</span> annuler</span>
+                <span><span class="kbd">⌘⇧↵</span> capter + ouvrir</span>
+                <span class="grow"></span>
+                <button class="cap-cta">Capter <span class="kbd" style="background:rgba(26,15,8,.15);color:rgba(26,15,8,.55);border-color:transparent">⌘↵</span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <h5>Notes de design · 03</h5>
+        <ul>
+          <li><strong>Projet inféré</strong> : si le user vient du peek d'un projet → ce projet. Sinon → projet le plus récemment touché. Toujours visible, toujours <code>⌘P</code> pour changer.</li>
+          <li><strong>Axes auto</strong> : extraits du body via NLP local (matching tags connus + similarité d'embedding). Toujours éditables, toujours commentés (badge ambre = inféré, jamais "magique").</li>
+          <li><strong>Pas de bouton "Annuler"</strong> visible — escape, c'est partout. Les 3 actions clavier sont au pied : <code>esc</code>, <code>⌘↵</code> (capter), <code>⌘⇧↵</code> (capter + ouvrir le projet).</li>
+          <li><strong>Body optionnel</strong>. Une idée en 1 ligne titre est une idée valide. Ne jamais forcer le détail.</li>
+          <li><strong>Animation entrée</strong> : 180ms, opacity 0→1 + translateY(8px→0) + backdrop-blur 0→10px. Sortie 120ms.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 04 · SPAWN                                    -->
+    <!-- ============================================ -->
+    <section class="view" id="spawn">
+      <div class="head">
+        <span class="num">04</span>
+        <h2>Spawn</h2>
+        <span class="url">/#spawn?proj=wikichat</span>
+      </div>
+      <p class="lede">Modal pour démarrer un agent. <strong>4 décisions seulement</strong> : projet, rôle, tâche, mode (interactive/headless). Tout le reste (modèle, env, branche) est inféré du projet et révélable au besoin.</p>
+
+      <div class="artboard tall">
+        <div class="ab-head"><span class="lab">default — proj présélectionné</span><span class="grow"></span></div>
+        <div class="ab-body" style="background:var(--bg-0);height:600px">
+          <div class="spawn-bg">
+            <div class="spawn-modal">
+              <div class="spawn-head">
+                <div class="lbl">🚀 spawner un agent</div>
+                <h3>Sur <em style="color:var(--accent);font-style:normal;font-weight:500">Wikichat</em></h3>
+              </div>
+              <div class="spawn-body">
+                <div class="spawn-row">
+                  <span class="k">rôle</span>
+                  <div class="pickers">
+                    <span class="spawn-pick on">dev</span>
+                    <span class="spawn-pick">qa</span>
+                    <span class="spawn-pick">spec</span>
+                    <span class="spawn-pick">refactor</span>
+                    <span class="spawn-pick">research</span>
+                    <span class="spawn-pick">+ custom</span>
+                  </div>
+                </div>
+                <div class="spawn-row" style="align-items:flex-start">
+                  <span class="k" style="margin-top:10px">tâche</span>
+                  <textarea class="input" rows="3" style="resize:none">Implémenter le watermark unread sur le chat — voir spec §05. Branche feat/unread-watermark, tests inclus.</textarea>
+                </div>
+                <div class="spawn-row">
+                  <span class="k">mode</span>
+                  <div class="pickers">
+                    <span class="spawn-pick on">interactif</span>
+                    <span class="spawn-pick">headless</span>
+                    <span class="spawn-pick">daemon</span>
+                  </div>
+                </div>
+                <div class="spawn-row">
+                  <span class="k">nom</span>
+                  <input class="input" value="Diane" placeholder="auto-généré si vide">
+                  <span style="color:var(--fg-mute);font-size:11.5px">avatar auto · 2 teintes du nom</span>
+                </div>
+
+                <div class="spawn-preview">
+                  <span class="acc">$</span> wikichat spawn <span class="acc">--proj</span>=wikichat <span class="acc">--role</span>=dev <span class="acc">--mode</span>=interactive <span class="acc">--name</span>=Diane<br>
+                  <span style="color:var(--fg-disabled)">  └ branche auto · feat/unread-watermark · model claude-sonnet-4.5</span>
+                </div>
+              </div>
+              <div class="spawn-foot">
+                <span style="color:var(--fg-mute);font-size:11.5px"><span class="kbd">⌘.</span> options avancées</span>
+                <span class="grow"></span>
+                <button class="btn-ghost">Annuler</button>
+                <button class="btn-prim">🚀 Spawner <span class="kbd" style="background:rgba(26,15,8,.15);color:rgba(26,15,8,.55);border-color:transparent">⌘↵</span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <h5>Notes de design · 04</h5>
+        <ul>
+          <li><strong>4 décisions, 4 lignes</strong>. Pas de wizard multi-étapes, pas d'accordéon. Tout est sur un seul écran.</li>
+          <li><strong>Preview live</strong> : la commande shell équivalente est rendue en temps réel. Bénéfice : tu peux la copier, ou apprendre à l'écrire directement.</li>
+          <li><strong>Options avancées</strong> derrière <code>⌘.</code> — modèle, branche, env vars, secrets. 95% du temps, inutile.</li>
+          <li><strong>Empty state</strong> (aucun projet) : la modal n'est jamais déclenchable. Le bouton "spawn" du HUD est masqué tant qu'il n'y a pas de projet.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 05 · CHAT                                     -->
+    <!-- ============================================ -->
+    <section class="view" id="chat">
+      <div class="head">
+        <span class="num">05</span>
+        <h2>Chat</h2>
+        <span class="url">/#chat/wikichat?agent=alice</span>
+      </div>
+      <p class="lede">Discuter avec un agent en vol. Layout 3 colonnes : rail conversations · fil principal · side panel contexte. Le watermark "non lus depuis 18m" est la signature de cette vue — tu reviens après une pause, tu vois immédiatement où tu en étais.</p>
+
+      <div class="artboard tall">
+        <div class="ab-head"><span class="lab">default — agent live · watermark unread</span><span class="grow"></span></div>
+        <div class="ab-body" style="height:640px">
+          <div class="chat-shell">
+            <aside class="chat-rail">
+              <h5>En vol · 3</h5>
+              <div class="conv on">
+                <span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span>
+                <div class="body"><div class="n">Alice</div><div class="s">dev · @wikichat</div></div>
+                <span class="un"></span>
+              </div>
+              <div class="conv">
+                <span class="ava" style="background:linear-gradient(135deg,#85B0CC,#8AB58B)">B</span>
+                <div class="body"><div class="n">Bob</div><div class="s">qa · @wikichat · 18m</div></div>
+              </div>
+              <div class="conv">
+                <span class="ava" style="background:linear-gradient(135deg,#85B0CC,#E89A5C)">EB</span>
+                <div class="body"><div class="n">EmbBench</div><div class="s">qa · headless</div></div>
+              </div>
+              <h5 style="margin-top:14px">Daemons · 1</h5>
+              <div class="conv">
+                <span class="ava" style="background:linear-gradient(135deg,#D9AF5C,#C9A6E8)">C</span>
+                <div class="body"><div class="n">Carla</div><div class="s">daemon · 4j</div></div>
+              </div>
+              <h5 style="margin-top:14px">Récents · 5</h5>
+              <div class="conv" style="opacity:.55">
+                <span class="ava" style="background:var(--bg-3);color:var(--fg-mute)">X</span>
+                <div class="body"><div class="n" style="color:var(--fg-mute)">Xavier</div><div class="s">crashed · 2j</div></div>
+              </div>
+            </aside>
+
+            <div class="chat-main">
+              <div class="chat-head">
+                <span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span>
+                <div><div class="ttl">Alice</div><div class="sub">dev · @wikichat · live · 1h12</div></div>
+                <span class="grow"></span>
+                <span class="dot" style="background:var(--ok);box-shadow:0 0 6px var(--ok);margin-right:4px"></span>
+                <span style="color:var(--fg-mute);font-size:12px">interactive</span>
+                <button class="kill" style="margin-left:14px">✕ kill</button>
+              </div>
+              <div class="chat-msgs">
+                <div class="msg">
+                  <span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span>
+                  <div class="body">
+                    <div class="nm"><span class="n">Alice</span><span class="ts">15:42</span></div>
+                    <div class="txt">J'ai relu <code>chat-shell.tsx</code>. Le watermark est techniquement faisable mais il y a un piège : le scroll position se reset au mount à cause du <code>useLayoutEffect</code> ligne 47. Je propose de stocker le <code>lastReadAt</code> en localStorage par conversation.</div>
+                  </div>
+                </div>
+                <div class="msg">
+                  <span class="ava user">M</span>
+                  <div class="body">
+                    <div class="nm"><span class="n" style="color:var(--accent)">moi</span><span class="ts">15:43</span></div>
+                    <div class="txt">OK pour localStorage. Tu peux faire le PR ?</div>
+                  </div>
+                </div>
+                <div class="msg">
+                  <span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span>
+                  <div class="body">
+                    <div class="nm"><span class="n">Alice</span><span class="ts">15:44</span></div>
+                    <div class="txt">Je pars là-dessus. Branche <code>feat/unread-watermark</code>, tests inclus.</div>
+                    <div class="att"><span class="icn">⎘</span><span>commit · 7c2a1f9d <span style="color:var(--fg-mute)">· 4 fichiers</span></span></div>
+                  </div>
+                </div>
+
+                <div class="unread-mark"></div>
+
+                <div class="msg">
+                  <span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span>
+                  <div class="body">
+                    <div class="nm"><span class="n">Alice</span><span class="ts">16:02</span></div>
+                    <div class="txt">PR ouvert. Je remarque qu'il faudra mettre à jour la spec §05 du long-scroll — le watermark n'y est pas mentionné explicitement comme persistant.</div>
+                    <div class="att"><span class="icn">↗</span><span>PR #128 · feat/unread-watermark</span></div>
+                  </div>
+                </div>
+                <div class="msg">
+                  <span class="ava" style="background:linear-gradient(135deg,#E89A5C,#C9A6E8)">A</span>
+                  <div class="body">
+                    <div class="nm"><span class="n">Alice</span><span class="ts">16:08</span></div>
+                    <div class="txt">Tests verts. Je t'attends pour la review.</div>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-input">
+                <textarea placeholder="Écris à Alice…">LGTM, merge.</textarea>
+                <button class="send">↑</button>
+              </div>
+            </div>
+
+            <aside class="chat-side">
+              <div>
+                <h5>Contexte</h5>
+                <div class="kv" style="margin-top:8px">
+                  <span class="k">projet</span><span class="v">wikichat</span>
+                  <span class="k">rôle</span><span class="v">dev</span>
+                  <span class="k">branche</span><span class="v">feat/unread-watermark</span>
+                  <span class="k">model</span><span class="v">sonnet-4.5</span>
+                  <span class="k">spawn</span><span class="v">14:30</span>
+                  <span class="k">tokens</span><span class="v">14k / 200k</span>
+                </div>
+              </div>
+              <div>
+                <h5>Idée d'origine</h5>
+                <div style="background:linear-gradient(180deg,#F2E7D6,#E8DCC8);color:#2A2118;border-radius:5px;padding:10px 11px;transform:rotate(-1deg);margin-top:8px">
+                  <div style="font:500 9px/1 var(--font-mono);color:#8B7355;margin-bottom:4px;text-transform:uppercase">7c2a1f9d · scoped</div>
+                  <div style="font:500 12px/1.35 var(--font-sans)">Implémenter watermark unread</div>
+                </div>
+              </div>
+              <div>
+                <h5>Pièces jointes · 2</h5>
+                <div class="kv" style="margin-top:8px">
+                  <span class="k">commit</span><span class="v" style="color:var(--accent)">7c2a1f9d</span>
+                  <span class="k">PR</span><span class="v" style="color:var(--accent)">#128</span>
+                </div>
+              </div>
+              <div>
+                <h5>Actions</h5>
+                <div style="display:flex;flex-direction:column;gap:5px;margin-top:8px">
+                  <button class="btn-ghost" style="justify-content:flex-start;width:100%">📎 Joindre une idée</button>
+                  <button class="btn-ghost" style="justify-content:flex-start;width:100%">⏸ Mettre en pause</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <h5>Notes de design · 05</h5>
+        <ul>
+          <li><strong>Watermark unread</strong> : ligne ambre + label « non lus depuis Xm » centré. Persistant en localStorage par conversation. Click sur la ligne = "marquer lu" (la ligne disparaît, scroll-to-bottom).</li>
+          <li><strong>Layout 3 colonnes</strong> : rail (240) · main (flex) · side (280). Side collapsable à &lt; 1100px de large (rare en desktop, mais on le prévoit).</li>
+          <li><strong>Side panel</strong> = pourquoi cet agent existe. Lien vers l'idée d'origine, contexte du spawn, pièces jointes. Pas de stats vanity ; tout est <em>raison</em>.</li>
+          <li><strong>Empty state</strong> (aucun agent en vol) : "Personne n'est au travail. Spawne quelqu'un." + CTA <code>⌘N</code>.</li>
+          <li><strong>Kill</strong> en haut à droite, rouge muted (pas bouton primaire). Demande confirmation seulement si l'agent a uncommitted changes.</li>
+          <li><strong>Attachments</strong> : commit (⎘), PR (↗), idée (●), fichier (⊟). Inline dans la bulle, pas en dessous.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 06 · ROUTING                                  -->
+    <!-- ============================================ -->
+    <section class="view" id="routing">
+      <div class="head">
+        <span class="num">06</span>
+        <h2>Hash routing</h2>
+        <span class="url">/#&lt;view&gt;[/&lt;id&gt;][?params]</span>
+      </div>
+      <p class="lede">Hash router minimal — pas de framework. <strong>Tout est deep-linkable</strong>, y compris les overlays et la sélection canvas. Bénéfice : tu peux coller une URL dans #wikichat (le projet) et l'autre dev arrive exactement sur ton écran.</p>
+
+      <div class="notes">
+        <h5>Routes</h5>
+        <ul>
+          <li><code>/#today</code> — landing matin (default si rien)</li>
+          <li><code>/#canvas</code> — canvas plein écran</li>
+          <li><code>/#canvas?proj=wikichat</code> — canvas + peek panel ouvert sur ce projet</li>
+          <li><code>/#canvas?proj=wikichat&amp;zoom=1.4&amp;cx=240&amp;cy=180</code> — canvas + zoom + position pan</li>
+          <li><code>/#capture</code> — overlay capture (projet inféré)</li>
+          <li><code>/#capture?proj=archipel</code> — overlay capture pré-scopé</li>
+          <li><code>/#spawn?proj=wikichat</code> — modal spawn pré-scopé</li>
+          <li><code>/#chat/wikichat</code> — vue chat, projet présélectionné, premier agent en vol</li>
+          <li><code>/#chat/wikichat?agent=alice</code> — vue chat, agent ouvert</li>
+          <li><code>/#chat/wikichat?agent=alice&amp;at=msg-128</code> — chat scrolled à un message précis</li>
+        </ul>
+        <h5 style="margin-top:14px">Sémantique</h5>
+        <ul>
+          <li>Le segment principal (<code>today</code>, <code>canvas</code>, <code>capture</code>, <code>spawn</code>, <code>chat</code>) détermine l'écran de fond.</li>
+          <li><code>capture</code> et <code>spawn</code> sont des <em>overlays</em> : si on y arrive directement, le fond est <code>canvas</code> par défaut. Esc → retour au fond.</li>
+          <li>Les query params sont des hints, jamais des assertions. Si <code>?proj=foo</code> et que <code>foo</code> n'existe pas, on ouvre la vue sans le param et on log un warning console.</li>
+          <li>Le router ne re-render pas la vue si seul un query param change (ex: zoom/pan du canvas) — il met à jour l'URL en <code>replaceState</code> debounced 300ms.</li>
+        </ul>
+        <h5 style="margin-top:14px">Raccourcis globaux</h5>
+        <ul>
+          <li><code>g t</code> → <code>/#today</code> · <code>g c</code> → <code>/#canvas</code> · <code>g s</code> → <code>/#chat</code></li>
+          <li><code>⌘K</code> → ouvre cmd palette (sans changer la route, restaure à la fermeture)</li>
+          <li><code>⌘N</code> → <code>/#spawn?proj=&lt;current&gt;</code></li>
+          <li><code>⌘↩</code> → <code>/#capture?proj=&lt;current&gt;</code></li>
+          <li><code>esc</code> → ferme overlays · puis désélectionne · puis retour à <code>/#today</code></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 07 · LAYOUT                                   -->
+    <!-- ============================================ -->
+    <section class="view" id="layout">
+      <div class="head">
+        <span class="num">07</span>
+        <h2>Layout algorithm</h2>
+        <span class="url">canvas auto-layout</span>
+      </div>
+      <p class="lede"><strong>Tranché : grid auto + override draggable persisté</strong>. Le layout par défaut est calculé à chaque load. Si l'utilisateur drag un projet, sa position est figée dans <code>localStorage</code> et le layout auto coule autour.</p>
+
+      <div class="notes">
+        <h5>Algorithme par défaut</h5>
+        <ul>
+          <li><strong>Étape 1 — clustering.</strong> Les projets sont groupés par <em>cluster_id</em> (champ explicite, sinon "default"). Chaque cluster a un label éditable et un seed de position (top-left).</li>
+          <li><strong>Étape 2 — packing.</strong> À l'intérieur d'un cluster, les projets sont packés en grille auto (colonnes basées sur la largeur du cluster, gap 24px). Tri : pinned d'abord, puis par <em>activité récente</em> desc (dernier commit/idée/spawn).</li>
+          <li><strong>Étape 3 — idées.</strong> Chaque idée est posée près de son projet rattaché (offset radial pseudo-aléatoire stable par id, rayon 80–140px). Si pas de projet rattaché, dans la <em>"sandbox"</em> en bas.</li>
+          <li><strong>Étape 4 — agents.</strong> Posés au-dessus du projet où ils tournent, en pile horizontale (offset y : -28 par agent supplémentaire).</li>
+        </ul>
+        <h5 style="margin-top:14px">Override draggable</h5>
+        <ul>
+          <li>L'utilisateur peut <code>drag</code> un projet, une idée, ou un cluster entier.</li>
+          <li>Position figée dans <code>localStorage[wikichat.layout.&lt;projectId&gt;] = {x, y, fixed: true}</code>.</li>
+          <li>Au prochain load, les overrides sont appliqués <em>après</em> l'auto-layout. Les éléments sans override coulent autour.</li>
+          <li>Bouton <code>⌘⇧L</code> = "reset layout" — efface tous les overrides.</li>
+        </ul>
+        <h5 style="margin-top:14px">Pourquoi pas du force-directed ?</h5>
+        <ul>
+          <li>Force-directed ferait <em>bouger</em> le canvas à chaque ajout d'idée. Insupportable — le user perd son repère spatial. La spatialité est <em>la</em> valeur de cette vue.</li>
+          <li>Grid auto est prévisible : un projet apparu hier est au même endroit aujourd'hui. C'est la mémoire spatiale qui fait la valeur.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 08 · MOTION                                   -->
+    <!-- ============================================ -->
+    <section class="view" id="motion">
+      <div class="head">
+        <span class="num">08</span>
+        <h2>Motion · transitions de vues</h2>
+        <span class="url">animations</span>
+      </div>
+      <p class="lede">Discipline d'animation : <strong>discret, rapide, pas de bling</strong>. Les transitions servent à orienter (où je viens, où je vais), pas à impressionner.</p>
+
+      <div class="notes">
+        <h5>Durées par défaut</h5>
+        <ul>
+          <li><code>140ms ease-out</code> · hover, focus, sélection (transformations locales)</li>
+          <li><code>180ms ease-out</code> · entrée d'overlay (capture, spawn, cmd palette) — opacity + translateY(-4px) + backdrop-blur 0→10</li>
+          <li><code>120ms ease-in</code> · sortie d'overlay (légèrement plus rapide qu'entrée)</li>
+          <li><code>200ms ease-out</code> · peek panel slide-in (translateX(20px) + opacity)</li>
+          <li><code>220ms cubic-bezier(.2,.7,.2,1)</code> · transitions entre vues (today ↔ canvas ↔ chat) — crossfade + scale .98→1</li>
+          <li><code>320ms cubic-bezier(.6,-.2,.2,1.4)</code> · entrée d'une nouvelle idée (overshoot léger pour faire « papier qui tombe »)</li>
+          <li><code>2000ms infinite</code> · pulse "live" sur agent — opacity 1→.55→1</li>
+        </ul>
+        <h5 style="margin-top:14px">Règles dures</h5>
+        <ul>
+          <li><strong>Aucune animation &gt; 400ms</strong>, sauf pulse. Au-delà = perçu comme "ça lague".</li>
+          <li><strong>Pas d'animation au load</strong> initial. Les éléments apparaissent en place — pas de stagger fade-in.</li>
+          <li><strong>respect <code>prefers-reduced-motion</code></strong> : toutes les animations passent à 60ms ou sont désactivées.</li>
+          <li><strong>Le canvas zoom n'est jamais animé</strong> — c'est un transform direct. L'animer le rend mou.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- 09 · LOADING / ERROR                          -->
+    <!-- ============================================ -->
+    <section class="view" id="states">
+      <div class="head">
+        <span class="num">09</span>
+        <h2>Loading · Error</h2>
+        <span class="url">états transverses</span>
+      </div>
+      <p class="lede">Loading et error sont <strong>locaux</strong>, jamais en pleine page. Une vue charge ses régions séparément ; un échec n'invalide pas l'écran.</p>
+
+      <div class="notes grid2">
+        <div>
+          <h5>Loading</h5>
+          <ul>
+            <li><strong>Skeleton</strong> sur les régions qui chargent : 2-3 lignes de blocs <code>bg-2</code> avec une animation <code>shimmer</code> (gradient ambre soft 1500ms linear infinite). Pas de spinner.</li>
+            <li><strong>Délai d'apparition</strong> : 200ms. Si la donnée arrive avant, pas de skeleton du tout (évite le flash).</li>
+            <li><strong>Optimistic UI</strong> : capture d'une idée affiche la note immédiatement. Si erreur serveur, la note prend un border rouge muted + bouton retry.</li>
+            <li><strong>Connexion live (SSE)</strong> : indicateur en HUD top-right — 3 états (connected vert · reconnecting ambre pulse · offline rouge).</li>
+          </ul>
+        </div>
+        <div>
+          <h5>Error</h5>
+          <ul>
+            <li><strong>Inline d'abord</strong>. Une carte projet inaccessible affiche un état grisé + dot rouge + tooltip "fetch failed · retry".</li>
+            <li><strong>Toast jamais</strong>. Les toasts disparaissent — les erreurs persistent. À la place : pastille HUD top-right qui dit "X erreurs · voir".</li>
+            <li><strong>Page d'erreur globale</strong> uniquement si l'auth échoue (impossible de charger quoi que ce soit). Sobre, avec status + retry + lien support.</li>
+            <li><strong>Agent crashed</strong> : la pill devient grise, le chat affiche un message système ambre "Agent terminé sans clean exit · code 137 · restart ?".</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <div class="foot">
+      <div class="grow">Pass 1 + 2 + 3 · 5 vues + cross-cutting</div>
+      <div>→ <code>docs/design/cahier-v2.md</code> pour la spec écrite</div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const links = [...document.querySelectorAll('nav.toc a')];
+const sections = links.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const io = new IntersectionObserver(es => {
+  es.forEach(e => {
+    if (e.isIntersecting) {
+      const id = '#' + e.target.id;
+      links.forEach(a => a.parentElement.classList.toggle('active', a.getAttribute('href') === id));
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+sections.forEach(s => io.observe(s));
+</script>
+
+
+
+</body></html>

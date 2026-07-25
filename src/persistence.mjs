@@ -26,6 +26,8 @@ export function saveChannels() {
   const channels = [...state.channels.entries()].map(([name, ch]) => ({
     name, description: ch.description, createdBy: ch.createdBy,
     isSystem: ch.isSystem || false,
+    isDM: ch.isDM || false,
+    participants: ch.participants || undefined,
   }));
   try { writeAtomicJSON(CHANNELS_FILE, channels); } catch { /* non-blocking */ }
 }
@@ -40,6 +42,8 @@ export function loadChannels() {
           name: ch.name, description: ch.description,
           createdBy: ch.createdBy || "system",
           createdAt: new Date(), isSystem: ch.isSystem || false,
+          isDM: ch.isDM || false,
+          participants: ch.participants || undefined,
         });
       }
     }
@@ -58,6 +62,7 @@ function _flushMessages() {
       id: m.id, from: m.from, fromName: m.fromName,
       channel: m.channel, content: m.content,
       type: m.type, timestamp: m.timestamp,
+      isDM: m.isDM || false,
     }));
     writeAtomicJSON(MESSAGES_FILE, msgs);
   } catch { /* non-blocking */ }
@@ -149,9 +154,10 @@ export function writeAgentFile(storagePath, subdir, filename, content, append = 
 
 export function saveSnapshot(session) {
   if (!session.name || session.name.startsWith("session-")) return;
+  const nameLc = session.name?.toLowerCase();
   const involved = state.messages.filter(m =>
     m.from === session.sessionId ||
-    (m.isDM && state.channels.get(m.channel)?.participants?.includes(session.sessionId))
+    (m.isDM && state.channels.get(m.channel)?.participants?.includes(nameLc))
   ).slice(-30);
   const interlocutors = [...new Set(
     involved.map(m => m.fromName).filter(n => n !== session.name && !n.includes("Système"))
@@ -272,10 +278,68 @@ export function loadSpawnRegistry() {
   return _spawnCache;
 }
 
+/**
+ * One-shot GC at boot : drop legacy entries with no status field, mark
+ * "starting" entries older than 24h as failed, drop entries older than 30 days.
+ * Called from the boot sequence (server.mjs) — keeps the registry from growing
+ * indefinitely while preserving recent run history.
+ */
+export function gcSpawnRegistry() {
+  const reg = loadSpawnRegistry();
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  let dropped = 0, fixed = 0;
+  const kept = [];
+  for (const e of reg) {
+    if (!e || typeof e !== "object") { dropped++; continue; }
+    // Drop entries with no status field (legacy bad data)
+    if (!e.status) { dropped++; continue; }
+    // Drop very old entries (>30 days) regardless of status
+    const ts = e.spawned_at || e.started_at;
+    if (ts) {
+      const age = now - new Date(ts).getTime();
+      if (age > 30 * DAY) { dropped++; continue; }
+      // Stuck "starting" >24h → mark failed instead of dropping (keeps history)
+      if ((e.status === "starting" || e.status === "running") && age > 24 * 60 * 60 * 1000) {
+        // Heuristic : daemon "running" entries are refreshed by team-lifecycle, so
+        // anything >24h running without refresh is stuck. Headless "starting" >24h
+        // never started successfully.
+        if (e.mode === "headless" || e.status === "starting") {
+          e.status = "failed";
+          e.failed_at = new Date().toISOString();
+          e.gc_reason = "stale >24h";
+          fixed++;
+        }
+      }
+    }
+    kept.push(e);
+  }
+  if (dropped > 0 || fixed > 0) {
+    _spawnCache = kept;
+    _spawnDirty = true;
+    flushSpawnRegistry();
+  }
+  return { dropped, fixed, total: kept.length };
+}
+
 export function upsertSpawnRegistry(entry) {
   const reg = loadSpawnRegistry();
   const idx = reg.findIndex(e => e.name === entry.name);
-  if (idx >= 0) reg[idx] = { ...reg[idx], ...entry }; else reg.push(entry);
+  if (idx >= 0) {
+    // When a daemon is freshly (re)spawned, clear terminal fields from any
+    // previous run so spawned_at reflects the actual current spawn rather than
+    // an old timestamp lingering from before a server restart.
+    const merged = { ...reg[idx], ...entry };
+    if (entry.status === "running" || entry.status === "starting") {
+      merged.ended_at = null;
+      merged.ended_reason = null;
+      merged.failed_at = null;
+      merged.gc_reason = null;
+    }
+    reg[idx] = merged;
+  } else {
+    reg.push(entry);
+  }
   _spawnDirty = true;
   // Debounced write — max once per 2 seconds
   if (!_spawnFlushTimer) {
@@ -296,4 +360,66 @@ export function flushSpawnRegistry() {
     _spawnDirty = false;
     try { writeAtomicJSON(SPAWN_REGISTRY, _spawnCache); } catch { /* */ }
   }
+}
+
+// ── Identity bindings ───────────────────────────────────────────────────────
+// Maps a stable connection token (carried by the client on every SSE connect
+// via `?token=`/`?agent=` or the `x-wikichat-token` header) to a registered
+// identity. This is what lets an agent register ONCE and then be recognised
+// automatically on every reconnect — the transport sessionId changes, but the
+// token does not, so the server re-attaches the same name/role.
+//
+// Stored centrally in ~/.wikichat (the "mairie"), like the registry.
+
+const IDENTITY_BINDINGS_FILE = path.join(os.homedir(), ".wikichat", "identity-bindings.json");
+let _bindings = null; // Map<token, { name, role, boundAt, lastSeen }>
+
+function _loadBindings() {
+  if (_bindings) return _bindings;
+  _bindings = new Map();
+  try {
+    if (fs.existsSync(IDENTITY_BINDINGS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(IDENTITY_BINDINGS_FILE, "utf8"));
+      for (const [tok, v] of Object.entries(raw)) _bindings.set(tok, v);
+    }
+  } catch { /* corrupt — start fresh */ }
+  return _bindings;
+}
+
+let _bindingsTimer = null;
+function _saveBindingsDebounced() {
+  if (_bindingsTimer) return;
+  _bindingsTimer = setTimeout(() => {
+    _bindingsTimer = null;
+    try {
+      fs.mkdirSync(path.dirname(IDENTITY_BINDINGS_FILE), { recursive: true });
+      writeAtomicJSON(IDENTITY_BINDINGS_FILE, Object.fromEntries(_loadBindings()));
+    } catch { /* non-blocking */ }
+  }, 1500);
+}
+
+/** Look up the identity bound to a connection token, or null. */
+export function getIdentityBinding(token) {
+  if (!token) return null;
+  return _loadBindings().get(token) || null;
+}
+
+/** Bind (or update) a connection token → identity. Called from register(). */
+export function saveIdentityBinding(token, name, role) {
+  if (!token || !name || name.startsWith("session-")) return;
+  const b = _loadBindings();
+  const prev = b.get(token) || {};
+  b.set(token, {
+    name, role: role ?? prev.role ?? null,
+    boundAt: prev.boundAt || new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+  });
+  _saveBindingsDebounced();
+}
+
+/** Refresh lastSeen for a token without changing the identity. */
+export function touchIdentityBinding(token) {
+  const b = _loadBindings();
+  const v = b.get(token);
+  if (v) { v.lastSeen = new Date().toISOString(); _saveBindingsDebounced(); }
 }

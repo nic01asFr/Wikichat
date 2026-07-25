@@ -1,0 +1,1844 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WikiChat — Console</title>
+<style>
+  /* ── tokens (extraits de docs/design/components.html §00) ──────────────── */
+  :root{
+    --bg-0:#0F0D11;--bg-1:#171419;--bg-2:#1F1B21;--bg-3:#2A252C;--bg-4:#3A3439;
+    --border:#272127;--border-strong:#3A3439;
+    --paper:#F4ECE3;--paper-soft:#E8DFD2;
+    --fg-strong:#F1E9DF;--fg:#B6ACA3;--fg-mute:#766E68;--fg-disabled:#534B47;
+    --accent:#E89A5C;--accent-strong:#F0AE73;--accent-fg:#1A0F08;
+    --accent-soft:rgba(232,154,92,.12);--accent-line:rgba(232,154,92,.28);
+    --idea:#C9A6E8;--idea-soft:rgba(201,166,232,.13);
+    --ok:#8AB58B;--warn:#D9AF5C;--bad:#D17B70;--info:#85B0CC;
+    --ok-soft:rgba(138,181,139,.14);--warn-soft:rgba(217,175,92,.14);
+    --bad-soft:rgba(209,123,112,.14);--info-soft:rgba(133,176,204,.14);
+    /* system stack — pas de Google Fonts (contrainte offline) */
+    --font-sans:'Segoe UI',system-ui,-apple-system,sans-serif;
+    --font-serif:'Iowan Old Style',Georgia,'Times New Roman',serif;
+    --font-mono:Consolas,'Liberation Mono',ui-monospace,monospace;
+    --motion-fast:140ms;
+    --motion:200ms;
+    --motion-slow:220ms;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg-0);color:var(--fg);font:13.5px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;height:100%;overflow:hidden}
+  ::selection{background:var(--accent-soft);color:var(--fg-strong)}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+  a{color:inherit;text-decoration:none}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+  input,textarea{font:inherit;color:inherit}
+  code{font:500 12px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:60ms!important;transition-duration:60ms!important}
+  }
+
+  /* ── icons ─────────────────────────────────────────────────────────────── */
+  .ico{width:14px;height:14px;flex-shrink:0;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .ico.lg{width:16px;height:16px}.ico.sm{width:12px;height:12px}.ico.xl{width:18px;height:18px}
+
+  /* ── atomes ────────────────────────────────────────────────────────────── */
+  .kbd{font-family:var(--font-mono);font-size:11px;padding:1px 5px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;color:var(--fg-mute)}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
+  .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.info{background:var(--info)}.dot.idea{background:var(--idea)}
+  .dot.live{background:var(--ok);box-shadow:0 0 6px var(--ok);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:500;font-family:var(--font-sans)}
+  .badge.ok{background:var(--ok-soft);color:#a8cdab}
+  .badge.warn{background:var(--warn-soft);color:#e6c889}
+  .badge.bad{background:var(--bad-soft);color:#e3a59c}
+  .badge.info{background:var(--info-soft);color:#aac8db}
+  .badge.idea{background:var(--idea-soft);color:#dcc4ed}
+  .badge.muted{background:var(--bg-3);color:var(--fg-mute)}
+
+  /* ── topbar ────────────────────────────────────────────────────────────── */
+  .topbar{position:fixed;top:0;left:0;right:0;height:48px;background:var(--bg-0);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 18px;z-index:10}
+  .brand{display:flex;align-items:center;gap:9px;font:600 13px/1 var(--font-sans);color:var(--fg-strong)}
+  .brand .mark{width:26px;height:26px;border-radius:6px;background:var(--paper);color:var(--bg-0);display:flex;align-items:center;justify-content:center;font:italic 400 16px/1 var(--font-serif);position:relative;flex-shrink:0}
+  .brand .mark::before,.brand .mark::after{content:"";position:absolute;width:2.5px;height:2.5px;border-radius:50%;background:var(--accent);bottom:4px}
+  .brand .mark::before{left:6px}.brand .mark::after{left:14px}
+  .brand .pos{color:var(--fg-mute);font-weight:400;font-size:12px}
+
+  .cmd-trigger{display:flex;align-items:center;gap:9px;flex:1;max-width:480px;height:30px;padding:0 12px;background:var(--bg-1);border:1px solid var(--border-strong);border-radius:7px;color:var(--fg-mute);font-size:12.5px;cursor:text;transition:border-color var(--motion-fast)}
+  .cmd-trigger:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .cmd-trigger .accent{color:var(--accent);font-weight:500}
+  .cmd-trigger .grow{flex:1}
+  .cmd-trigger .ico{color:var(--fg-mute)}
+  .topbar .grow{flex:1;min-width:20px}
+
+  .hud-pill{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 10px;background:var(--bg-1);border:1px solid var(--border);border-radius:7px;color:var(--fg);font-size:12px;white-space:nowrap}
+  .hud-pill strong{color:var(--fg-strong);font-weight:600}
+  .hud-pill.alert{border-color:rgba(209,123,112,.32);color:var(--bad)}
+
+  /* ── nav (vues) ─────────────────────────────────────────────────────────── */
+  .topnav{display:flex;align-items:center;gap:2px;background:var(--bg-1);border:1px solid var(--border);border-radius:7px;padding:2px}
+  .topnav button{padding:4px 10px;border-radius:5px;font-size:12px;color:var(--fg-mute);transition:background var(--motion-fast),color var(--motion-fast)}
+  .topnav button:hover{color:var(--fg-strong)}
+  .topnav button[aria-current="true"]{background:var(--bg-3);color:var(--fg-strong)}
+
+  /* ── main ──────────────────────────────────────────────────────────────── */
+  main{position:fixed;top:48px;left:0;right:0;bottom:0;overflow:auto}
+  .view{display:none;height:100%;padding:24px}
+  .view.active{display:block;animation:viewIn var(--motion) ease-out}
+  @keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+  /* a11y: visible focus ring */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  button:focus-visible,.sp-pick:focus-visible,.cap-pill:focus-visible,.peek-action:focus-visible{outline-offset:2px}
+
+  /* skeleton shimmer for first-load */
+  .skel{position:relative;overflow:hidden;background:var(--bg-2);border-radius:6px;color:transparent}
+  .skel::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(232,154,92,.06),transparent);transform:translateX(-100%);animation:shimmer 1.6s infinite}
+  @keyframes shimmer{to{transform:translateX(100%)}}
+
+  /* drag state for canvas tiles */
+  .proj.draggable{cursor:grab}
+  .proj.dragging{cursor:grabbing;z-index:10;box-shadow:0 16px 40px rgba(0,0,0,.55);transition:none}
+  .proj.has-override::after{content:"";position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);opacity:.6}
+
+  @media (prefers-reduced-motion: reduce){
+    .view.active{animation:none}
+    .skel::after{animation:none}
+    *{transition-duration:.001s !important;animation-duration:.001s !important}
+  }
+
+  /* ── view 01 · Aujourd'hui ─────────────────────────────────────────────── */
+  .today-greet{padding:24px 28px;background:linear-gradient(180deg,rgba(232,154,92,.06),transparent),var(--bg-1);border:1px solid var(--border);border-radius:14px;margin-bottom:18px}
+  .today-greet h1{margin:0 0 6px;font:italic 400 28px/1.15 var(--font-serif);color:var(--fg-strong);letter-spacing:-.005em}
+  .today-greet h1 em{color:var(--accent);font-style:normal;font-weight:500}
+  .today-greet p{margin:0;color:var(--fg-mute);font-size:13px;max-width:780px}
+  .today-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:880px){.today-grid{grid-template-columns:1fr}}
+  .today-tile{background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+  .today-tile h3{margin:0;font:500 18px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+  .today-tile h3 .ct{margin-left:auto;font:500 11px/1 var(--font-mono);color:var(--fg-disabled)}
+  .today-list{display:flex;flex-direction:column;gap:0}
+  .today-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);font-size:12.5px;cursor:pointer;transition:background var(--motion-fast)}
+  .today-row:last-child{border-bottom:0}
+  .today-row:hover{background:rgba(255,255,255,.015)}
+  .today-row .t{color:var(--fg-strong);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .today-row .meta{color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px;flex-shrink:0}
+  .today-row .act{color:var(--accent);font-size:11px;opacity:0;transition:opacity var(--motion-fast);flex-shrink:0}
+  .today-row:hover .act{opacity:1}
+  .today-tile .more{padding-top:6px;color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer}
+  .today-tile .more:hover{color:var(--accent-strong)}
+  .today-tile .empty{color:var(--fg-disabled);font-size:12.5px;font-style:italic;padding:8px 0}
+
+  /* ── empty hero (premier matin) ─────────────────────────────────────────── */
+  .empty-hero{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;height:80%;padding:32px;gap:14px}
+  .empty-hero .glyph{width:72px;height:72px;border-radius:18px;background:var(--bg-1);border:1px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--fg-disabled);font:italic 400 36px/1 var(--font-serif);margin-bottom:12px}
+  .empty-hero h3{margin:0;font:400 26px/1.1 var(--font-serif);color:var(--fg-strong)}
+  .empty-hero p{margin:0;color:var(--fg-mute);font-size:13px;line-height:1.55;max-width:380px}
+  .empty-hero .cta{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:13px;margin-top:8px;cursor:pointer;transition:background var(--motion-fast)}
+  .empty-hero .cta:hover{background:var(--accent-strong)}
+
+  /* ── view 02 · Canvas ──────────────────────────────────────────────────── */
+  #v-canvas{padding:0;overflow:hidden;position:relative}
+  .canvas-world{position:absolute;inset:0;background:
+    radial-gradient(ellipse 70% 50% at 30% 20%,rgba(232,154,92,.06),transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 80%,rgba(201,166,232,.04),transparent 60%),
+    var(--bg-0)
+  }
+  .canvas-grid-bg{position:absolute;inset:0;background-image:radial-gradient(circle at 1px 1px,rgba(255,236,210,.04) 1px,transparent 0);background-size:36px 36px;pointer-events:none}
+  .canvas-pan{position:absolute;inset:0;overflow:auto;cursor:grab}
+  .canvas-pan:active{cursor:grabbing}
+  .canvas-pan.dragging{cursor:grabbing}
+  .scene{position:relative;width:2400px;height:1500px;transform-origin:0 0}
+
+  .cluster{position:absolute;border:1px dashed var(--border-strong);border-radius:36px;padding:24px;pointer-events:none}
+  .cluster .lab{position:absolute;top:-10px;left:28px;background:var(--bg-0);padding:0 10px;color:var(--fg-mute);font:600 10.5px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase}
+
+  .proj{position:absolute;width:248px;background:linear-gradient(180deg,var(--bg-1),var(--bg-2));border:1px solid var(--border);border-radius:14px;padding:14px 16px 12px;cursor:pointer;transition:transform var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);box-shadow:0 8px 22px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.03)}
+  .proj:hover{border-color:var(--border-strong);transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.04)}
+  .proj.selected{border-color:var(--accent);box-shadow:0 14px 32px rgba(0,0,0,.45),0 0 0 2px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,.04)}
+  .proj h4{margin:0 0 4px;font:500 17px/1.2 var(--font-serif);color:var(--fg-strong);letter-spacing:-.005em}
+  .proj .desc{margin:0 0 10px;color:var(--fg-mute);font-size:11.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:32px}
+  .proj .row{display:flex;align-items:center;gap:8px;font:500 10.5px/1 var(--font-mono);color:var(--fg-mute);margin-bottom:8px}
+  .proj .row .v{color:var(--fg)}
+  .proj .row .sep{width:2px;height:2px;background:var(--border-strong);border-radius:50%}
+  .proj .meter{height:3px;background:var(--bg-3);border-radius:2px;overflow:hidden;margin-bottom:8px}
+  .proj .meter .f{height:100%;border-radius:2px;transition:width var(--motion-slow)}
+  .proj .meter .f.ok{background:var(--ok)}.proj .meter .f.warn{background:var(--warn)}.proj .meter .f.bad{background:var(--bad)}
+  .proj .badges{display:flex;flex-wrap:wrap;gap:4px}
+  .proj.archived{opacity:.5}
+  .proj.archived h4{font-style:italic}
+
+  .idea-note{position:absolute;width:160px;background:linear-gradient(180deg,#F2E7D6,#E8DCC8);color:#2A2118;border-radius:6px;padding:9px 11px;cursor:pointer;transition:transform var(--motion-fast),box-shadow var(--motion-fast);box-shadow:0 4px 12px rgba(0,0,0,.28),0 1px 0 rgba(255,255,255,.5) inset;transform:rotate(-1.5deg)}
+  .idea-note.r2{transform:rotate(1.2deg)}
+  .idea-note.r3{transform:rotate(-.6deg)}
+  .idea-note:hover{transform:rotate(0deg) scale(1.05);box-shadow:0 8px 18px rgba(0,0,0,.4);z-index:5}
+  .idea-note .id{font:500 9px/1 var(--font-mono);color:#8B7355;margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em}
+  .idea-note .t{font:500 12px/1.3 var(--font-sans);color:#2A2118;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .idea-note.clustered{background:linear-gradient(180deg,#EDD9F0,#DEC7E5);border-left:3px solid var(--idea)}
+  .idea-note.clustered .id{color:#7A5A8E}
+
+  .agent-pin{position:absolute;display:inline-flex;align-items:center;gap:6px;background:rgba(15,13,17,.85);border:1px solid var(--border-strong);border-radius:16px;padding:3px 10px 3px 4px;cursor:pointer;backdrop-filter:blur(6px);transition:border-color var(--motion-fast)}
+  .agent-pin:hover{border-color:var(--accent)}
+  .agent-pin .ava{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 10px/1 var(--font-sans);color:#0F0D11;flex-shrink:0}
+  .agent-pin .n{font:500 11.5px/1 var(--font-sans);color:var(--fg-strong)}
+  .agent-pin .r{font:10.5px/1 var(--font-mono);color:var(--fg-mute);margin-left:2px}
+  .agent-pin.live::before{content:"";position:absolute;left:-3px;top:-3px;width:8px;height:8px;background:var(--ok);border-radius:50%;border:2px solid var(--bg-0);box-shadow:0 0 6px rgba(138,181,139,.6);animation:pulse 2s ease-in-out infinite}
+  .agent-pin.daemon::before{content:"";position:absolute;left:-3px;top:-3px;width:8px;height:8px;background:var(--accent);border-radius:50%;border:2px solid var(--bg-0)}
+
+  .canvas-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px}
+  .canvas-empty h3{margin:0;font:400 26px/1.1 var(--font-serif);color:var(--fg-strong)}
+  .canvas-empty p{margin:0;color:var(--fg-mute);font-size:13px;max-width:380px;line-height:1.55}
+
+  /* ── HUD canvas (zoom controls bottom-right) ────────────────────────────── */
+  .canvas-hud-tr{position:absolute;top:14px;right:14px;display:flex;gap:8px;z-index:5}
+  .zoom{display:flex;background:rgba(23,20,25,.85);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
+  .zoom button{height:28px;width:28px;color:var(--fg-mute);border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center}
+  .zoom button:last-child{border-right:0}
+  .zoom button:hover{background:var(--bg-3);color:var(--fg)}
+  .zoom .lvl{display:flex;align-items:center;padding:0 9px;font:500 11px/1 var(--font-mono);color:var(--fg-mute);border-right:1px solid var(--border)}
+
+  /* ── Peek panel (slides from right when project selected) ───────────────── */
+  .peek{position:absolute;top:14px;right:14px;width:320px;max-height:calc(100% - 28px);background:rgba(23,20,25,.96);border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(14px);z-index:8;display:none;flex-direction:column;box-shadow:0 24px 50px rgba(0,0,0,.5);overflow:hidden;animation:peekIn var(--motion) ease-out}
+  .peek.on{display:flex}
+  @keyframes peekIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+  .peek-head{padding:14px 16px 12px;border-bottom:1px solid var(--border)}
+  .peek-head .row{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  .peek-head .close{margin-left:auto;color:var(--fg-mute);width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px}
+  .peek-head .close:hover{background:var(--bg-3);color:var(--fg)}
+  .peek-head h2{margin:0 0 4px;font:500 22px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
+  .peek-head p{margin:0;color:var(--fg-mute);font-size:12px;line-height:1.5}
+  .peek-body{padding:12px 16px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+  .peek-section{padding-bottom:10px;border-bottom:1px solid var(--border)}
+  .peek-section:last-child{border-bottom:0;padding-bottom:0}
+  .peek-section h5{margin:0 0 7px;font:600 10px/1 var(--font-sans);letter-spacing:.1em;text-transform:uppercase;color:var(--fg-mute)}
+  .peek-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12px}
+  .peek-kv .k{color:var(--fg-mute)}
+  .peek-kv .v{color:var(--fg-strong);text-align:right;font-variant-numeric:tabular-nums}
+  .peek-action{display:flex;align-items:center;gap:8px;padding:7px 10px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;text-align:left;cursor:pointer;width:100%}
+  .peek-action:hover{background:var(--bg-3);border-color:var(--border-strong);color:var(--fg-strong)}
+  .peek-action.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent;font-weight:600}
+  .peek-action.primary:hover{background:var(--accent-strong)}
+  .peek-action .grow{flex:1}
+  .peek-action .k{color:var(--fg-disabled);font-family:var(--font-mono);font-size:10.5px}
+  .peek-action.primary .k{color:rgba(26,15,8,.5)}
+
+  /* ── view 04 · Spawn modal ────────────────────────────────────────────── */
+  .sp-bg{position:fixed;inset:0;background:rgba(8,7,10,.55);backdrop-filter:blur(10px);z-index:60;display:none;align-items:flex-start;justify-content:center;padding-top:60px;animation:capFade var(--motion) ease-out}
+  .sp-bg.on{display:flex}
+  .sp-modal{width:640px;max-width:calc(100% - 32px);background:rgba(15,13,17,.97);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden;animation:capRise var(--motion) ease-out}
+  .sp-head{padding:18px 22px;border-bottom:1px solid var(--border)}
+  .sp-head .lbl{font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin-bottom:6px}
+  .sp-head h3{margin:0;font:400 24px/1.1 var(--font-serif);color:var(--fg-strong)}
+  .sp-head h3 em{color:var(--accent);font-style:normal;font-weight:500}
+  .sp-body{padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+  .sp-row{display:flex;align-items:flex-start;gap:14px}
+  .sp-row .k{width:70px;color:var(--fg-mute);font:500 11px/1.4 var(--font-mono);text-transform:uppercase;letter-spacing:.08em;padding-top:8px}
+  .sp-row .pickers{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+  .sp-pick{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;cursor:pointer;transition:background var(--motion-fast)}
+  .sp-pick:hover{background:var(--bg-3)}
+  .sp-pick.on{background:var(--accent);color:var(--accent-fg);border-color:transparent;font-weight:600}
+  .sp-input{flex:1;padding:8px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:7px;color:var(--fg-strong);font:400 13px/1.4 var(--font-sans);outline:0}
+  .sp-input:focus{border-color:var(--accent)}
+  .sp-input.task{height:78px;resize:none}
+  .sp-preview{padding:14px 16px;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;font:500 12px/1.55 var(--font-mono);color:var(--fg-mute);white-space:pre-wrap;word-break:break-all}
+  .sp-preview .acc{color:var(--accent)}
+  .sp-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.2)}
+  .sp-foot .grow{flex:1}
+  .sp-cancel{padding:7px 14px;border-radius:7px;border:1px solid var(--border);color:var(--fg);font-size:12.5px;background:transparent;cursor:pointer}
+  .sp-cancel:hover{background:var(--bg-3)}
+  .sp-cta{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:12.5px;border:0;cursor:pointer;transition:background var(--motion-fast)}
+  .sp-cta:hover{background:var(--accent-strong)}
+  .sp-cta .kbd{background:rgba(26,15,8,.15);color:rgba(26,15,8,.55);border-color:transparent}
+
+  /* ── view 05 · Chat 3 colonnes ─────────────────────────────────────────── */
+  #v-chat{padding:0;overflow:hidden;position:relative}
+  .chat-shell{position:absolute;inset:0;display:grid;grid-template-columns:240px 1fr;grid-template-rows:100%;background:var(--bg-0)}
+  @media (min-width:1100px){.chat-shell{grid-template-columns:240px 1fr 280px}}
+  .chat-rail,.chat-main,.chat-side{min-height:0}
+  .chat-main{overflow:hidden}
+  .chat-rail{background:var(--bg-1);border-right:1px solid var(--border);padding:14px 12px;overflow-y:auto}
+  .chat-rail h5{margin:0 0 8px;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-disabled);padding:0 6px}
+  .chat-rail h5:not(:first-child){margin-top:14px}
+  .chat-rail .conv{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer;margin-bottom:2px;transition:background var(--motion-fast)}
+  .chat-rail .conv:hover{background:var(--bg-2)}
+  .chat-rail .conv.on{background:var(--bg-2)}
+  .chat-rail .conv.on::before{content:"";width:2px;background:var(--accent);align-self:stretch;margin-left:-9px;margin-right:7px;border-radius:1px}
+  .chat-rail .conv .ava{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 10px/1 var(--font-sans);color:#0F0D11;flex-shrink:0;background:linear-gradient(135deg,#85B0CC,#8AB58B)}
+  .chat-rail .conv .body{flex:1;min-width:0}
+  .chat-rail .conv .n{font:500 12.5px/1.2 var(--font-sans);color:var(--fg-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-rail .conv .s{font:400 11px/1 var(--font-mono);color:var(--fg-mute)}
+  .chat-rail .conv .un{width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0;box-shadow:0 0 6px var(--accent)}
+
+  .chat-main{display:flex;flex-direction:column;background:var(--bg-0);min-width:0}
+  .chat-head{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border);background:var(--bg-1);flex-shrink:0}
+  .chat-head .ava{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 12px/1 var(--font-sans);color:#0F0D11;background:linear-gradient(135deg,#E89A5C,#C9A6E8)}
+  .chat-head .ttl{font:500 14px/1.2 var(--font-sans);color:var(--fg-strong)}
+  .chat-head .sub{font:500 11px/1 var(--font-mono);color:var(--fg-mute)}
+  .chat-head .grow{flex:1}
+  .chat-msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px;position:relative}
+  .chat-msgs .empty{margin:auto;color:var(--fg-disabled);font-size:12.5px;font-style:italic}
+  .msg{display:flex;gap:10px;align-items:flex-start}
+  .msg .ava{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px/1 var(--font-sans);color:#0F0D11;flex-shrink:0;background:linear-gradient(135deg,#E89A5C,#C9A6E8)}
+  .msg .ava.user{background:var(--bg-3);color:var(--fg);font-weight:600;font-size:12px}
+  .msg .ava.system{background:var(--bg-3);color:var(--fg-mute);font-size:13px}
+  .msg .body{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
+  .msg .nm{display:flex;align-items:baseline;gap:8px}
+  .msg .nm .n{font:500 12.5px/1 var(--font-sans);color:var(--fg-strong)}
+  .msg .nm .ts{font:400 10.5px/1 var(--font-mono);color:var(--fg-disabled)}
+  .msg .txt{color:var(--fg);font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+  .msg .txt code{font-family:var(--font-mono);font-size:12px;color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+  .unread-mark{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--accent);position:relative;margin:8px 0}
+  .unread-mark .lbl{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bg-0);padding:0 12px;font:500 10.5px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap}
+  .chat-input{padding:14px 18px;border-top:1px solid var(--border);background:var(--bg-1);display:flex;gap:10px;align-items:flex-end;flex-shrink:0}
+  .chat-input textarea{flex:1;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--fg-strong);font:400 13px/1.5 var(--font-sans);resize:none;height:40px;min-height:40px;max-height:120px;outline:0}
+  .chat-input textarea:focus{border-color:var(--border-strong)}
+  .chat-input .send{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;background:var(--accent);color:var(--accent-fg);border-radius:8px;border:0;cursor:pointer;transition:background var(--motion-fast)}
+  .chat-input .send:hover{background:var(--accent-strong)}
+  .chat-input .send:disabled{background:var(--bg-3);color:var(--fg-disabled);cursor:not-allowed}
+
+  .chat-side{background:var(--bg-1);border-left:1px solid var(--border);padding:16px 18px;overflow-y:auto;display:none;flex-direction:column;gap:14px}
+  @media (min-width:1100px){.chat-side{display:flex}}
+  .chat-side h5{margin:0;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-mute)}
+  .chat-side .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12px}
+  .chat-side .kv .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:11px}
+  .chat-side .kv .v{color:var(--fg-strong);font-family:var(--font-mono);font-size:11px;text-align:right;word-break:break-all}
+
+  /* ── stub views ─────────────────────────────────────────────────────────── */
+  .stub{display:flex;flex-direction:column;align-items:center;justify-content:center;height:80%;text-align:center;gap:14px;color:var(--fg-mute)}
+  .stub h2{margin:0;font:400 32px/1.1 var(--font-serif);color:var(--fg-strong);letter-spacing:-.01em}
+  .stub h2 em{color:var(--accent);font-style:italic}
+  .stub p{margin:0;font-size:13px;max-width:480px;line-height:1.55}
+  .stub .wave{display:inline-flex;gap:8px;align-items:center;font-size:11.5px;color:var(--fg-disabled);font-family:var(--font-mono);padding:6px 12px;background:var(--bg-1);border:1px solid var(--border);border-radius:6px;margin-top:6px}
+
+  /* ── toast ──────────────────────────────────────────────────────────────── */
+  .toast{position:fixed;bottom:18px;right:18px;padding:11px 16px;background:var(--bg-2);border:1px solid var(--border-strong);border-radius:8px;color:var(--fg);font-size:12.5px;z-index:50;max-width:380px;display:none;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .toast.on{display:block}
+  .toast.error{border-color:rgba(209,123,112,.4);color:var(--bad)}
+  .toast.success{border-color:rgba(138,181,139,.4);color:#a8cdab}
+
+  /* ── capture overlay (Wave 2) ───────────────────────────────────────────── */
+  .cap-bg{position:fixed;inset:0;background:rgba(8,7,10,.55);backdrop-filter:blur(10px);z-index:60;display:none;align-items:flex-start;justify-content:center;padding-top:90px;animation:capFade var(--motion) ease-out}
+  .cap-bg.on{display:flex}
+  @keyframes capFade{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(10px)}}
+  .cap-modal{width:560px;max-width:calc(100% - 32px);background:rgba(15,13,17,.97);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden;animation:capRise var(--motion) ease-out}
+  @keyframes capRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .cap-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);font:500 11px/1 var(--font-mono);color:var(--accent);text-transform:uppercase;letter-spacing:.1em}
+  .cap-head .grow{flex:1}
+  .cap-head .ts{color:var(--fg-mute);text-transform:none;font-family:var(--font-sans);letter-spacing:0}
+  .cap-body{padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+  .cap-title{background:transparent;border:0;outline:0;color:var(--fg-strong);font:400 22px/1.2 var(--font-serif);width:100%}
+  .cap-title::placeholder{color:var(--fg-disabled)}
+  .cap-body-text{background:transparent;border:0;outline:0;color:var(--fg);font:400 13.5px/1.55 var(--font-sans);width:100%;resize:none;height:80px}
+  .cap-body-text::placeholder{color:var(--fg-disabled)}
+  .cap-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)}
+  .cap-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;cursor:pointer;transition:background var(--motion-fast)}
+  .cap-pill:hover{background:var(--bg-3)}
+  .cap-pill .k{color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px;margin-right:2px}
+  .cap-pill.proj{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+  .cap-pill.axe{background:var(--idea-soft);border-color:transparent;color:#dcc4ed}
+  .cap-pill.add{opacity:.6}
+  .cap-pill .x{color:var(--fg-mute);margin-left:4px;font-size:11px}
+  .cap-pill:hover .x{color:var(--bad)}
+  .cap-add-axe{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 9px;background:var(--bg-2);border:1px dashed var(--border-strong);border-radius:6px;color:var(--fg-mute);font-size:12px;cursor:pointer}
+  .cap-add-axe input{background:transparent;border:0;outline:0;color:var(--fg-strong);width:80px;font-size:12px}
+  .cap-foot{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.2);font-size:11.5px;color:var(--fg-mute)}
+  .cap-foot .grow{flex:1}
+  .cap-cta{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;background:var(--accent);color:var(--accent-fg);border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer;border:0;transition:background var(--motion-fast)}
+  .cap-cta:hover{background:var(--accent-strong)}
+  .cap-cta .kbd{background:rgba(26,15,8,.15);color:rgba(26,15,8,.55);border-color:transparent}
+  .cap-proj-picker{position:absolute;top:60px;right:20px;background:rgba(15,13,17,.98);border:1px solid var(--border-strong);border-radius:8px;padding:6px;display:none;flex-direction:column;gap:2px;max-height:280px;overflow-y:auto;min-width:220px;z-index:1}
+  .cap-proj-picker.on{display:flex}
+  .cap-proj-picker button{padding:7px 10px;border-radius:5px;font-size:12.5px;color:var(--fg);text-align:left;display:flex;align-items:center;gap:8px}
+  .cap-proj-picker button:hover{background:var(--bg-3);color:var(--fg-strong)}
+  .cap-proj-picker button .meta{margin-left:auto;color:var(--fg-mute);font-family:var(--font-mono);font-size:10.5px}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"></circle><path d="M11 11l3 3"></path></symbol>
+    <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1L3 9h4l-1 6 6-8H8l1-6z" fill="currentColor" stroke="none"></path></symbol>
+    <symbol id="i-msg" viewBox="0 0 16 16"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6l-3 3v-3H3a1 1 0 0 1-1-1z"></path></symbol>
+    <symbol id="i-idea" viewBox="0 0 16 16"><path d="M5 10a3.5 3.5 0 1 1 6 0c-.5.7-1 1.3-1 2v.5H6V12c0-.7-.5-1.3-1-2zM6.5 14h3"></path></symbol>
+    <symbol id="i-rocket" viewBox="0 0 16 16"><path d="M11 2c-3 0-6 3-7 6l-2 1 2 2 1-1 2 2 1-1 2 2 1-2c3-1 6-4 6-7-1-1-3-2-6-2zM10 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path></symbol>
+    <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2l6.5 11h-13z"></path><path d="M8 6v3M8 11.5v.1"></path></symbol>
+    <symbol id="i-arrow-r" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"></path></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"></path></symbol>
+    <symbol id="i-grid" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5"></rect><rect x="9" y="2" width="5" height="5"></rect><rect x="2" y="9" width="5" height="5"></rect><rect x="9" y="9" width="5" height="5"></rect></symbol>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">w</span>
+    <span>wikichat <span class="pos" id="brand-pos">/ aujourd'hui</span></span>
+  </div>
+  <div class="topnav" role="tablist" aria-label="Vues">
+    <button data-route="today" aria-current="true">Aujourd'hui</button>
+    <button data-route="canvas">Canvas</button>
+    <button data-route="chat/general">Chat</button>
+  </div>
+  <button class="cmd-trigger" id="cmd-trigger" aria-label="Ouvrir la palette de commandes">
+    <svg class="ico"><use href="#i-search"></use></svg>
+    <span class="grow"><span class="accent">Capter,</span> naviguer…</span>
+    <span class="kbd">Ctrl+K</span>
+  </button>
+  <span class="grow"></span>
+  <span class="hud-pill" id="pill-agents"><span class="dot live"></span><strong>0</strong> agents</span>
+  <span class="hud-pill" id="pill-alerts" style="display:none"><strong>0</strong> alertes</span>
+  <span class="hud-pill" id="pill-status"><span class="dot ok"></span>up</span>
+</header>
+
+<main id="main">
+  <!-- view: today -->
+  <section class="view" id="v-today" data-view="today"></section>
+
+  <!-- view: canvas -->
+  <section class="view" id="v-canvas" data-view="canvas">
+    <div class="canvas-world">
+      <div class="canvas-grid-bg"></div>
+    </div>
+    <div class="canvas-pan" id="canvas-pan">
+      <div class="scene" id="canvas-scene"></div>
+    </div>
+    <div class="canvas-hud-tr">
+      <div class="zoom" id="canvas-zoom">
+        <button data-z="-1" title="zoom out">−</button>
+        <span class="lvl" id="zoom-lvl">100%</span>
+        <button data-z="1" title="zoom in">+</button>
+        <button data-z="0" title="fit">⤢</button>
+      </div>
+    </div>
+    <aside class="peek" id="peek"></aside>
+  </section>
+
+  <!-- view: chat (Wave 4) -->
+  <section class="view" id="v-chat" data-view="chat">
+    <div class="chat-shell">
+      <aside class="chat-rail" id="chat-rail"></aside>
+      <div class="chat-main">
+        <div class="chat-head" id="chat-head">
+          <div class="ava" id="chat-head-ava">#</div>
+          <div>
+            <div class="ttl" id="chat-head-ttl">—</div>
+            <div class="sub" id="chat-head-sub">—</div>
+          </div>
+          <span class="grow"></span>
+        </div>
+        <div class="chat-msgs" id="chat-msgs"><div class="empty">Sélectionne une conversation à gauche.</div></div>
+        <div class="chat-input">
+          <textarea id="chat-input-text" placeholder="Écrire un message…  Ctrl+↵ pour envoyer"></textarea>
+          <button class="send" id="chat-send" title="Envoyer (Ctrl+↵)" disabled>
+            <svg class="ico" style="width:16px;height:16px"><use href="#i-arrow-r"></use></svg>
+          </button>
+        </div>
+      </div>
+      <aside class="chat-side" id="chat-side">
+        <h5>Contexte</h5>
+        <div class="kv" id="chat-side-kv"><span class="k">canal</span><span class="v">—</span></div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<!-- spawn modal (Wave 4) -->
+<div class="sp-bg" id="sp-bg" role="dialog" aria-label="Spawner un agent">
+  <div class="sp-modal">
+    <div class="sp-head">
+      <div class="lbl">⚡ spawn agent</div>
+      <h3>Lancer un agent <em id="sp-h-proj">—</em></h3>
+    </div>
+    <div class="sp-body">
+      <div class="sp-row">
+        <span class="k">projet</span>
+        <div class="pickers" id="sp-proj-pickers"></div>
+      </div>
+      <div class="sp-row">
+        <span class="k">rôle</span>
+        <div class="pickers" id="sp-role-pickers">
+          <span class="sp-pick on" data-role="dev">dev</span>
+          <span class="sp-pick" data-role="qa">qa</span>
+          <span class="sp-pick" data-role="spec">spec</span>
+          <span class="sp-pick" data-role="refactor">refactor</span>
+          <span class="sp-pick" data-role="research">research</span>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="k">tâche</span>
+        <textarea class="sp-input task" id="sp-task" placeholder="Décris la tâche en une phrase — ex : 'Audit des tests unitaires existants et propose un plan de couverture.'"></textarea>
+      </div>
+      <div class="sp-row">
+        <span class="k">mode</span>
+        <div class="pickers" id="sp-mode-pickers">
+          <span class="sp-pick on" data-mode="headless">headless · one-shot</span>
+          <span class="sp-pick" data-mode="daemon">daemon · persistent</span>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="k">nom</span>
+        <input class="sp-input" id="sp-name" placeholder="auto" autocomplete="off">
+      </div>
+      <div class="sp-preview" id="sp-preview">$ claude -p …</div>
+    </div>
+    <div class="sp-foot">
+      <span style="font-size:11.5px;color:var(--fg-mute)"><span class="kbd">Esc</span> annuler</span>
+      <span class="grow"></span>
+      <button class="sp-cancel" id="sp-cancel">Annuler</button>
+      <button class="sp-cta" id="sp-submit">Spawner <span class="kbd">Ctrl+↵</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- capture overlay (Wave 2) -->
+<div class="cap-bg" id="cap-bg" role="dialog" aria-label="Capter une idée">
+  <div class="cap-modal">
+    <div class="cap-head">
+      <span>⚡ capter une idée</span>
+      <span class="grow"></span>
+      <span class="ts" id="cap-ts"></span>
+    </div>
+    <div class="cap-body" style="position:relative">
+      <input class="cap-title" id="cap-title" placeholder="Titre court — ce que tu veux te rappeler" autocomplete="off">
+      <textarea class="cap-body-text" id="cap-body" placeholder="Détails (optionnel) — contexte, lien, raison de l'idée"></textarea>
+      <div class="cap-meta" id="cap-meta">
+        <span class="cap-pill proj" id="cap-proj-pill"><span class="k">@</span><span class="cap-proj-name">—</span></span>
+        <div id="cap-axes"></div>
+        <span class="cap-add-axe" id="cap-add-axe-btn"><span style="color:var(--fg-mute)">+</span> ajouter axe</span>
+        <span style="flex:1"></span>
+        <span style="color:var(--fg-mute);font-size:11.5px"><span class="kbd" style="margin-right:6px">Ctrl+P</span>changer projet</span>
+      </div>
+      <div class="cap-proj-picker" id="cap-proj-picker"></div>
+    </div>
+    <div class="cap-foot">
+      <span><span class="kbd">Esc</span> annuler</span>
+      <span><span class="kbd">Ctrl+Shift+↵</span> capter + ouvrir</span>
+      <span class="grow"></span>
+      <button class="cap-cta" id="cap-submit">Capter <span class="kbd">Ctrl+↵</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script>
+/* ─────────────────────────────────────────────────────────────────────────
+   Hash router · vanilla, ~80 lignes
+   Routes :
+     #today                            view=today
+     #canvas[?proj=<id>]                view=canvas
+     #chat/<channel>[?agent=<name>]     view=chat segment=<channel>
+     #capture[?proj=<id>]               view=capture (Wave 2)
+     #spawn[?proj=<id>]                 view=spawn (Wave 4)
+   ──────────────────────────────────────────────────────────────────────── */
+const Router = (() => {
+  const VALID_VIEWS = new Set(['today','canvas','capture','spawn','chat']);
+  const subs = [];
+  let last = null;
+
+  function parse(){
+    const raw = location.hash.replace(/^#\/?/, '') || 'today';
+    const [path, qs = ''] = raw.split('?');
+    const [view, segment] = path.split('/', 2);
+    const params = {};
+    new URLSearchParams(qs).forEach((v,k) => { params[k] = v; });
+    if (!VALID_VIEWS.has(view)) return { view:'today', segment:undefined, params:{} };
+    return { view, segment: segment || undefined, params };
+  }
+
+  function fmt(route){
+    let h = '#' + route.view;
+    if (route.segment) h += '/' + route.segment;
+    const qs = new URLSearchParams(route.params || {}).toString();
+    if (qs) h += '?' + qs;
+    return h;
+  }
+
+  function navigate(route, opts = {}){
+    const next = fmt(route);
+    if (opts.replace) history.replaceState(null, '', next);
+    else if (next !== location.hash) location.hash = next;
+    if (opts.replace) emit();
+  }
+
+  let updateTimer = null;
+  function update(params){
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => {
+      const cur = parse();
+      const merged = { ...cur, params: { ...cur.params, ...params } };
+      history.replaceState(null, '', fmt(merged));
+      emit();
+    }, 300);
+  }
+
+  function emit(){
+    const route = parse();
+    if (last && JSON.stringify(route) === JSON.stringify(last)) return;
+    last = route;
+    for (const fn of subs) {
+      try { fn(route); } catch (err) { console.error('[router] sub failed', err); }
+    }
+  }
+
+  function subscribe(fn){
+    subs.push(fn);
+    return () => { const i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); };
+  }
+
+  window.addEventListener('hashchange', emit);
+
+  return { parse, navigate, update, subscribe };
+})();
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fetch helpers + state store
+   ──────────────────────────────────────────────────────────────────────── */
+async function api(method, url, body){
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
+
+const Store = {
+  health: null,
+  projects: [],
+  ideas: [],
+  agents: [],
+  sessions: [],
+  _loaded: false,
+};
+
+async function refreshAll(){
+  try {
+    const [h, p, i, a, s] = await Promise.all([
+      api('GET', '/api/health').catch(() => null),
+      api('GET', '/api/regie/projects').catch(() => ({ projects: [] })),
+      api('GET', '/api/regie/ideas?limit=50').catch(() => ({ ideas: [] })),
+      fetch('/api/agents').then(r => r.json()).catch(() => []),
+      api('GET', '/api/regie/sessions').catch(() => ({ sessions: [] })),
+    ]);
+    Store.health = h;
+    Store.projects = p.projects || [];
+    Store.ideas = i.ideas || [];
+    Store.agents = Array.isArray(a) ? a : (a.agents || []);
+    Store.sessions = s.sessions || [];
+    Store._loaded = true;
+    renderTopbar();
+    const v = Router.parse().view;
+    if (v === 'today') renderToday();
+    if (v === 'canvas') Canvas.render();
+  } catch (err) {
+    console.error('[refresh]', err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Topbar (status pills)
+   ──────────────────────────────────────────────────────────────────────── */
+function renderTopbar(){
+  const h = Store.health;
+  const liveAgents = Store.sessions.filter(s => !s.anonymous).length;
+  const alerts = computeAlerts().length;
+
+  const pillAgents = document.getElementById('pill-agents');
+  pillAgents.innerHTML = `<span class="dot ${liveAgents > 0 ? 'live' : 'info'}"></span><strong>${liveAgents}</strong> agent${liveAgents !== 1 ? 's' : ''}`;
+
+  const pillAlerts = document.getElementById('pill-alerts');
+  if (alerts > 0) {
+    pillAlerts.innerHTML = `<strong>${alerts}</strong> alerte${alerts !== 1 ? 's' : ''}`;
+    pillAlerts.style.display = '';
+  } else {
+    pillAlerts.style.display = 'none';
+  }
+
+  const pillStatus = document.getElementById('pill-status');
+  if (h) {
+    pillStatus.innerHTML = `<span class="dot ok"></span>${h.budget.current}/${h.budget.max}`;
+  } else {
+    pillStatus.innerHTML = `<span class="dot bad"></span>down`;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   View: Today — derive alerts/ideas/agents-back/at-risk from store
+   ──────────────────────────────────────────────────────────────────────── */
+function ageDays(iso){
+  if (!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function ageHuman(iso){
+  if (!iso) return '?';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  return Math.floor(s / 86400) + 'j';
+}
+
+function computeAlerts(){
+  const out = [];
+  for (const p of Store.projects) {
+    if (p.blockers > 0) out.push({ kind: 'bad', t: `${p.name} · ${p.blockers} blocker${p.blockers > 1 ? 's' : ''}`, meta: 'blocker', proj: p.name });
+    const lastCommit = p.health?.last_commit_age_days;
+    if (lastCommit !== null && lastCommit !== undefined && lastCommit > 30) {
+      out.push({ kind: 'warn', t: `${p.name} · pas de commit depuis ${lastCommit}j`, meta: lastCommit + 'j', proj: p.name });
+    }
+    if (p.health?.score !== undefined && p.health.score < 30) {
+      out.push({ kind: 'bad', t: `${p.name} · santé ${p.health.score}/100`, meta: p.health.score + '/100', proj: p.name });
+    }
+  }
+  return out.slice(0, 6);
+}
+
+function computeRecentIdeas(){
+  const cutoff = Date.now() - 2 * 86400000;
+  return Store.ideas
+    .filter(i => i.status === 'raw' && new Date(i.updated_at).getTime() > cutoff)
+    .slice(0, 6);
+}
+
+function computeAgentsBack(){
+  return (Store.agents || [])
+    .filter(a => a.status === 'completed' || a.status === 'done')
+    .slice(0, 6);
+}
+
+function computeAtRisk(){
+  return Store.projects
+    .filter(p => p.health?.score !== undefined && p.health.score < 60)
+    .sort((a, b) => (a.health?.score || 0) - (b.health?.score || 0))
+    .slice(0, 6);
+}
+
+function renderToday(){
+  const root = document.getElementById('v-today');
+  const totalEverything = Store.projects.length + Store.ideas.length + (Store.agents?.length || 0);
+
+  // Skeleton state during 1st load (Wave 5)
+  if (!Store._loaded) {
+    root.innerHTML = `
+      <div class="today-greet">
+        <h1 class="skel" style="width:60%;height:34px"> </h1>
+        <p class="skel" style="width:40%;height:18px;margin-top:8px"> </p>
+      </div>
+      <div class="today-grid">
+        ${[0,1,2,3].map(() => `
+          <div class="today-card">
+            <div class="today-card-h"><span class="skel" style="width:120px;height:14px"> </span></div>
+            ${[0,1,2].map(() => `<div class="today-row"><span class="skel" style="flex:1;height:14px"> </span></div>`).join('')}
+          </div>`).join('')}
+      </div>`;
+    return;
+  }
+
+  if (totalEverything === 0) {
+    root.innerHTML = `
+      <div class="empty-hero">
+        <div class="glyph">w</div>
+        <h3>Bienvenue.</h3>
+        <p>Aucun projet, aucune idée, aucun agent. Capte ta première idée pour démarrer — elle deviendra le germe de ton premier projet.</p>
+        <button class="cta" onclick="openCmd()">⚡ Capter ma première idée <span class="kbd" style="background:transparent;border-color:rgba(26,15,8,.25);color:rgba(26,15,8,.55)">Ctrl+K</span></button>
+      </div>`;
+    return;
+  }
+
+  const alerts = computeAlerts();
+  const ideas = computeRecentIdeas();
+  const agentsBack = computeAgentsBack();
+  const atRisk = computeAtRisk();
+
+  const greetParts = [];
+  if (ideas.length) greetParts.push(`${ideas.length} idée${ideas.length > 1 ? 's' : ''} en attente de tri`);
+  if (alerts.length) greetParts.push(`${alerts.length} alerte${alerts.length > 1 ? 's' : ''} à regarder`);
+  if (atRisk.length) greetParts.push(`${atRisk.length} projet${atRisk.length > 1 ? 's' : ''} à risque`);
+  const things = alerts.length + (ideas.length > 0 ? 1 : 0) + (atRisk.length > 0 ? 1 : 0);
+  const thingsWord = things === 0 ? 'Rien' : things === 1 ? 'Une chose' : things === 2 ? 'Deux choses' : `${things} choses`;
+
+  root.innerHTML = `
+    <div class="today-greet">
+      <h1>Bonjour. <em>${thingsWord}</em> ${things === 0 ? 'à signaler' : things === 1 ? 'demande' : 'demandent'} ton attention.</h1>
+      <p>${greetParts.length ? 'Tu as ' + greetParts.join(', ') + '.' : "Tout est calme. C'est l'occasion de capter ce qui te trotte en tête."}</p>
+    </div>
+
+    <div class="today-grid">
+      ${tileTpl('Alertes', alerts.length, alerts.map(a =>
+        `<div class="today-row" data-proj="${escapeAttr(a.proj || '')}"><span class="dot ${a.kind}"></span><span class="t">${esc(a.t)}</span><span class="meta">${esc(a.meta)}</span></div>`
+      ).join(''), alerts.length === 0 ? 'Aucune alerte. Tout va bien.' : '')}
+
+      ${tileTpl('Idées récentes à trier', ideas.length, ideas.map(i =>
+        `<div class="today-row" data-idea="${escapeAttr(i.id)}"><span class="dot idea"></span><span class="t">${esc(i.title)}</span><span class="meta">${i.id.slice(0, 8)}</span><span class="act">→ trier</span></div>`
+      ).join(''), ideas.length === 0 ? "Pas d'idée non triée." : '', Store.ideas.filter(i => i.status === 'raw').length > 6 ? 'voir toutes (' + Store.ideas.filter(i => i.status === 'raw').length + ')' : null)}
+
+      ${tileTpl('Agents revenus', agentsBack.length, agentsBack.map(a =>
+        `<div class="today-row"><span class="dot ok"></span><span class="t">${esc(a.name)} · ${esc(a.role || a.mode || '')} ${a.repo_path ? '— terminé' : ''}</span><span class="meta">${ageHuman(a.spawned_at || a.completed_at)}</span></div>`
+      ).join(''), agentsBack.length === 0 ? "Pas d'agent revenu récemment." : '')}
+
+      ${tileTpl('Projets à risque', atRisk.length, atRisk.map(p =>
+        `<div class="today-row" data-proj="${escapeAttr(p.name)}"><span class="dot ${p.health.score < 40 ? 'bad' : 'warn'}"></span><span class="t">${esc(p.name)} · santé ${p.health.score}/100</span><span class="meta">${esc(p.lifecycle || 'active')}</span></div>`
+      ).join(''), atRisk.length === 0 ? 'Tous les projets sont en bonne santé.' : '')}
+    </div>
+  `;
+
+  // wire row clicks
+  root.querySelectorAll('.today-row[data-proj]').forEach(el => {
+    el.addEventListener('click', () => {
+      const proj = el.dataset.proj;
+      if (proj) Router.navigate({ view: 'canvas', params: { proj } });
+    });
+  });
+}
+
+function tileTpl(title, count, rows, emptyMsg, moreLabel){
+  return `
+    <div class="today-tile">
+      <h3>${title} <span class="ct">${count}</span></h3>
+      <div class="today-list">
+        ${rows || `<div class="empty">${emptyMsg || 'Rien.'}</div>`}
+      </div>
+      ${moreLabel ? `<div class="more">${moreLabel} →</div>` : ''}
+    </div>`;
+}
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return String(s ?? '').replace(/[<>"'&]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   View switching
+   ──────────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────
+   Canvas — Wave 3 + 5
+   layout : grid auto par cluster + overrides drag (Wave 5)
+   Overrides stockés en localStorage(wc.canvas.layout) keyé par nom de projet.
+   ──────────────────────────────────────────────────────────────────────── */
+
+const Canvas = {
+  zoom: 1,
+  selected: null,
+  overrides: {}, // { [projName]: { x, y } }
+  LS_KEY: 'wc.canvas.layout',
+
+  loadOverrides(){
+    try { this.overrides = JSON.parse(localStorage.getItem(this.LS_KEY) || '{}') || {}; }
+    catch { this.overrides = {}; }
+  },
+  saveOverride(name, x, y){
+    this.overrides[name] = { x, y };
+    try { localStorage.setItem(this.LS_KEY, JSON.stringify(this.overrides)); } catch {}
+  },
+  clearOverride(name){
+    delete this.overrides[name];
+    try { localStorage.setItem(this.LS_KEY, JSON.stringify(this.overrides)); } catch {}
+  },
+
+  hashId(s){
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  },
+
+  // Layout : group projects by cluster_id (default "main"), pack 2-col grid per cluster
+  // Place ideas radially around their related project.
+  // Place agents above their current_project (live sessions).
+  layout(){
+    const clusters = new Map();
+    for (const p of Store.projects) {
+      const cid = p.cluster_id || (p.lifecycle === 'archived' ? 'archives' : 'main');
+      if (!clusters.has(cid)) clusters.set(cid, []);
+      clusters.get(cid).push(p);
+    }
+    // sort projects within cluster by activity (updatedAt desc, pinned first via lifecycle 'active')
+    for (const arr of clusters.values()) {
+      arr.sort((a, b) => {
+        if ((a.lifecycle === 'active') !== (b.lifecycle === 'active')) return a.lifecycle === 'active' ? -1 : 1;
+        return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+      });
+    }
+    // cluster placement : main first (left), then others, archives last (right)
+    const order = ['main', ...[...clusters.keys()].filter(k => k !== 'main' && k !== 'archives'), 'archives'];
+    const positions = {};
+    let curX = 60, curY = 80;
+    const clusterCols = 2;
+    const projW = 248, projH = 168, gap = 20, padX = 28, padY = 36;
+    for (const cid of order) {
+      if (!clusters.has(cid)) continue;
+      const arr = clusters.get(cid);
+      const cols = Math.min(clusterCols, arr.length);
+      const rows = Math.ceil(arr.length / cols);
+      const w = cols * projW + (cols - 1) * gap + 2 * padX;
+      const h = rows * projH + (rows - 1) * gap + 2 * padY;
+      positions[cid] = { x: curX, y: curY, w, h, cluster: cid };
+      // place projects within this cluster
+      arr.forEach((p, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        positions['proj:' + p.name] = {
+          x: curX + padX + col * (projW + gap),
+          y: curY + padY + row * (projH + gap),
+          w: projW, h: projH,
+        };
+      });
+      curX += w + 60;
+      if (curX > 1900) { curX = 60; curY += h + 80; }
+    }
+    // apply user-saved overrides (Wave 5 drag)
+    for (const p of Store.projects) {
+      const ov = this.overrides[p.name];
+      if (ov && positions['proj:' + p.name]) {
+        positions['proj:' + p.name].x = ov.x;
+        positions['proj:' + p.name].y = ov.y;
+      }
+    }
+    // place ideas near their related project
+    const ideaPositions = {};
+    for (const idea of Store.ideas.slice(0, 80)) {
+      let anchor = null;
+      if (idea.related_projects?.length) {
+        anchor = positions['proj:' + idea.related_projects[0]];
+      }
+      if (!anchor) {
+        // sandbox position bottom
+        const idx = this.hashId(idea.id) % 6;
+        anchor = { x: 80 + idx * 200, y: curY + 200, w: 0, h: 0 };
+      }
+      const h = this.hashId(idea.id);
+      const angle = (h % 360) * Math.PI / 180;
+      const radius = 110 + (h % 50);
+      ideaPositions[idea.id] = {
+        x: anchor.x + anchor.w + Math.cos(angle) * radius - 80,
+        y: anchor.y + anchor.h / 2 + Math.sin(angle) * radius - 30,
+      };
+    }
+    // place agents above their current_project
+    const agentPositions = {};
+    const liveByProject = {};
+    for (const s of Store.sessions) {
+      if (s.anonymous || !s.current_project) continue;
+      const key = s.current_project;
+      if (!liveByProject[key]) liveByProject[key] = [];
+      liveByProject[key].push(s);
+    }
+    for (const [proj, agents] of Object.entries(liveByProject)) {
+      const anchor = positions['proj:' + proj];
+      if (!anchor) continue;
+      agents.forEach((a, i) => {
+        agentPositions[a.id] = {
+          x: anchor.x + 8 + i * 24,
+          y: anchor.y - 18,
+        };
+      });
+    }
+    return { clusters: positions, projects: positions, ideas: ideaPositions, agents: agentPositions, order };
+  },
+
+  render(){
+    const scene = document.getElementById('canvas-scene');
+    if (!scene) return;
+    const total = Store.projects.length + Store.ideas.length;
+    if (total === 0) {
+      scene.innerHTML = `
+        <div class="canvas-empty">
+          <div class="glyph" style="width:64px;height:64px;border-radius:16px;background:var(--bg-1);border:1px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--fg-disabled);font:italic 400 32px/1 var(--font-serif);margin-bottom:8px">w</div>
+          <h3>Le canvas est vide.</h3>
+          <p>Capte ta première idée pour commencer à peupler ton espace.</p>
+        </div>`;
+      return;
+    }
+    const L = this.layout();
+    let html = '';
+    // clusters
+    for (const cid of L.order) {
+      const c = L.clusters[cid];
+      if (!c || !c.cluster) continue;
+      const label = cid === 'main' ? 'projets actifs' : cid === 'archives' ? 'archives' : cid;
+      html += `<div class="cluster" style="left:${c.x}px;top:${c.y}px;width:${c.w}px;height:${c.h}px"><span class="lab">${esc(label)}</span></div>`;
+    }
+    // projects
+    for (const p of Store.projects) {
+      const pos = L.projects['proj:' + p.name];
+      if (!pos) continue;
+      const score = p.health?.score;
+      const meterCls = score === undefined ? '' : (score < 40 ? 'bad' : score < 70 ? 'warn' : 'ok');
+      const meterPct = score !== undefined ? Math.max(5, Math.min(100, score)) : 0;
+      const archived = p.lifecycle === 'archived' || p.lifecycle === 'closed' ? 'archived' : '';
+      const sel = this.selected === p.name ? 'selected' : '';
+      const hasOv = !!this.overrides[p.name];
+      const badges = [];
+      if (p.lifecycle && p.lifecycle !== 'active') badges.push(`<span class="badge muted">${esc(p.lifecycle)}</span>`);
+      if (p.blockers > 0) badges.push(`<span class="badge bad"><span class="dot"></span>${p.blockers}</span>`);
+      if (p.live_agents?.length) badges.push(`<span class="badge ok"><span class="dot"></span>${p.live_agents.length}</span>`);
+      if (score !== undefined) badges.push(`<span class="badge ${meterCls}"><span class="dot"></span>${score}</span>`);
+      const ovTitle = hasOv ? ' · position personnalisée (double-clic pour réinitialiser)' : '';
+      html += `
+        <div class="proj draggable ${archived} ${sel} ${hasOv ? 'has-override' : ''}" data-proj="${escapeAttr(p.name)}" tabindex="0" role="button" aria-label="${escapeAttr(p.name + ovTitle)}" style="left:${pos.x}px;top:${pos.y}px">
+          <h4>${esc(p.name)}</h4>
+          <p class="desc">${esc(p.description || p.purpose || '')}</p>
+          <div class="row">
+            ${p.tasks_active ? `tasks <span class="v">${p.tasks_active}</span>` : ''}
+            ${p.tasks_active && p.decisions ? '<span class="sep"></span>' : ''}
+            ${p.decisions ? `decisions <span class="v">${p.decisions}</span>` : ''}
+          </div>
+          ${score !== undefined ? `<div class="meter"><div class="f ${meterCls}" style="width:${meterPct}%"></div></div>` : ''}
+          ${badges.length ? `<div class="badges">${badges.join('')}</div>` : ''}
+        </div>`;
+    }
+    // ideas
+    for (const idea of Store.ideas.slice(0, 80)) {
+      const pos = L.ideas[idea.id];
+      if (!pos) continue;
+      const rotCls = ['', 'r2', 'r3'][this.hashId(idea.id) % 3];
+      const cls = idea.cluster_id ? 'clustered' : '';
+      html += `
+        <div class="idea-note ${rotCls} ${cls}" data-idea="${escapeAttr(idea.id)}" style="left:${pos.x}px;top:${pos.y}px" title="${escapeAttr(idea.title)}">
+          <div class="id">${esc(idea.id.slice(0, 8))}</div>
+          <div class="t">${esc(idea.title)}</div>
+        </div>`;
+    }
+    // agents
+    for (const a of Store.sessions) {
+      if (a.anonymous) continue;
+      const pos = L.agents[a.id];
+      if (!pos) continue;
+      const initial = (a.name || '?').charAt(0).toUpperCase();
+      const colors = ['#E89A5C,#C9A6E8', '#85B0CC,#8AB58B', '#D9AF5C,#C9A6E8', '#85B0CC,#E89A5C'];
+      const grad = colors[this.hashId(a.name) % colors.length];
+      const cls = a.agent_type === 'daemon' ? 'daemon' : 'live';
+      html += `
+        <div class="agent-pin ${cls}" data-agent="${escapeAttr(a.name)}" style="left:${pos.x}px;top:${pos.y}px">
+          <span class="ava" style="background:linear-gradient(135deg,${grad})">${esc(initial)}</span>
+          <span class="n">${esc(a.name)}</span>
+          ${a.role ? `<span class="r">${esc(a.role)}</span>` : ''}
+        </div>`;
+    }
+    scene.innerHTML = html;
+    // wire clicks + drag (Wave 5)
+    scene.querySelectorAll('.proj[data-proj]').forEach(el => {
+      let down = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+      const THRESHOLD = 5;
+      el.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        down = true; moved = false;
+        sx = e.clientX; sy = e.clientY;
+        ox = parseFloat(el.style.left) || 0;
+        oy = parseFloat(el.style.top) || 0;
+        e.preventDefault();
+      });
+      const move = e => {
+        if (!down) return;
+        const dx = (e.clientX - sx) / Canvas.zoom;
+        const dy = (e.clientY - sy) / Canvas.zoom;
+        if (!moved && (Math.abs(dx) > THRESHOLD || Math.abs(dy) > THRESHOLD)) {
+          moved = true;
+          el.classList.add('dragging');
+        }
+        if (moved) {
+          el.style.left = (ox + dx) + 'px';
+          el.style.top = (oy + dy) + 'px';
+        }
+      };
+      const up = e => {
+        if (!down) return;
+        const wasMoving = moved;
+        down = false;
+        el.classList.remove('dragging');
+        if (wasMoving) {
+          const x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+          Canvas.saveOverride(el.dataset.proj, x, y);
+          el.classList.add('has-override');
+          // re-render to recompute idea/agent anchors
+          setTimeout(() => Canvas.render(), 0);
+        } else {
+          // simple click → open peek
+          Router.navigate({ view: 'canvas', params: { proj: el.dataset.proj } }, { replace: true });
+        }
+      };
+      el.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up, { once: true });
+      el.addEventListener('mouseleave', () => { /* mouseup window handler still catches */ });
+      // double-click → reset override
+      el.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        if (Canvas.overrides[el.dataset.proj]) {
+          Canvas.clearOverride(el.dataset.proj);
+          toast('Position réinitialisée', 'success');
+          Canvas.render();
+        }
+      });
+      // keyboard: Enter/Space → open peek, arrow keys → nudge if has override
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          Router.navigate({ view: 'canvas', params: { proj: el.dataset.proj } }, { replace: true });
+        }
+      });
+    });
+  },
+
+  setZoom(z){
+    this.zoom = Math.max(0.3, Math.min(2, z));
+    const scene = document.getElementById('canvas-scene');
+    if (scene) scene.style.transform = `scale(${this.zoom})`;
+    const lvl = document.getElementById('zoom-lvl');
+    if (lvl) lvl.textContent = Math.round(this.zoom * 100) + '%';
+  },
+
+  centerOn(projName){
+    const pan = document.getElementById('canvas-pan');
+    const L = this.layout();
+    const pos = L.projects['proj:' + projName];
+    if (!pos || !pan) return;
+    const targetX = (pos.x + pos.w / 2) * this.zoom - pan.clientWidth / 2;
+    const targetY = (pos.y + pos.h / 2) * this.zoom - pan.clientHeight / 2;
+    pan.scrollTo({ left: targetX, top: targetY, behavior: 'smooth' });
+  },
+
+  showPeek(projName){
+    const peek = document.getElementById('peek');
+    const p = Store.projects.find(x => x.name === projName);
+    if (!p) { peek.classList.remove('on'); return; }
+    this.selected = projName;
+    const score = p.health?.score;
+    const scoreCls = score === undefined ? 'muted' : (score < 40 ? 'bad' : score < 70 ? 'warn' : 'ok');
+    peek.innerHTML = `
+      <div class="peek-head">
+        <div class="row">
+          ${score !== undefined ? `<span class="badge ${scoreCls}"><span class="dot"></span>santé ${score}</span>` : ''}
+          ${p.lifecycle ? `<span class="badge muted">${esc(p.lifecycle)}</span>` : ''}
+          ${p.publish?.github?.visibility ? `<span class="badge muted">gh:${esc(p.publish.github.visibility)}</span>` : ''}
+          <button class="close" id="peek-close" title="fermer"><svg class="ico"><use href="#i-x"></use></svg></button>
+        </div>
+        <h2>${esc(p.name)}</h2>
+        ${p.description || p.purpose ? `<p>${esc(p.description || p.purpose)}</p>` : ''}
+      </div>
+      <div class="peek-body">
+        <div class="peek-section">
+          <h5>État</h5>
+          <div class="peek-kv">
+            ${p.health?.branch ? `<span class="k">branche</span><span class="v" style="font-family:var(--font-mono);font-size:11.5px">${esc(p.health.branch)}</span>` : ''}
+            ${p.health?.last_commit_age_days !== undefined ? `<span class="k">last commit</span><span class="v">${p.health.last_commit_age_days}j</span>` : ''}
+            ${p.health?.uncommitted !== undefined ? `<span class="k">uncommitted</span><span class="v">${p.health.uncommitted}</span>` : ''}
+            ${p.health?.has_tests !== undefined ? `<span class="k">tests</span><span class="v" style="color:var(${p.health.has_tests ? '--ok' : '--bad'})">${p.health.has_tests ? 'présents' : 'absents'}</span>` : ''}
+            <span class="k">tâches actives</span><span class="v">${p.tasks_active || 0}</span>
+            <span class="k">blockers</span><span class="v" style="color:${p.blockers ? 'var(--bad)' : 'var(--fg)'}">${p.blockers || 0}</span>
+          </div>
+        </div>
+        <div class="peek-section">
+          <h5>Action rapide</h5>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="peek-action primary" data-act="capture"><svg class="ico"><use href="#i-bolt"></use></svg><span class="grow">Capter une idée ici</span><span class="k">Ctrl+K</span></button>
+            <button class="peek-action" data-act="spawn"><svg class="ico"><use href="#i-rocket"></use></svg><span class="grow">Spawner un agent ici</span><span class="k">Ctrl+N</span></button>
+            <button class="peek-action" data-act="chat"><svg class="ico"><use href="#i-msg"></use></svg><span class="grow">Ouvrir #${esc(p.name.toLowerCase().replace(/\s+/g, '-'))}</span></button>
+          </div>
+        </div>
+        ${p.live_agents?.length ? `
+          <div class="peek-section">
+            <h5>Agents en vol · ${p.live_agents.length}</h5>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              ${p.live_agents.map(a => `<div style="display:flex;align-items:center;gap:7px;font-size:12px"><span class="dot live"></span><span style="color:var(--fg-strong);font-weight:500">${esc(a.name)}</span>${a.role ? `<span style="color:var(--fg-mute);font-size:11px">${esc(a.role)}</span>` : ''}</div>`).join('')}
+            </div>
+          </div>` : ''}
+        ${p.tracked_agents > 0 ? `<div class="peek-section"><h5>Roster historique</h5><div style="color:var(--fg-mute);font-size:12px">${p.tracked_agents} agent(s) ont contribué</div></div>` : ''}
+      </div>`;
+    peek.classList.add('on');
+    peek.querySelector('#peek-close').onclick = () => {
+      this.selected = null;
+      Router.navigate({ view: 'canvas' }, { replace: true });
+    };
+    peek.querySelector('[data-act="capture"]').onclick = () => {
+      Router.navigate({ view: 'capture', params: { proj: projName, from: 'canvas' } });
+    };
+    peek.querySelector('[data-act="spawn"]').onclick = () => {
+      Router.navigate({ view: 'spawn', params: { proj: projName } });
+    };
+    peek.querySelector('[data-act="chat"]').onclick = () => {
+      const channel = projName.toLowerCase().replace(/\s+/g, '-');
+      Router.navigate({ view: 'chat', segment: channel });
+    };
+    // refresh selection styling
+    document.querySelectorAll('.proj').forEach(el => el.classList.toggle('selected', el.dataset.proj === projName));
+  },
+
+  hidePeek(){
+    document.getElementById('peek')?.classList.remove('on');
+    this.selected = null;
+    document.querySelectorAll('.proj.selected').forEach(el => el.classList.remove('selected'));
+  },
+};
+
+// pan
+(() => {
+  const pan = document.getElementById('canvas-pan');
+  if (!pan) return;
+  let down = false, sx = 0, sy = 0, lx = 0, ly = 0;
+  pan.addEventListener('mousedown', e => {
+    if (e.target.closest('.proj') || e.target.closest('.idea-note') || e.target.closest('.agent-pin') || e.target.closest('.peek')) return;
+    down = true; sx = e.clientX; sy = e.clientY; lx = pan.scrollLeft; ly = pan.scrollTop;
+    pan.classList.add('dragging');
+  });
+  window.addEventListener('mouseup', () => { down = false; pan.classList.remove('dragging'); });
+  window.addEventListener('mousemove', e => {
+    if (!down) return;
+    pan.scrollLeft = lx - (e.clientX - sx);
+    pan.scrollTop = ly - (e.clientY - sy);
+  });
+})();
+
+// zoom buttons
+document.getElementById('canvas-zoom').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const z = parseInt(b.dataset.z, 10);
+  if (z === 0) Canvas.setZoom(1);
+  else Canvas.setZoom(Canvas.zoom + z * 0.1);
+});
+
+// zoom on Ctrl+wheel
+document.getElementById('canvas-pan').addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  Canvas.setZoom(Canvas.zoom - Math.sign(e.deltaY) * 0.1);
+}, { passive: false });
+
+function applyRoute(route){
+  // capture & spawn are overlays : the underlying view stays
+  if (route.view === 'capture') {
+    Capture.open(route.params);
+    return;
+  } else {
+    document.getElementById('cap-bg').classList.remove('on');
+    document.getElementById('cap-proj-picker').classList.remove('on');
+  }
+  if (route.view === 'spawn') {
+    Spawn.open(route.params);
+    return;
+  } else {
+    document.getElementById('sp-bg').classList.remove('on');
+  }
+  // active view
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === route.view));
+  // brand pos
+  const labels = { today: '/ aujourd\'hui', canvas: '/ canvas', chat: '/ chat', capture: '/ capture', spawn: '/ spawn' };
+  document.getElementById('brand-pos').textContent = labels[route.view] || ('/ ' + route.view);
+  // topnav active
+  document.querySelectorAll('.topnav button').forEach(b => {
+    const target = b.dataset.route.split('/')[0];
+    b.setAttribute('aria-current', target === route.view ? 'true' : 'false');
+  });
+  // render view-specific
+  if (route.view === 'today') renderToday();
+  if (route.view === 'canvas') {
+    Canvas.render();
+    if (route.params.proj) {
+      Canvas.showPeek(route.params.proj);
+      setTimeout(() => Canvas.centerOn(route.params.proj), 50);
+    } else {
+      Canvas.hidePeek();
+    }
+  }
+  if (route.view === 'chat') {
+    Chat.open(route.segment, route.params);
+  } else {
+    Chat.stopPolling();
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Spawn modal — Wave 4
+   ──────────────────────────────────────────────────────────────────────── */
+const Spawn = {
+  state: { project: null, role: 'dev', mode: 'headless', submitting: false },
+
+  open(params){
+    document.getElementById('sp-bg').classList.add('on');
+    const projName = params?.proj || (Store.projects[0]?.name) || null;
+    this.state.project = Store.projects.find(p => p.name === projName) || Store.projects[0] || null;
+    this.state.role = 'dev';
+    this.state.mode = 'headless';
+    this.renderProjects();
+    this.applyChips();
+    this.renderHead();
+    document.getElementById('sp-task').value = '';
+    document.getElementById('sp-name').value = '';
+    this.renderPreview();
+    setTimeout(() => document.getElementById('sp-task').focus(), 60);
+  },
+
+  close(){
+    document.getElementById('sp-bg').classList.remove('on');
+    if (Router.parse().view === 'spawn') {
+      Router.navigate({ view: Router.parse().params.from || 'canvas' });
+    }
+  },
+
+  renderProjects(){
+    const wrap = document.getElementById('sp-proj-pickers');
+    const projs = Store.projects.slice(0, 12);
+    wrap.innerHTML = projs.map(p =>
+      `<span class="sp-pick ${p.name === this.state.project?.name ? 'on' : ''}" data-proj="${esc(p.name)}">${esc(p.name)}</span>`
+    ).join('');
+    wrap.querySelectorAll('[data-proj]').forEach(el => {
+      el.addEventListener('click', () => {
+        this.state.project = Store.projects.find(p => p.name === el.dataset.proj);
+        this.renderProjects();
+        this.renderHead();
+        this.renderPreview();
+      });
+    });
+  },
+
+  renderHead(){
+    document.getElementById('sp-h-proj').textContent = this.state.project?.name || '—';
+  },
+
+  applyChips(){
+    document.querySelectorAll('#sp-role-pickers .sp-pick').forEach(el => {
+      el.classList.toggle('on', el.dataset.role === this.state.role);
+    });
+    document.querySelectorAll('#sp-mode-pickers .sp-pick').forEach(el => {
+      el.classList.toggle('on', el.dataset.mode === this.state.mode);
+    });
+  },
+
+  renderPreview(){
+    const proj = this.state.project;
+    const task = document.getElementById('sp-task').value.trim() || '<task>';
+    const name = document.getElementById('sp-name').value.trim() || `${this.state.role}-${proj?.name || 'proj'}-${Date.now().toString(36).slice(-4)}`;
+    const path = proj?.path || '<path>';
+    const cmd = this.state.mode === 'daemon'
+      ? `POST /api/spawn/daemon\n  projectPath: ${path}\n  name:        ${name}\n  role:        ${this.state.role}\n  task:        ${task}`
+      : `POST /api/spawn/headless\n  projectPath: ${path}\n  name:        ${name}\n  role:        ${this.state.role}\n  prompt:      ${task}`;
+    document.getElementById('sp-preview').textContent = '$ ' + cmd;
+  },
+
+  async submit(){
+    if (this.state.submitting) return;
+    const proj = this.state.project;
+    if (!proj?.path) { toast('Projet sans path — choisis un autre.', 'error'); return; }
+    const task = document.getElementById('sp-task').value.trim();
+    if (!task) { toast('Tâche requise.', 'error'); document.getElementById('sp-task').focus(); return; }
+    const name = document.getElementById('sp-name').value.trim() || `${this.state.role}-${proj.name}-${Date.now().toString(36).slice(-4)}`;
+    this.state.submitting = true;
+    const url = this.state.mode === 'daemon' ? '/api/spawn/daemon' : '/api/spawn/headless';
+    const body = this.state.mode === 'daemon'
+      ? { projectPath: proj.path, name, role: this.state.role, task }
+      : { projectPath: proj.path, name, role: this.state.role, prompt: task };
+    try {
+      const r = await api('POST', url, body);
+      if (r?.error) throw new Error(r.error);
+      toast(`✓ Agent "${name}" spawn (${this.state.mode}) sur ${proj.name}`, 'success');
+      this.close();
+      setTimeout(refreshAll, 400);
+    } catch (err) {
+      toast('Spawn raté : ' + err.message, 'error');
+    } finally {
+      this.state.submitting = false;
+    }
+  },
+};
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Chat — Wave 4 (3 cols : rail · main · side)
+   Watermark "non lus depuis Vh" via localStorage(wc.chat.lastRead.<channel>)
+   ──────────────────────────────────────────────────────────────────────── */
+const Chat = {
+  state: { channels: [], current: null, messages: [], pollTimer: null, sending: false },
+  LS_KEY: 'wc.chat.lastRead',
+
+  lastRead(ch){
+    try { return JSON.parse(localStorage.getItem(this.LS_KEY) || '{}')[ch] || 0; }
+    catch { return 0; }
+  },
+  setLastRead(ch, ts){
+    try {
+      const m = JSON.parse(localStorage.getItem(this.LS_KEY) || '{}');
+      m[ch] = ts;
+      localStorage.setItem(this.LS_KEY, JSON.stringify(m));
+    } catch {}
+  },
+
+  async loadChannels(){
+    try {
+      const r = await api('GET', '/api/regie/channels');
+      this.state.channels = r?.channels || [];
+    } catch { this.state.channels = []; }
+  },
+
+  async open(segment, params){
+    if (!this.state.channels.length) await this.loadChannels();
+    let target = segment || 'general';
+    // accept "@AgentName" segment for DMs
+    if (target.startsWith('@')) {
+      const me = 'Pilot';
+      const targ = target.slice(1);
+      const parts = [me, targ].sort();
+      target = `dm:${parts[0]}-${parts[1]}`;
+    }
+    this.state.current = target;
+    this.renderRail();
+    await this.loadMessages();
+    this.startPolling();
+    setTimeout(() => document.getElementById('chat-input-text')?.focus(), 60);
+  },
+
+  renderRail(){
+    const rail = document.getElementById('chat-rail');
+    if (!rail) return;
+    const sys = this.state.channels.filter(c => !c.isDM);
+    const dms = this.state.channels.filter(c => c.isDM);
+    const row = (c) => {
+      const last = this.lastRead(c.name);
+      const unread = (this.state.messagesByChannel?.[c.name] || []).filter(m => new Date(m.timestamp).getTime() > last).length;
+      const label = c.isDM ? c.name.replace(/^dm:/, '').replace('-', ' ↔ ') : '#' + c.name;
+      const initials = label.replace(/^#/, '').slice(0, 2).toUpperCase();
+      return `<div class="conv ${this.state.current === c.name ? 'on' : ''}" data-ch="${esc(c.name)}">
+        <div class="ava">${esc(initials)}</div>
+        <div class="body"><div class="n">${esc(label)}</div><div class="s">${c.isDM ? 'DM' : 'salon'}</div></div>
+        ${unread ? '<div class="un" title="non lus"></div>' : ''}
+      </div>`;
+    };
+    rail.innerHTML = `
+      <h5>Salons · ${sys.length}</h5>
+      ${sys.map(row).join('') || '<div style="color:var(--fg-disabled);font-size:11.5px;padding:0 6px">aucun salon</div>'}
+      <h5>DMs · ${dms.length}</h5>
+      ${dms.map(row).join('') || '<div style="color:var(--fg-disabled);font-size:11.5px;padding:0 6px">aucun DM</div>'}
+    `;
+    rail.querySelectorAll('[data-ch]').forEach(el => {
+      el.addEventListener('click', () => Router.navigate({ view: 'chat', segment: el.dataset.ch }));
+    });
+  },
+
+  async loadMessages(){
+    if (!this.state.current) return;
+    try {
+      const r = await api('GET', '/api/messages?channel=' + encodeURIComponent(this.state.current) + '&limit=80');
+      this.state.messages = Array.isArray(r) ? r : (r?.messages || []);
+    } catch { this.state.messages = []; }
+    this.renderMain();
+    // mark read on view
+    const last = this.state.messages[this.state.messages.length - 1];
+    if (last) this.setLastRead(this.state.current, new Date(last.timestamp).getTime());
+  },
+
+  renderMain(){
+    const ch = this.state.current;
+    const head = document.getElementById('chat-head');
+    if (!ch) { head.querySelector('#chat-head-ttl').textContent = '—'; return; }
+    const isDM = ch.startsWith('dm:');
+    const label = isDM ? ch.replace(/^dm:/, '').replace('-', ' ↔ ') : '#' + ch;
+    document.getElementById('chat-head-ava').textContent = isDM ? '↔' : '#';
+    document.getElementById('chat-head-ttl').textContent = label;
+    document.getElementById('chat-head-sub').textContent = isDM ? 'conversation directe' : 'salon de coordination';
+
+    const lastRead = this.lastRead(ch);
+    const msgs = this.state.messages;
+    const wrap = document.getElementById('chat-msgs');
+    if (!msgs.length) {
+      wrap.innerHTML = '<div class="empty">Aucun message dans ce canal — sois le premier à écrire.</div>';
+    } else {
+      let html = '';
+      let unreadInserted = false;
+      for (const m of msgs) {
+        const ts = new Date(m.timestamp).getTime();
+        if (!unreadInserted && lastRead > 0 && ts > lastRead) {
+          html += `<div class="unread-mark"><span class="lbl">non lus depuis ${Chat.fmtAgo(lastRead)}</span></div>`;
+          unreadInserted = true;
+        }
+        const author = esc(m.fromName || m.from || '?');
+        const initials = (m.fromName || m.from || '?').slice(0, 2).toUpperCase();
+        const isUser = m.from === 'browser-pilot';
+        const isSys = m.type === 'system' || m.type === 'system_message';
+        const avaCls = isSys ? 'system' : (isUser ? 'user' : '');
+        const avaTxt = isSys ? '⚙' : esc(initials);
+        html += `<div class="msg">
+          <div class="ava ${avaCls}">${avaTxt}</div>
+          <div class="body">
+            <div class="nm"><span class="n">${author}</span><span class="ts">${Chat.fmtTime(ts)}</span></div>
+            <div class="txt">${esc(m.content || '')}</div>
+          </div>
+        </div>`;
+      }
+      wrap.innerHTML = html;
+      wrap.scrollTop = wrap.scrollHeight;
+    }
+
+    // side panel kv
+    const kv = document.getElementById('chat-side-kv');
+    const live = (Store.sessions || []).filter(s => !s.anonymous).slice(0, 6);
+    kv.innerHTML = `
+      <span class="k">canal</span><span class="v">${esc(ch)}</span>
+      <span class="k">messages</span><span class="v">${msgs.length}</span>
+      <span class="k">type</span><span class="v">${isDM ? 'DM' : 'salon'}</span>
+      <span class="k">live</span><span class="v">${live.length}</span>
+    `;
+  },
+
+  startPolling(){
+    this.stopPolling();
+    this.state.pollTimer = setInterval(() => this.loadMessages(), 5000);
+  },
+  stopPolling(){
+    if (this.state.pollTimer) { clearInterval(this.state.pollTimer); this.state.pollTimer = null; }
+  },
+
+  async send(){
+    if (this.state.sending || !this.state.current) return;
+    const ta = document.getElementById('chat-input-text');
+    const content = ta.value.trim();
+    if (!content) return;
+    this.state.sending = true;
+    document.getElementById('chat-send').disabled = true;
+    // DM channel : reverse-map dm:a-b → @b (target = the not-Pilot one)
+    let channelOut = this.state.current;
+    if (channelOut.startsWith('dm:')) {
+      const parts = channelOut.slice(3).split('-');
+      const target = parts.find(p => p !== 'Pilot') || parts[1];
+      channelOut = '@' + target;
+    }
+    try {
+      await api('POST', '/api/chat', { from: 'Pilot', channel: channelOut, content });
+      ta.value = '';
+      await this.loadMessages();
+    } catch (err) {
+      toast('Envoi raté : ' + err.message, 'error');
+    } finally {
+      this.state.sending = false;
+      document.getElementById('chat-send').disabled = !ta.value.trim();
+    }
+  },
+
+  fmtTime(ts){
+    const d = new Date(ts);
+    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  },
+  fmtAgo(ts){
+    const min = Math.floor((Date.now() - ts) / 60000);
+    if (min < 1) return 'à l\'instant';
+    if (min < 60) return min + ' min';
+    const h = Math.floor(min / 60);
+    if (h < 24) return h + 'h';
+    return Math.floor(h / 24) + 'j';
+  },
+};
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Capture overlay — Wave 2
+   ──────────────────────────────────────────────────────────────────────── */
+
+// known-axes vocabulary (seed). Augmented dynamically by Store.ideas + Store.projects.
+const AXIS_SEED = [
+  'auth','search','ui','api','docs','tests','ci','perf','refactor','data','crawl',
+  'ml','embeddings','kb','agent','spawn','idea','blocker','design','release','config',
+  'deploy','db','cache','infra','monitoring','log','typing','schema','migration','i18n',
+  'a11y','seo','security','crypto','sync','offline','mobile','grist','blender','n8n',
+  'dsfr','cerema','knowledge','knowledge-pipeline','geomatique','open-data',
+];
+
+function knownAxes(){
+  const set = new Set(AXIS_SEED);
+  for (const i of Store.ideas) for (const a of (i.axes || [])) if (a) set.add(a.toLowerCase());
+  for (const p of Store.projects) for (const a of (p.axes || [])) if (a) set.add(a.toLowerCase());
+  return [...set];
+}
+
+function inferAxes(text){
+  const corpus = (text || '').toLowerCase();
+  if (!corpus.trim()) return [];
+  const axes = knownAxes();
+  const matched = [];
+  for (const a of axes) {
+    // word match : treat as substring with word boundaries
+    const re = new RegExp(`\\b${a.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+    if (re.test(corpus)) matched.push(a);
+    if (matched.length >= 4) break;
+  }
+  return matched;
+}
+
+function inferProject(routeParams){
+  // 1. explicit param wins
+  if (routeParams && routeParams.proj) {
+    const found = Store.projects.find(p => p.name === routeParams.proj);
+    if (found) return found.name;
+  }
+  // 2. most recently updated project
+  const sorted = [...Store.projects].sort((a, b) =>
+    new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
+  );
+  return sorted[0]?.name || null;
+}
+
+const Capture = {
+  state: { project: null, axes: [], submitting: false },
+
+  open(routeParams){
+    document.getElementById('cap-bg').classList.add('on');
+    document.getElementById('cap-ts').textContent = new Date().toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+    this.state = { project: inferProject(routeParams), axes: [], submitting: false };
+    document.getElementById('cap-title').value = '';
+    document.getElementById('cap-body').value = '';
+    this.renderMeta();
+    setTimeout(() => document.getElementById('cap-title').focus(), 30);
+  },
+
+  close(){
+    document.getElementById('cap-bg').classList.remove('on');
+    document.getElementById('cap-proj-picker').classList.remove('on');
+    // if route is on capture, navigate back to today
+    if (Router.parse().view === 'capture') {
+      const cur = Router.parse();
+      const back = cur.params.from || 'today';
+      Router.navigate({ view: back });
+    }
+  },
+
+  renderMeta(){
+    document.querySelector('#cap-proj-pill .cap-proj-name').textContent = this.state.project || 'aucun projet';
+    const axesEl = document.getElementById('cap-axes');
+    axesEl.innerHTML = this.state.axes.map(a =>
+      `<span class="cap-pill axe" data-axe="${esc(a)}"><span class="k">#</span>${esc(a)}<span class="x">×</span></span>`
+    ).join('');
+    axesEl.querySelectorAll('.cap-pill[data-axe]').forEach(el => {
+      el.addEventListener('click', () => {
+        this.state.axes = this.state.axes.filter(x => x !== el.dataset.axe);
+        this.renderMeta();
+      });
+    });
+  },
+
+  // re-infer axes from current text (debounced)
+  inferTimer: null,
+  triggerInfer(){
+    if (this.inferTimer) clearTimeout(this.inferTimer);
+    this.inferTimer = setTimeout(() => {
+      const txt = document.getElementById('cap-title').value + ' ' + document.getElementById('cap-body').value;
+      const inferred = inferAxes(txt);
+      // merge with user-added (preserve manual additions, add inferred not yet present)
+      for (const a of inferred) if (!this.state.axes.includes(a)) this.state.axes.push(a);
+      this.renderMeta();
+    }, 350);
+  },
+
+  toggleProjPicker(){
+    const picker = document.getElementById('cap-proj-picker');
+    if (picker.classList.contains('on')) {
+      picker.classList.remove('on');
+      return;
+    }
+    picker.innerHTML = '';
+    const sorted = [...Store.projects].sort((a, b) =>
+      new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
+    );
+    // option to clear project
+    const clear = document.createElement('button');
+    clear.innerHTML = `<span style="color:var(--fg-mute)">— aucun</span>`;
+    clear.onclick = () => { this.state.project = null; picker.classList.remove('on'); this.renderMeta(); };
+    picker.appendChild(clear);
+    for (const p of sorted.slice(0, 30)) {
+      const b = document.createElement('button');
+      b.innerHTML = `<span>${esc(p.name)}</span><span class="meta">${esc(p.lifecycle || '')}</span>`;
+      b.onclick = () => { this.state.project = p.name; picker.classList.remove('on'); this.renderMeta(); };
+      picker.appendChild(b);
+    }
+    picker.classList.add('on');
+  },
+
+  addAxe(name){
+    const a = String(name || '').trim().toLowerCase();
+    if (!a) return;
+    if (!this.state.axes.includes(a)) this.state.axes.push(a);
+    this.renderMeta();
+  },
+
+  async submit(openProject){
+    if (this.state.submitting) return;
+    const title = document.getElementById('cap-title').value.trim();
+    if (!title) {
+      toast('Titre requis', 'error');
+      document.getElementById('cap-title').focus();
+      return;
+    }
+    const body = document.getElementById('cap-body').value.trim();
+    const proj = this.state.project;
+    const axes = [...this.state.axes];
+    this.state.submitting = true;
+
+    // optimistic : add to Store + render
+    const optimistic = {
+      id: 'tmp-' + Date.now().toString(36),
+      title, body, axes, related_projects: proj ? [proj] : [],
+      status: 'raw', source: 'user', created_by: 'Console',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      cluster_id: null, similar_to: [], _pending: true,
+    };
+    Store.ideas.unshift(optimistic);
+    if (Router.parse().view === 'today') renderToday();
+    this.close();
+
+    try {
+      const r = await api('POST', '/api/regie/ideas', {
+        title, body, axes, related_projects: proj ? [proj] : [],
+      });
+      // replace optimistic with real
+      const idx = Store.ideas.findIndex(i => i.id === optimistic.id);
+      if (idx >= 0) Store.ideas[idx] = r.idea;
+      if (Router.parse().view === 'today') renderToday();
+      renderTopbar();
+      toast('Idée capturée', 'success');
+      if (openProject && proj) {
+        Router.navigate({ view: 'canvas', params: { proj } });
+      }
+    } catch (err) {
+      Store.ideas = Store.ideas.filter(i => i.id !== optimistic.id);
+      if (Router.parse().view === 'today') renderToday();
+      toast('Échec capture : ' + err.message, 'error');
+    }
+  },
+};
+
+// wire capture inputs
+document.getElementById('cap-title').addEventListener('input', () => Capture.triggerInfer());
+document.getElementById('cap-body').addEventListener('input', () => Capture.triggerInfer());
+document.getElementById('cap-proj-pill').addEventListener('click', e => { e.stopPropagation(); Capture.toggleProjPicker(); });
+document.getElementById('cap-add-axe-btn').addEventListener('click', () => {
+  const name = prompt('Nom de l\'axe :');
+  if (name) Capture.addAxe(name);
+});
+document.getElementById('cap-submit').addEventListener('click', () => Capture.submit(false));
+document.getElementById('cap-bg').addEventListener('click', e => {
+  if (e.target.id === 'cap-bg') Capture.close();
+});
+
+// Cmd-trigger opens capture (Wave 2 : capture is the primary action of Ctrl+K)
+document.getElementById('cmd-trigger').addEventListener('click', () => {
+  Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
+});
+
+// expose for empty-hero CTA
+window.openCmd = () => Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Spawn modal wiring (Wave 4)
+   ──────────────────────────────────────────────────────────────────────── */
+document.getElementById('sp-bg').addEventListener('click', e => {
+  if (e.target.id === 'sp-bg') Spawn.close();
+});
+document.getElementById('sp-cancel').addEventListener('click', () => Spawn.close());
+document.getElementById('sp-submit').addEventListener('click', () => Spawn.submit());
+document.querySelectorAll('#sp-role-pickers .sp-pick').forEach(el => {
+  el.addEventListener('click', () => { Spawn.state.role = el.dataset.role; Spawn.applyChips(); Spawn.renderPreview(); });
+});
+document.querySelectorAll('#sp-mode-pickers .sp-pick').forEach(el => {
+  el.addEventListener('click', () => { Spawn.state.mode = el.dataset.mode; Spawn.applyChips(); Spawn.renderPreview(); });
+});
+document.getElementById('sp-task').addEventListener('input', () => Spawn.renderPreview());
+document.getElementById('sp-name').addEventListener('input', () => Spawn.renderPreview());
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Chat wiring (Wave 4)
+   ──────────────────────────────────────────────────────────────────────── */
+const chatInput = document.getElementById('chat-input-text');
+const chatSend = document.getElementById('chat-send');
+chatInput.addEventListener('input', () => {
+  chatSend.disabled = !chatInput.value.trim() || Chat.state.sending;
+  // auto-grow up to 120px
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(120, Math.max(40, chatInput.scrollHeight)) + 'px';
+});
+chatSend.addEventListener('click', () => Chat.send());
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Toast
+   ──────────────────────────────────────────────────────────────────────── */
+function toast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast on' + (kind ? ' ' + kind : '');
+  setTimeout(() => t.classList.remove('on'), 3500);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Wiring
+   ──────────────────────────────────────────────────────────────────────── */
+document.querySelectorAll('.topnav button').forEach(b => {
+  b.addEventListener('click', () => {
+    const route = b.dataset.route;
+    const [view, segment] = route.split('/', 2);
+    Router.navigate({ view, segment });
+  });
+});
+
+document.addEventListener('keydown', e => {
+  const captureOpen = document.getElementById('cap-bg').classList.contains('on');
+  const spawnOpen = document.getElementById('sp-bg').classList.contains('on');
+  const inChat = Router.parse().view === 'chat';
+
+  // Ctrl/Cmd+K → open capture (or close if already open)
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (captureOpen) Capture.close();
+    else Router.navigate({ view: 'capture', params: { from: Router.parse().view } });
+    return;
+  }
+  // Ctrl/Cmd+N → open spawn
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    if (spawnOpen) Spawn.close();
+    else {
+      const cur = Router.parse();
+      const proj = cur.params?.proj || (Canvas.selected) || null;
+      Router.navigate({ view: 'spawn', params: proj ? { proj, from: cur.view } : { from: cur.view } });
+    }
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (captureOpen) Capture.close();
+    else if (spawnOpen) Spawn.close();
+    return;
+  }
+  // capture-scoped shortcuts
+  if (captureOpen) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      Capture.submit(e.shiftKey);
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      Capture.toggleProjPicker();
+      return;
+    }
+  }
+  // spawn-scoped shortcuts
+  if (spawnOpen) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      Spawn.submit();
+      return;
+    }
+  }
+  // chat-scoped shortcuts (only when input is focused)
+  if (inChat && document.activeElement?.id === 'chat-input-text') {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      Chat.send();
+      return;
+    }
+  }
+});
+
+Router.subscribe(applyRoute);
+
+// boot
+Canvas.loadOverrides();
+applyRoute(Router.parse());
+refreshAll();
+setInterval(refreshAll, 30000);
+</script>
+</body>
+</html>

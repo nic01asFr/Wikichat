@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilote — Agents planifiés · WikiChat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#16120e;color:#ece7e1;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent,#d97757);text-decoration:none}
+  a:hover{color:#eb9070}
+  ::selection{background:rgba(217,119,87,.35)}
+  .scr::-webkit-scrollbar{width:9px;height:9px}
+  .scr::-webkit-scrollbar-track{background:transparent}
+  .scr::-webkit-scrollbar-thumb{background:#3a2f22;border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+  .scr::-webkit-scrollbar-thumb:hover{background:#4a3d2d;background-clip:padding-box}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes flashok{0%{background:#4bb98a;color:#0f231a}100%{}}
+  #toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:9px;z-index:100;max-width:360px}
+  .toast{display:flex;align-items:flex-start;gap:10px;background:#221b14;border:1px solid #3a2f22;border-left:3px solid #6f665b;border-radius:10px;padding:11px 13px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:12.5px;color:#ece7e1;animation:toastin .2s ease}
+  .toast.ok{border-left-color:#4bb98a}
+  .toast.err{border-left-color:#d9534f}
+  .toast.info{border-left-color:#6b9bd1}
+  .toast.pending{border-left-color:#d97757}
+  .toast .tmsg{flex:1;line-height:1.45}
+  .toast .tspin{width:13px;height:13px;border:2px solid #4a3d2d;border-top-color:#d97757;border-radius:50%;animation:spin .7s linear infinite;flex:none;margin-top:2px}
+  .toast .tclose{cursor:pointer;color:#8a8175;font-size:15px;line-height:1;flex:none}
+  @keyframes toastin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  kbd{font-family:'IBM Plex Mono',monospace;font-size:10.5px;background:#120e0a;border:1px solid #3a2f22;border-radius:5px;padding:1px 5px;color:#a89f94}
+  button{font-family:inherit}
+  input{font-family:inherit}
+  :focus-visible{outline:2px solid var(--accent,#d97757);outline-offset:2px}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modalHost"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── Props (parité avec le prototype : accent + densité) ───────────────
+  var params = new URLSearchParams(location.search);
+  var ACCENT = params.get("accent") || "#d97757";
+  var PAD = params.get("density") === "compact" ? 14 : 19;
+
+  // ── Données (maquette — identiques au design v2) ──────────────────────
+  var AGENTS = {
+    finances: {
+      id:"finances", name:"Agent Finances", desc:"Suivi bancaire — Gmail → Grist",
+      base:"veille", next:"demain 08:00", cron:"0 8 * * *",
+      trigger:{ freq:"0 8 * * *", tz:"Europe/Paris", cooldown:"1 h", cap:"3", src:"0 8 * * * cd ~/Finances && claude -p ..." },
+      scope:{ dir:"~/Finances", mode:"print (-p)", tools:[{name:"Gmail",perm:"MCP · lecture"},{name:"Grist",perm:"MCP · écriture"},{name:"Bash",perm:"built-in"}] },
+      memory:{ session:"a7f3e2c1-9c1e-4b02-8d3a-6f1029ab77e4", sessionFile:"~/.claude/projects/-Finances/a7f3e2c1….jsonl", recover:"12 messages · il y a 6 h", guide:"CLAUDE.md", facts:"finance-cursor.json", turns:"--max-turns 12", budget:"Sonnet 5" },
+      mission:[
+        "1. Lire .pilote/finance-cursor.json (dernier mail traité).",
+        "2. search_threads Gmail : alertes BP depuis le curseur.",
+        "3. Classer via table Regles du doc Grist (Motif → Categorie).",
+        "   – épargner signature/contrat (rester en inbox).",
+        "4. Proposer chaque opération en Prévisionnel (Grist)",
+        "   — ne PAS écrire sans validation.",
+        "5. Mettre à jour le curseur ; archiver les notifications.",
+        "6. Notification locale + log ~/.pilote/finance.log."
+      ],
+      queue:[
+        { id:"q1", icon:"+", kind:"money", title:"Prévisionnel : prélèvement 107,24 € le 06/07", sub:"BP Méditerranée · créancier non résolu → à confirmer", amount:"+ 107,24 €" },
+        { id:"q2", icon:"+", kind:"money", title:"Prévisionnel : BPCE Assurances IARD", sub:"récurrent détecté · ~ 01/08 · règle Assurances", amount:"≈ 42,90 €" },
+        { id:"q3", icon:"✉", kind:"mail", title:"Archiver 4 notifications", sub:"virements émis · → Banque/Notifications", amount:"4 mails" }
+      ],
+      history:[ { date:"14/07 08:00", mails:12, props:3, err:0 }, { date:"13/07 08:00", mails:8, props:1, err:0 }, { date:"12/07 08:00", mails:5, props:0, err:0 }, { date:"11/07 08:00", mails:9, props:2, err:0 } ]
+    },
+    veille: {
+      id:"veille", name:"Veille dépôts", desc:"Nouveaux commits / issues GitHub",
+      base:"actif", next:"dans 2 h 40", cron:"0 */6 * * *",
+      trigger:{ freq:"0 */6 * * *", tz:"Europe/Paris", cooldown:"30 min", cap:"6", src:"0 */6 * * * cd ~/veille && claude -p ..." },
+      scope:{ dir:"~/veille", mode:"print (-p)", tools:[{name:"GitHub",perm:"MCP · lecture"},{name:"Bash",perm:"built-in"}] },
+      memory:{ session:"c1d877aa-02fe-4b19-9c02-3ad81ee40b7c", sessionFile:"~/.claude/projects/-veille/c1d877aa….jsonl", recover:"6 messages · il y a 42 min", guide:"CLAUDE.md", facts:"repo-cursor.json", turns:"--max-turns 8", budget:"Haiku 4.5" },
+      mission:[
+        "1. Lire .pilote/repo-cursor.json.",
+        "2. Lister commits & issues depuis le curseur (gh).",
+        "3. Résumer par repo ; signaler PR bloquées / CI rouge.",
+        "4. Proposer un digest local — n'écrit rien sans validation."
+      ],
+      queue:[
+        { id:"v1", icon:"✦", kind:"mail", title:"Digest : 4 commits · 1 issue", sub:"wiki-front, wiki-api", amount:"2 repos" },
+        { id:"v2", icon:"!", kind:"money", title:"Signaler CI rouge sur wiki-front", sub:"build #218 échoué · depuis 1 h", amount:"urgent" }
+      ],
+      history:[ { date:"14/07 06:00", mails:7, props:2, err:0 }, { date:"14/07 00:00", mails:3, props:0, err:0 }, { date:"13/07 18:00", mails:11, props:1, err:1 }, { date:"13/07 12:00", mails:6, props:1, err:0 } ]
+    },
+    digest: {
+      id:"digest", name:"Digest hebdo", desc:"Récap perso du vendredi",
+      base:"actif", next:"—", cron:"0 17 * * 5",
+      trigger:{ freq:"0 17 * * 5", tz:"Europe/Paris", cooldown:"—", cap:"1", src:"0 17 * * 5 cd ~/coord && claude -p ..." },
+      scope:{ dir:"~/coord", mode:"print (-p)", tools:[{name:"Read",perm:"built-in"},{name:"Grist",perm:"MCP · lecture"}] },
+      memory:{ session:"—", sessionFile:"aucun transcript", recover:"aucune session", guide:"CLAUDE.md", facts:"week-cursor.json", turns:"--max-turns 6", budget:"Sonnet 5" },
+      mission:[ "1. Compiler l'activité des agents de la semaine.", "2. Agréger propositions validées / rejetées.", "3. Écrire un récap dans ~/.pilote/weekly.md." ],
+      queue:[],
+      history:[ { date:"11/07 17:00", mails:0, props:1, err:0 }, { date:"04/07 17:00", mails:0, props:1, err:0 } ]
+    }
+  };
+
+  var state = {
+    sel:"finances", daemonOn:true, gateOpen:true,
+    enabled:{ finances:true, veille:true, digest:false },
+    queues:{ finances:["q1","q2","q3"], veille:["v1","v2"], digest:[] },
+    showNew:false, seq:0,
+    form:blankForm()
+  };
+
+  var DEMO = true;   // true tant qu'aucun agent réel → on affiche les données de démonstration
+  var SERVED = false; // true dès qu'un fetch /pilote/api/data a réussi (serveur joignable → créations réelles)
+  var TOOLS = null;   // catalogue réel { builtins:[...], mcp:[{name,allow,status}] } depuis /pilote/api/tools
+
+  function blankForm(){ return { name:"", desc:"", dir:"", freq:"0 8 * * *", model:"sonnet", tools:["Bash"], mission:"", intent:"" }; }
+
+  // ── Helpers ───────────────────────────────────────────────────────────
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+
+  function statusOf(a){
+    if(!state.daemonOn) return { label:"EN PAUSE", dot:"#6b6258", next:"—" };
+    if(!state.enabled[a.id]) return { label:"DÉSACTIVÉ", dot:"#6b6258", next:"—" };
+    return a.base==="actif" ? { label:"ACTIF", dot:"#4bb98a", next:a.next } : { label:"EN VEILLE", dot:"#d9a441", next:a.next };
+  }
+  function pendingOf(id){ return (state.queues[id]||[]).length; }
+
+  function cronText(cron){
+    var p=(cron||"").trim().split(/\s+/); if(p.length!==5) return "";
+    var mi=p[0], h=p[1], dom=p[2], dow=p[4];
+    var days=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
+    var pad=function(n){ return String(n).padStart(2,"0"); };
+    if(h.indexOf("*/")===0){
+      var step=Number(h.slice(2)); var hs=[]; for(var x=0;x<24;x+=step) hs.push(pad(x)+":"+pad(mi==="*"?0:mi));
+      return "Toutes les "+step+" h · "+hs.join(", ");
+    }
+    if(h==="*") return "Chaque heure à "+pad(mi==="*"?0:mi)+" min";
+    var time="à "+pad(h)+":"+pad(mi==="*"?0:mi);
+    if(dow!=="*") return describeDow(dow,days)+" "+time;
+    if(dom!=="*") return "Le "+dom+" de chaque mois "+time;
+    return "Tous les jours "+time;
+  }
+
+  function describeDow(dow,days){
+    var short=["dim.","lun.","mar.","mer.","jeu.","ven.","sam."];
+    if(/^\d-\d$/.test(dow)){
+      if(dow==="1-5") return "En semaine";
+      if(dow==="0-6"||dow==="1-7") return "Tous les jours";
+      var ab=dow.split("-");
+      return "Du "+days[Number(ab[0])%7]+" au "+days[Number(ab[1])%7];
+    }
+    if(dow.indexOf(",")!==-1) return "Les "+dow.split(",").map(function(x){ return short[Number(x)%7]; }).join(", ");
+    var n=Number(dow);
+    if(isNaN(n)) return "Selon planning";
+    return "Tous les "+days[n%7]+"s";
+  }
+
+  function buildCmd(f){
+    var dir=f.dir||"~/agent";
+    var tools=(f.tools.length?f.tools:["Bash"]).join(",");
+    return "cd "+dir+" && claude -p --model "+f.model+" --allowedTools "+tools+' "$(cat MISSION.md)"';
+  }
+
+  // ── View builders ─────────────────────────────────────────────────────
+  function sidebarHTML(){
+    var cards = Object.keys(AGENTS).map(function(id){
+      var a=AGENTS[id], ast=statusOf(a), isSel=id===state.sel, pend=pendingOf(id);
+      var bg=isSel?"#241d15":"#1e1813", border=isSel?ACCENT:"#2b2319", bar=isSel?ACCENT:"transparent";
+      return ''+
+      '<div data-act="sel" data-id="'+id+'" style="position:relative;padding:11px 13px 11px 15px;border-radius:10px;background:'+bg+';border:1px solid '+border+';cursor:pointer">'+
+        '<div style="position:absolute;left:0;top:11px;bottom:11px;width:3px;border-radius:3px;background:'+bar+'"></div>'+
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'+
+          '<span style="font-size:13px;font-weight:600;color:#ece7e1">'+esc(a.name)+'</span>'+
+          '<span style="display:inline-flex;align-items:center;gap:5px;flex:none;font-size:9.5px;font-weight:600;letter-spacing:.5px;color:'+ast.dot+'"><span style="width:6px;height:6px;border-radius:50%;background:'+ast.dot+'"></span>'+ast.label+'</span>'+
+        '</div>'+
+        '<div style="font-size:11px;color:#8a8175;margin-top:2px">'+esc(a.desc)+'</div>'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:#6f665b">'+
+          '<span style="padding:2px 6px;border-radius:5px;background:#120e0a;color:#9a9084">'+esc(a.cron)+'</span>'+
+          (pend>0 ? '<span style="display:inline-flex;align-items:center;gap:4px;color:'+ACCENT+';font-weight:600">● '+pend+' à valider</span>' : '')+
+        '</div>'+
+        '<div style="font-size:10.5px;color:#6f665b;margin-top:5px">'+esc(cronText(a.cron))+'</div>'+
+      '</div>';
+    }).join("");
+
+    return ''+
+    '<aside class="scr" style="flex:none;width:284px;background:#1b1611;border-right:1px solid #2b2319;overflow-y:auto;padding:16px 14px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;padding:0 2px">'+
+        '<span style="font-size:10.5px;font-weight:600;letter-spacing:1.4px;color:#7d7468">AGENTS</span>'+
+        '<button data-act="new" style="display:flex;align-items:center;gap:5px;background:transparent;border:1px solid #3a2f22;color:'+ACCENT+';font-size:12px;font-weight:500;padding:5px 9px;border-radius:7px;cursor:pointer"><span style="font-size:13px;line-height:1">+</span> Nouvel agent</button>'+
+      '</div>'+
+      '<div style="display:flex;flex-direction:column;gap:8px">'+cards+'</div>'+
+    '</aside>';
+  }
+
+  function daemonHTML(){
+    var total=Object.keys(AGENTS).length;
+    var armed=Object.keys(AGENTS).filter(function(id){ return state.enabled[id]; }).length;
+    var wake="—", wakeAgent="";
+    if(state.daemonOn){
+      var ids=Object.keys(AGENTS);
+      var nextId=ids.filter(function(id){ return state.enabled[id] && AGENTS[id].base==="actif"; })[0] || ids.filter(function(id){ return state.enabled[id]; })[0];
+      if(nextId){ wake=statusOf(AGENTS[nextId]).next; wakeAgent=AGENTS[nextId].name; }
+    }
+    // 3 états réels, pas 2 : un cron « armé » ne part PAS si la gate dormante est
+    // fermée (aucune session Claude Code). On le dit au lieu de promettre l'heure.
+    var d;
+    if(!state.daemonOn){
+      d={ label:"Daemon en pause", color:"#d9a441", bg:"#1f1a12", armed:0, total:total, wake:"—", wakeAgent:"aucun réveil", btn:"Réactiver" };
+    } else if(SERVED && state.gateOpen===false){
+      d={ label:"En attente d'une session", color:"#d9a441", bg:"#1f1a12", armed:armed, total:total,
+          wake:wake, wakeAgent:"rattrapé à la prochaine session", btn:"Mettre en pause", gateShut:true };
+    } else {
+      d={ label:"Daemon actif", color:"#4bb98a", bg:"#1a1712", armed:armed, total:total, wake:wake, wakeAgent:wakeAgent, btn:"Mettre en pause" };
+    }
+
+    return ''+
+    '<div style="flex:none;display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:12px 20px;background:'+d.bg+';border-bottom:1px solid #2b2319">'+
+      '<span style="display:inline-flex;align-items:center;gap:9px;font-size:13px;font-weight:600;color:'+d.color+'"><span style="width:9px;height:9px;border-radius:50%;background:'+d.color+';animation:pulse 2.4s ease-in-out infinite"></span>'+d.label+'</span>'+
+      '<span style="width:1px;height:16px;background:#2b2319"></span>'+
+      '<span style="font-size:12.5px;color:#a89f94"><b style="color:#ece7e1;font-weight:600">'+d.armed+'</b>/'+d.total+' crons armés</span>'+
+      '<span style="width:1px;height:16px;background:#2b2319"></span>'+
+      '<span style="font-size:12.5px;color:#a89f94">Prochain réveil&nbsp;<b style="color:#ece7e1;font-weight:600">'+esc(d.wake)+'</b>&nbsp;<span style="color:#6f665b">· '+esc(d.wakeAgent)+'</span></span>'+
+      (d.gateShut?'<span title="Un cron ne se déclenche que si une session Claude Code est ouverte. Les runs manqués sont rattrapés une fois au réveil." style="font-size:10.5px;font-weight:600;letter-spacing:.4px;color:#d9a441;background:rgba(217,164,65,.12);border:1px solid rgba(217,164,65,.3);padding:3px 8px;border-radius:6px">GATE FERMÉE — NE SE DÉCLENCHERA PAS</span>':'')+
+      '<button data-act="daemon" style="margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:transparent;border:1px solid #3a2f22;color:#d7cfc4;font-size:12.5px;font-weight:500;padding:6px 13px;border-radius:8px;cursor:pointer">'+d.btn+'</button>'+
+    '</div>';
+  }
+
+  function queueHTML(a){
+    var liveIds = state.queues[state.sel]||[];
+    var items = a.queue.filter(function(q){ return liveIds.indexOf(q.id)!==-1; });
+    var count = items.length;
+    var badge = count>0 ? '<span style="min-width:21px;height:21px;padding:0 7px;display:inline-flex;align-items:center;justify-content:center;border-radius:11px;background:'+ACCENT+';color:#1a120d;font-size:11.5px;font-weight:700">'+count+'</span>' : '';
+    var head = ''+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px">'+
+        '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:15px;font-weight:700;color:#ece7e1">À valider</span>'+badge+'</div>'+
+        '<div style="display:flex;align-items:center;gap:12px">'+
+          (a.approvedCount>0 ? '<button data-act="apply" style="background:#4bb98a;border:none;color:#0f231a;font-size:11.5px;font-weight:700;padding:5px 11px;border-radius:8px;cursor:pointer">Appliquer '+a.approvedCount+' validé'+(a.approvedCount>1?'s':'')+'</button>' : '')+
+          (count>0 ? '<button data-act="validate-all" style="background:transparent;border:none;color:'+ACCENT+';font-size:12px;font-weight:600;cursor:pointer;padding:0">Tout valider</button>' : '')+
+          '<span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;letter-spacing:.5px;color:#6b9bd1"><span style="width:6px;height:6px;border-radius:50%;background:#6b9bd1"></span>PROPOSE · N\'ÉCRIT PAS</span>'+
+        '</div>'+
+      '</div>';
+
+    var body;
+    if(count>0){
+      body = '<div style="display:flex;flex-direction:column;gap:8px">'+items.map(function(q){
+        var iconBg=q.kind==="money"?"rgba(75,185,138,.13)":"#2a221a", iconColor=q.kind==="money"?"#4bb98a":"#b8afa3", amtColor=q.kind==="money"?"#4bb98a":"#8a8175";
+        var needs=q.needs||[];
+        var blocked=needs.some(function(n){ return n.value===null||n.value===undefined||n.value===""; });
+        var hasLegacy=needs.some(function(n){ return !n.path; });
+        var needsHtml=needs.length?('<div style="margin-top:8px;display:flex;flex-direction:column;gap:7px">'+needs.map(function(n){
+          var q1='<div style="font-size:11px;color:#d9a441;display:flex;align-items:flex-start;gap:5px;line-height:1.4"><span>⚠</span><span>'+esc(n.question)+'</span></div>';
+          if(!n.path) return q1;
+          var inpStyle="background:#120e0a;border:1px solid #3a2f22;border-radius:7px;padding:5px 8px;color:#ece7e1;font-family:inherit;font-size:12px;outline:none;max-width:320px";
+          var ctrl;
+          if(n.options&&n.options.length){
+            ctrl='<select data-need-path="'+esc(n.path)+'" style="'+inpStyle+'"><option value="">— choisir '+esc(n.field||"une valeur")+' —</option>'+
+              n.options.map(function(o){ return '<option value="'+esc(o)+'"'+(n.value===o?' selected':'')+'>'+esc(o)+'</option>'; }).join("")+'</select>';
+          } else {
+            ctrl='<input data-need-path="'+esc(n.path)+'" value="'+esc(n.value==null?"":n.value)+'" placeholder="'+esc(n.field||"valeur")+'" style="'+inpStyle+'">';
+          }
+          return q1+'<div>'+ctrl+'</div>';
+        }).join("")+'</div>'):'';
+        return ''+
+        '<div data-qrow="'+q.id+'"'+(hasLegacy?' data-legacy="1"':'')+' style="display:flex;align-items:'+(needsHtml?"flex-start":"center")+';gap:13px;padding:12px 13px;border:1px solid #2b2319;border-radius:10px;background:#191410">'+
+          '<span style="flex:none;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;background:'+iconBg+';color:'+iconColor+'">'+esc(q.icon)+'</span>'+
+          '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#ece7e1">'+esc(q.title)+'</div><div style="font-size:11.5px;color:#8a8175;margin-top:2px">'+esc(q.sub)+'</div>'+needsHtml+'</div>'+
+          '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;font-weight:600;color:'+amtColor+';white-space:nowrap">'+esc(q.amount)+'</span>'+
+          '<div style="display:flex;flex-direction:column;gap:6px;flex:none;align-items:stretch">'+
+            '<div style="display:flex;gap:7px">'+
+              '<button data-act="q-ok" data-id="'+q.id+'"'+(blocked?' data-blocked="1"':'')+' title="'+(blocked?"Précise les champs manquants pour valider":"")+'" style="background:#4bb98a;color:#0f231a;border:none;font-size:12px;font-weight:600;padding:6px 13px;border-radius:8px;cursor:'+(blocked?"not-allowed":"pointer")+';opacity:'+(blocked?".45":"1")+'">Valider</button>'+
+              '<button data-act="q-no" data-id="'+q.id+'" style="background:transparent;color:#b8afa3;border:1px solid #3a2f22;font-size:12px;font-weight:500;padding:6px 12px;border-radius:8px;cursor:pointer">Rejeter</button>'+
+            '</div>'+
+            (blocked?'<button data-act="q-force" data-id="'+q.id+'" style="background:transparent;border:none;color:#6f665b;font-size:10px;text-decoration:underline;cursor:pointer;padding:0">valider quand même</button>':'')+
+          '</div>'+
+        '</div>';
+      }).join("")+'</div>';
+    } else {
+      body = '<div style="display:flex;align-items:center;gap:11px;padding:14px 4px;color:#6f665b"><span style="width:30px;height:30px;border-radius:50%;background:rgba(75,185,138,.12);color:#4bb98a;display:flex;align-items:center;justify-content:center;font-size:15px">✓</span><span style="font-size:12.5px">Rien à valider — tout est à jour.</span></div>';
+    }
+
+    return '<section style="background:linear-gradient(180deg,#231c14,#1e1813);border:1px solid #3a2f22;border-radius:13px;padding:'+PAD+'px;margin-top:16px;box-shadow:0 0 0 1px rgba(217,119,87,.06)">'+head+body+'</section>';
+  }
+
+  function configGridHTML(a){
+    var toolsChips = a.scope.tools.map(function(t){
+      var isMcp=String(t.name).indexOf("mcp__")===0;
+      var label=isMcp?String(t.name).replace(/^mcp__/,"").replace(/^claude_ai_/,"").replace(/_/g," "):t.name;
+      var tag=isMcp?"MCP":(t.perm||"intégré");
+      return '<span title="'+esc(t.name)+'" style="display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;background:#2a221a;border:1px solid #3a2f22"><span style="font-size:12px;font-weight:600;color:#ece7e1">'+esc(label)+'</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#8a8175">'+esc(tag)+'</span></span>';
+    }).join("");
+
+    // État de continuité RÉEL (ce n'était qu'un faux réglage : des onglets qui ne
+    // configuraient rien et se réinitialisaient au rafraîchissement).
+    var memMode = a.canResume
+      ? { label:"Frais + curseur — reprise possible", desc:"Chaque run cron repart propre (claude -p) et ne récupère que le curseur. Le bouton « Continuer » reprend la dernière session via --resume." }
+      : { label:"Frais + curseur", desc:"Chaque run cron repart propre (claude -p) et ne récupère que le curseur portable. Aucune session récupérable pour l'instant." };
+
+    var missionLines = a.mission.map(function(line){
+      return '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;line-height:1.65;color:#c4bbaf;white-space:pre-wrap">'+esc(line)+'</div>';
+    }).join("");
+
+    var kv=function(k,v,color,mono){ return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #241d15"><span style="font-size:12.5px;color:#a89f94">'+k+'</span><span style="'+(mono?"font-family:\'IBM Plex Mono\',monospace;":"")+'font-size:12px;color:'+(color||"#d7cfc4")+'">'+esc(v)+'</span></div>'; };
+    var kvLast=function(k,v,color,mono){ return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="font-size:12.5px;color:#a89f94">'+k+'</span><span style="'+(mono?"font-family:\'IBM Plex Mono\',monospace;":"")+'font-size:12px;color:'+(color||"#d7cfc4")+'">'+esc(v)+'</span></div>'; };
+
+    return ''+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">'+
+
+      '<section style="background:#1e1813;border:1px solid #2b2319;border-radius:12px;padding:'+PAD+'px">'+
+        '<div style="font-size:10.5px;font-weight:600;letter-spacing:1.3px;color:#7d7468;margin-bottom:4px">DÉCLENCHEMENT</div>'+
+        '<div style="padding:8px 0;border-bottom:1px solid #241d15"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;color:#a89f94">Fréquence (cron)</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;padding:2px 8px;border-radius:6px;background:#120e0a;color:#e8bfa8">'+esc(a.trigger.freq)+'</span></div><div style="font-size:11px;color:#6f665b;margin-top:6px">↳ '+esc(cronText(a.trigger.freq))+'</div><div style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#5f574c;margin-top:6px;word-break:break-all">crontab: '+esc(a.trigger.src||"—")+'</div></div>'+
+        kv("Fuseau",a.trigger.tz,"#d7cfc4",true)+
+        kv("Cooldown",a.trigger.cooldown,"#d7cfc4",true)+
+        kvLast("Cap / jour",a.trigger.cap,"#d7cfc4",true)+
+      '</section>'+
+
+      '<section style="background:#1e1813;border:1px solid #2b2319;border-radius:12px;padding:'+PAD+'px">'+
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px"><span style="font-size:10.5px;font-weight:600;letter-spacing:1.3px;color:#7d7468">PÉRIMÈTRE &amp; GARDE-FOUS</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;color:#5f574c">MCP: ~/.claude.json</span></div>'+
+        kv("Dossier de travail",a.scope.dir,"#e8bfa8",true)+
+        kv("Mode",a.scope.mode,"#d7cfc4",true)+
+        '<div style="padding:9px 0 2px"><span style="font-size:12.5px;color:#a89f94">Outils autorisés <span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#6f665b">--allowedTools</span></span><div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:9px">'+toolsChips+'</div></div>'+
+      '</section>'+
+
+      '<section style="background:#1e1813;border:1px solid #2b2319;border-radius:12px;padding:'+PAD+'px">'+
+        '<div style="font-size:10.5px;font-weight:600;letter-spacing:1.3px;color:#7d7468;margin-bottom:11px">MÉMOIRE &amp; CONTINUITÉ</div>'+
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:11px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.6px;color:#4bb98a"><span style="width:6px;height:6px;border-radius:50%;background:#4bb98a"></span>SESSION</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;padding:2px 8px;border-radius:6px;background:#120e0a;color:#d7cfc4">'+esc(a.memory.session)+'</span><span style="font-size:11px;color:#8a8175">'+esc(a.memory.recover)+'</span></div>'+
+        '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#5f574c;margin:-4px 0 11px;word-break:break-all">'+esc(a.memory.sessionFile)+'</div>'+
+        '<div style="display:flex;align-items:center;gap:7px;padding:6px 9px;background:#120e0a;border:1px solid #241d15;border-radius:8px;margin-bottom:6px"><span style="font-size:10px;font-weight:700;letter-spacing:.5px;color:'+ACCENT+'">MODE</span><span style="font-size:11.5px;font-weight:600;color:#ece7e1">'+esc(memMode.label)+'</span></div>'+
+        '<div style="font-size:11px;color:#8a8175;padding:5px 2px 10px;border-bottom:1px solid #241d15;line-height:1.5">'+esc(memMode.desc)+'</div>'+
+        kv("Guidage",a.memory.guide,"#e8bfa8",true)+
+        kv("Faits appris",a.memory.facts,"#e8bfa8",true)+
+        kv("Bornage contexte",a.memory.turns,"#d7cfc4",true)+
+        kvLast("Modèle",a.memory.budget,"#d7cfc4",true)+
+      '</section>'+
+
+      '<section style="background:#1e1813;border:1px solid #2b2319;border-radius:12px;padding:'+PAD+'px;display:flex;flex-direction:column">'+
+        '<div style="font-size:10.5px;font-weight:600;letter-spacing:1.3px;color:#7d7468;margin-bottom:11px">MISSION (SOP)</div>'+
+        '<div class="scr" style="flex:1;max-height:232px;overflow-y:auto;background:#120e0a;border:1px solid #241d15;border-radius:10px;padding:13px 14px">'+missionLines+'</div>'+
+      '</section>'+
+
+    '</div>';
+  }
+
+  function historyHTML(a){
+    var maxMails=Math.max.apply(null,[1].concat(a.history.map(function(h){ return h.mails; })));
+    var spark=a.history.slice().reverse().map(function(h){
+      var hgt=(8+Math.round((h.mails/maxMails)*24))+"px";
+      return '<span style="width:8px;border-radius:2px;background:'+ACCENT+';opacity:.85;height:'+hgt+'"></span>';
+    }).join("");
+    var rows = a.history.length ? a.history.map(function(h){
+      if(h.text!==undefined){
+        var ec=h.err>0?"#d9534f":"#c4bbaf";
+        return '<div style="display:flex;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid #241d15"><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#8a8175;width:92px;flex:none">'+esc(h.date)+'</span><span style="font-size:12px;color:'+ec+'">'+esc(h.text)+'</span></div>';
+      }
+      var propColor=h.props>0?ACCENT:"#6f665b", errColor=h.err>0?"#d9534f":"#4bb98a";
+      return '<div style="display:flex;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid #241d15"><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#8a8175;width:92px;flex:none">'+esc(h.date)+'</span><span style="font-size:12px;color:#c4bbaf"><b style="color:#ece7e1;font-weight:600">'+h.mails+'</b> mails triés · <b style="color:'+propColor+';font-weight:600">'+h.props+'</b> proposition(s) · <b style="color:'+errColor+';font-weight:600">'+h.err+'</b> erreur</span></div>';
+    }).join("") : '<div style="padding:9px 0;font-size:12px;color:#6f665b">Aucun run enregistré.</div>';
+    return '<section style="background:#1e1813;border:1px solid #2b2319;border-radius:12px;padding:'+PAD+'px;margin-top:12px">'+
+      '<div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:12px"><span style="font-size:10.5px;font-weight:600;letter-spacing:1.3px;color:#7d7468">HISTORIQUE DES RUNS</span><div style="display:flex;align-items:flex-end;gap:4px;height:32px">'+spark+'</div></div>'+
+      rows+
+    '</section>';
+  }
+
+  function mainHTML(){
+    var a=AGENTS[state.sel], st=statusOf(a), on=state.enabled[state.sel];
+    var canResume = DEMO ? true : !!a.canResume;
+    var header = ''+
+    '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap">'+
+      '<div>'+
+        '<div style="display:flex;align-items:center;gap:10px">'+
+          '<h1 style="margin:0;font-size:21px;font-weight:700;letter-spacing:-.2px">'+esc(a.name)+'</h1>'+
+          '<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;letter-spacing:.4px;color:'+st.dot+';padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.04)"><span style="width:7px;height:7px;border-radius:50%;background:'+st.dot+'"></span>'+st.label+'</span>'+
+        '</div>'+
+        '<div style="margin-top:5px;font-size:12.5px;color:#8a8175">'+esc(a.desc)+' · prochain run <b style="color:#a89f94;font-weight:600">'+esc(st.next)+'</b> · dernier <b style="color:#4bb98a;font-weight:600">OK</b></div>'+
+      '</div>'+
+      '<div style="display:flex;align-items:center;gap:8px">'+
+        '<button data-act="run" style="display:flex;align-items:center;gap:6px;background:'+ACCENT+';color:#1a120d;border:none;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer">▶ Lancer</button>'+
+        '<button data-act="continue"'+(canResume?'':' title="Aucune session récupérable"')+' style="display:flex;align-items:center;gap:5px;background:#221b14;color:#d7cfc4;border:1px solid #3a2f22;font-size:12.5px;font-weight:500;padding:8px 12px;border-radius:8px;cursor:'+(canResume?'pointer':'not-allowed')+';opacity:'+(canResume?'1':'.45')+'">↻ Continuer</button>'+
+        '<button data-act="transcript" style="display:flex;align-items:center;gap:5px;background:#221b14;color:#d7cfc4;border:1px solid #3a2f22;font-size:12.5px;font-weight:500;padding:8px 12px;border-radius:8px;cursor:pointer">⧉ Transcript</button>'+
+        '<button data-act="toggle-active" style="display:flex;align-items:center;gap:7px;background:transparent;border:none;cursor:pointer;padding:4px 2px 4px 4px"><span style="width:36px;height:21px;border-radius:12px;background:'+(on?"#4bb98a":"#3a2f22")+';position:relative;display:inline-block"><span style="position:absolute;top:2px;left:'+(on?"17px":"2px")+';width:17px;height:17px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.4)"></span></span></button>'+
+      '</div>'+
+    '</div>';
+
+    return ''+
+    '<main class="scr" style="flex:1;overflow-y:auto;padding:20px 26px 48px">'+
+      '<div style="max-width:1040px;margin:0 auto">'+
+        header+
+        queueHTML(a)+
+        configGridHTML(a)+
+        historyHTML(a)+
+        '<p style="text-align:center;font-size:11px;color:#5f574c;margin:22px 0 0;line-height:1.6">Le pilote orchestre ; les agents proposent dans <span style="font-family:\'IBM Plex Mono\',monospace">.wikichat/</span> — aucune écriture réelle dans Gmail ou Grist sans ta validation.</p>'+
+      '</div>'+
+    '</main>';
+  }
+
+  function topbarHTML(){
+    return ''+
+    '<header style="flex:none;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid #2b2319;background:#1b1611">'+
+      '<div style="display:flex;align-items:center;gap:11px">'+
+        '<div style="width:24px;height:24px;border-radius:7px;background:'+ACCENT+';display:flex;align-items:center;justify-content:center;color:#1a120d;font-weight:700;font-size:13px">P</div>'+
+        '<span style="font-size:14px;font-weight:600;letter-spacing:.1px">Pilote</span>'+
+        '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#6f665b">~/dev · macbook</span>'+
+      '</div>'+
+      '<div style="display:flex;align-items:center;gap:14px">'+
+        (DEMO?'<span title="Aucun agent planifié réel — données de démonstration" style="font-size:10px;font-weight:600;letter-spacing:.5px;color:#d9a441;background:rgba(217,164,65,.12);border:1px solid rgba(217,164,65,.3);padding:3px 8px;border-radius:6px">DÉMO</span>':'')+
+        '<span style="font-size:11.5px;color:#6f665b">Palette&nbsp;<kbd>⌘</kbd><kbd>K</kbd></span>'+
+        '<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid #2b2319;border-radius:8px;background:#120e0a"><span style="width:7px;height:7px;border-radius:50%;background:#4bb98a;box-shadow:0 0 0 3px rgba(75,185,138,.16)"></span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#b8afa3">:3777</span></div>'+
+      '</div>'+
+    '</header>';
+  }
+
+  function renderApp(){
+    var app=document.getElementById("app");
+    app.style.cssText="min-height:100vh;height:100vh;display:flex;flex-direction:column;background:#16120e;color:#ece7e1;overflow:hidden";
+    app.innerHTML = topbarHTML()+daemonHTML()+'<div style="flex:1;display:flex;min-height:0">'+sidebarHTML()+mainHTML()+'</div>';
+  }
+
+  // ── Modal ─────────────────────────────────────────────────────────────
+  function renderToolChips(f){
+    var builtins = (TOOLS && TOOLS.builtins) || ["Bash","Read","Write","Edit","Glob","Grep","WebFetch","WebSearch"];
+    var mcp = (TOOLS && TOOLS.mcp) || [];
+    function chip(token,label,perm,dotColor){
+      var on=f.tools.indexOf(token)!==-1;
+      return '<button data-tool="'+esc(token)+'" title="'+esc(token)+'" style="display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border-radius:8px;border:1px solid '+(on?ACCENT:"#3a2f22")+';background:'+(on?"rgba(217,119,87,.1)":"#221b14")+';cursor:pointer">'+
+        '<span style="width:14px;height:14px;border-radius:4px;border:1px solid '+(on?ACCENT:"#4a3d2d")+';background:'+(on?ACCENT:"transparent")+';color:#1a120d;display:flex;align-items:center;justify-content:center;font-size:10px">'+(on?"✓":"")+'</span>'+
+        (dotColor?'<span style="width:6px;height:6px;border-radius:50%;background:'+dotColor+'"></span>':'')+
+        '<span style="font-size:12.5px;font-weight:600;color:'+(on?"#ece7e1":"#b8afa3")+'">'+esc(label)+'</span>'+
+        '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#8a8175">'+esc(perm)+'</span>'+
+      '</button>';
+    }
+    var html = builtins.map(function(t){ return chip(t,t,"intégré",""); }).join("");
+    if(mcp.length){
+      html += '<span style="flex-basis:100%;height:0"></span>';
+      html += mcp.map(function(s){
+        var dot = s.status==="connected"?"#4bb98a":(s.status==="auth"?"#d9a441":"#6b6258");
+        var label = s.name.replace(/^claude\.ai\s+/i,"");
+        return chip(s.allow, label, s.status==="auth"?"auth requise":"MCP", dot);
+      }).join("");
+    }
+    return html;
+  }
+
+  function modalHTML(){
+    var f=state.form;
+    var presets=[
+      { label:"Chaque jour 8:00", v:"0 8 * * *" },
+      { label:"Toutes les 6 h", v:"0 */6 * * *" },
+      { label:"Lun–ven 9:00", v:"0 9 * * 1-5" },
+      { label:"Vendredi 17:00", v:"0 17 * * 5" }
+    ].map(function(p){
+      var on=f.freq===p.v;
+      return '<button class="preset" data-v="'+p.v+'" style="padding:6px 11px;border-radius:7px;border:1px solid '+(on?ACCENT:"#3a2f22")+';background:'+(on?"rgba(217,119,87,.14)":"#221b14")+';color:'+(on?"#eb9070":"#b8afa3")+';font-size:12px;font-weight:500;cursor:pointer">'+p.label+'</button>';
+    }).join("");
+
+    var models=[{l:"Haiku 4.5",v:"haiku"},{l:"Sonnet 5",v:"sonnet"},{l:"Opus 4.8",v:"opus"}].map(function(m){
+      var on=f.model===m.v;
+      return '<button data-model="'+m.v+'" style="flex:1;padding:6px 4px;border-radius:6px;border:none;cursor:pointer;font-family:\'IBM Plex Mono\',monospace;font-size:11px;font-weight:600;background:'+(on?ACCENT:"transparent")+';color:'+(on?"#1a120d":"#a89f94")+'">'+m.l+'</button>';
+    }).join("");
+
+    var tools=renderToolChips(f);
+
+    var freqOk=!!cronText(f.freq);
+    var inputStyle="background:#120e0a;border:1px solid #3a2f22;border-radius:8px;padding:9px 11px;color:#ece7e1;font-family:inherit;font-size:13px;outline:none";
+    var monoInput="background:#120e0a;border:1px solid #3a2f22;border-radius:8px;padding:9px 11px;color:#e8bfa8;font-family:'IBM Plex Mono',monospace;font-size:12.5px;outline:none";
+
+    return ''+
+    '<div data-act="overlay" style="position:fixed;inset:0;background:rgba(12,9,6,.72);display:flex;align-items:flex-start;justify-content:center;padding:44px 20px;z-index:50;backdrop-filter:blur(2px)">'+
+      '<div class="scr" style="width:100%;max-width:560px;max-height:calc(100vh - 88px);overflow-y:auto;background:#1b1611;border:1px solid #3a2f22;border-radius:15px;box-shadow:0 24px 64px rgba(0,0,0,.55)">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid #2b2319;position:sticky;top:0;background:#1b1611;z-index:2"><div style="display:flex;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:8px;background:'+ACCENT+';color:#1a120d;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px">+</span><span style="font-size:15px;font-weight:700">Nouvel agent</span></div><button data-act="close" style="background:transparent;border:none;color:#8a8175;font-size:20px;line-height:1;cursor:pointer;padding:2px 6px">×</button></div>'+
+
+        '<div style="padding:20px;display:flex;flex-direction:column;gap:18px">'+
+
+          '<div style="background:rgba(217,119,87,.08);border:1px solid #3a2f22;border-radius:11px;padding:13px 14px">'+
+            '<div style="font-size:11px;font-weight:600;letter-spacing:.6px;color:'+ACCENT+';margin-bottom:8px">✦ ASSISTANT — DÉCRIS TON AGENT</div>'+
+            '<textarea id="f-intent" placeholder="Ex : surveille mes factures fournisseurs dans Gmail et prépare-les dans mon Grist chaque matin" style="width:100%;min-height:58px;resize:vertical;line-height:1.5;background:#120e0a;border:1px solid #3a2f22;border-radius:8px;padding:9px 11px;color:#ece7e1;font-family:inherit;font-size:13px;outline:none">'+esc(state.form.intent||"")+'</textarea>'+
+            '<button data-act="architect" id="f-arch" style="margin-top:9px;width:100%;background:'+ACCENT+';color:#1a120d;border:none;font-size:12.5px;font-weight:700;padding:9px;border-radius:8px;cursor:pointer">Concevoir l\'agent</button>'+
+            '<div style="font-size:10.5px;color:#6f665b;margin-top:7px;line-height:1.5">L\'assistant remplit les champs ci-dessous. Tu relis et ajustes avant de créer.</div>'+
+          '</div>'+
+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'+
+            '<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">NOM</span><input id="f-name" value="'+esc(f.name)+'" placeholder="Agent Factures" style="'+inputStyle+'"></label>'+
+            '<div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">DOSSIER DE TRAVAIL</span><div style="display:flex;gap:6px"><input id="f-dir" value="'+esc(f.dir)+'" placeholder="~/Factures" style="flex:1;min-width:0;'+monoInput+'"><button data-act="browse" style="flex:none;background:#221b14;border:1px solid #3a2f22;color:#d7cfc4;font-size:12px;font-weight:500;padding:0 11px;border-radius:8px;cursor:pointer">Parcourir…</button></div></div>'+
+          '</div>'+
+
+          '<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">DESCRIPTION</span><input id="f-desc" value="'+esc(f.desc)+'" placeholder="Ce que fait l\'agent, en une ligne" style="background:#120e0a;border:1px solid #3a2f22;border-radius:8px;padding:9px 11px;color:#d7cfc4;font-family:inherit;font-size:13px;outline:none"></label>'+
+
+          '<div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">FRÉQUENCE (CRON)</span><div style="display:flex;flex-wrap:wrap;gap:6px">'+presets+'</div><input id="f-freq" value="'+esc(f.freq)+'" placeholder="0 8 * * *" style="'+monoInput.replace("12.5px","13px")+'"><div id="f-freqline" style="display:flex;align-items:center;gap:8px;font-size:12px;color:'+(freqOk?"#8a8175":"#d9534f")+'"><span>↳</span><span id="f-freqhuman">'+esc(freqOk?cronText(f.freq):"Format cron invalide (5 champs attendus)")+'</span></div></div>'+
+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'+
+            '<div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">MODÈLE</span><div style="display:flex;gap:5px;padding:4px;background:#120e0a;border-radius:8px;border:1px solid #241d15">'+models+'</div></div>'+
+            '<div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">MODE</span><div style="display:flex;align-items:center;gap:8px;background:#120e0a;border:1px solid #241d15;border-radius:8px;padding:9px 11px"><span style="font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#d7cfc4">print (-p)</span><span style="font-size:11px;color:#6f665b">headless · via cron</span></div></div>'+
+          '</div>'+
+
+          '<div style="display:flex;flex-direction:column;gap:8px"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">OUTILS AUTORISÉS <span style="font-family:\'IBM Plex Mono\',monospace;font-weight:400;color:#6f665b">--allowedTools</span></span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;color:#5f574c">détectés via claude mcp list</span></div><div style="display:flex;flex-wrap:wrap;gap:7px">'+tools+'</div></div>'+
+
+          '<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#8a8175">MISSION (SOP)</span><textarea id="f-mission" placeholder="Étapes : lire le curseur, traiter, proposer dans .wikichat/, ne rien écrire sans validation…" style="min-height:96px;resize:vertical;line-height:1.5;background:#120e0a;border:1px solid #3a2f22;border-radius:8px;padding:9px 11px;color:#c4bbaf;font-family:\'IBM Plex Mono\',monospace;font-size:12px;outline:none">'+esc(f.mission||"")+'</textarea></label>'+
+
+          '<div style="background:#120e0a;border:1px solid #241d15;border-radius:9px;padding:12px 13px"><div style="font-size:10px;font-weight:600;letter-spacing:.8px;color:#6f665b;margin-bottom:7px">COMMANDE GÉNÉRÉE</div><code id="f-cmd" style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;line-height:1.6;color:#c4bbaf;word-break:break-all">'+esc(buildCmd(f))+'</code></div>'+
+
+        '</div>'+
+
+        '<div style="display:flex;align-items:center;justify-content:flex-end;gap:9px;padding:16px 20px;border-top:1px solid #2b2319;position:sticky;bottom:0;background:#1b1611"><button data-act="close" style="background:transparent;border:1px solid #3a2f22;color:#b8afa3;font-size:13px;font-weight:500;padding:9px 16px;border-radius:9px;cursor:pointer">Annuler</button><button data-act="create" id="f-create" style="background:'+ACCENT+';color:#1a120d;border:none;font-size:13px;font-weight:600;padding:9px 18px;border-radius:9px;cursor:pointer;opacity:'+(f.name.trim()?"1":".45")+'">Créer l\'agent</button></div>'+
+      '</div>'+
+    '</div>';
+  }
+
+  function renderModal(){
+    var host=document.getElementById("modalHost");
+    if(!state.showNew){ host.innerHTML=""; return; }
+    host.innerHTML=modalHTML();
+    wireModal();
+  }
+
+  function patchModalDerived(){
+    var f=state.form;
+    var cmd=document.getElementById("f-cmd"); if(cmd) cmd.textContent=buildCmd(f);
+    var ok=!!cronText(f.freq);
+    var fh=document.getElementById("f-freqhuman"); if(fh) fh.textContent=ok?cronText(f.freq):"Format cron invalide (5 champs attendus)";
+    var fl=document.getElementById("f-freqline"); if(fl) fl.style.color=ok?"#8a8175":"#d9534f";
+    var cr=document.getElementById("f-create"); if(cr) cr.style.opacity=f.name.trim()?"1":".45";
+    Array.prototype.forEach.call(document.querySelectorAll(".preset"),function(b){
+      var on=b.getAttribute("data-v")===f.freq;
+      b.style.border="1px solid "+(on?ACCENT:"#3a2f22");
+      b.style.background=on?"rgba(217,119,87,.14)":"#221b14";
+      b.style.color=on?"#eb9070":"#b8afa3";
+    });
+  }
+
+  function wireModal(){
+    var host=document.getElementById("modalHost");
+    host.querySelector('[data-act="overlay"]').addEventListener("click",function(e){ if(e.target===this) closeModal(); });
+    Array.prototype.forEach.call(host.querySelectorAll('[data-act="close"]'),function(b){ b.addEventListener("click",closeModal); });
+    host.querySelector('[data-act="browse"]').addEventListener("click",function(){ state.form.dir="~/Factures"; renderModal(); });
+    host.querySelector('[data-act="create"]').addEventListener("click",createAgent);
+    Array.prototype.forEach.call(host.querySelectorAll(".preset"),function(b){ b.addEventListener("click",function(){ state.form.freq=b.getAttribute("data-v"); var fi=document.getElementById("f-freq"); if(fi) fi.value=state.form.freq; patchModalDerived(); }); });
+    Array.prototype.forEach.call(host.querySelectorAll("[data-model]"),function(b){ b.addEventListener("click",function(){ state.form.model=b.getAttribute("data-model"); renderModal(); }); });
+    Array.prototype.forEach.call(host.querySelectorAll("[data-tool]"),function(b){ b.addEventListener("click",function(){ var n=b.getAttribute("data-tool"); var i=state.form.tools.indexOf(n); if(i===-1) state.form.tools.push(n); else state.form.tools.splice(i,1); renderModal(); }); });
+
+    bindInput("f-name","name"); bindInput("f-desc","desc"); bindInput("f-dir","dir"); bindInput("f-freq","freq");
+    bindInput("f-mission","mission"); bindInput("f-intent","intent");
+    var arch=host.querySelector('[data-act="architect"]'); if(arch) arch.addEventListener("click", runArchitect);
+  }
+
+  function runArchitect(){
+    var el=document.getElementById("f-intent");
+    var intent=((el&&el.value)||state.form.intent||"").trim();
+    if(!intent) return;
+    state.form.intent=intent;
+    var btn=document.getElementById("f-arch");
+    if(btn){ btn.textContent="Conception en cours…"; btn.style.opacity="0.7"; btn.disabled=true; }
+    apiJSON("/pilote/api/architect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({intent:intent})})
+      .then(function(r){
+        if(r&&r.ok&&r.spec){
+          var sp=r.spec;
+          state.form={ name:sp.name||"", desc:sp.desc||"", dir:sp.dir||"", freq:sp.freq||"0 8 * * *", model:sp.model||"sonnet", tools:(sp.tools&&sp.tools.length?sp.tools:["Bash"]), mission:sp.mission||"", intent:intent };
+          renderModal();
+          toast("Agent conçu — relis et ajuste avant de créer","ok");
+        } else {
+          if(btn){ btn.textContent="Concevoir l'agent"; btn.style.opacity="1"; btn.disabled=false; }
+          toast("L'assistant n'a pas pu concevoir l'agent"+((r&&r.error)?" : "+r.error:""),"err");
+        }
+      })
+      .catch(function(){ if(btn){ btn.textContent="Concevoir l'agent"; btn.style.opacity="1"; btn.disabled=false; } toast("Échec de l'assistant (serveur requis)","err"); });
+  }
+  function bindInput(id,key){ var el=document.getElementById(id); if(el) el.addEventListener("input",function(){ state.form[key]=el.value; patchModalDerived(); }); }
+
+  function closeModal(){ state.showNew=false; renderModal(); }
+
+  // Visionneuse de transcript : lit la dernière session de l'agent et l'affiche.
+  function showTranscript(){
+    if(!isReal()){ toast("Transcript disponible sur un agent réel","info"); return; }
+    var tt=toast("Lecture du transcript…","pending");
+    apiJSON("/pilote/api/agent/"+state.sel+"/transcript").then(function(r){
+      tt.close();
+      if(!r||!r.ok){ toast("Transcript indisponible","bad"); return; }
+      if(!r.turns||!r.turns.length){ toast(r.note||"Aucun transcript pour cet agent","info"); return; }
+      var host=document.getElementById("modalHost");
+      host.innerHTML='<div data-act="tr-close-bg" style="position:fixed;inset:0;background:rgba(12,9,6,.72);display:flex;align-items:flex-start;justify-content:center;padding:44px 20px;z-index:50;backdrop-filter:blur(2px)">'+
+        '<div class="scr" style="width:100%;max-width:720px;max-height:calc(100vh - 88px);overflow-y:auto;background:#1b1611;border:1px solid #3a2f22;border-radius:15px;box-shadow:0 24px 64px rgba(0,0,0,.55)">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #2b2319;position:sticky;top:0;background:#1b1611">'+
+            '<div><div style="font-size:15px;font-weight:700">Transcript — '+esc(AGENTS[state.sel].name)+'</div>'+
+            '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:#6f665b;margin-top:3px">'+esc(r.sessionId||"")+'</div></div>'+
+            '<button data-act="tr-close" style="background:transparent;border:none;color:#8a8175;font-size:20px;line-height:1;cursor:pointer;padding:2px 6px">×</button>'+
+          '</div>'+
+          '<div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">'+
+            r.turns.map(function(x){
+              var isU=x.role==="user";
+              return '<div><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:'+(isU?"#6b9bd1":ACCENT)+';margin-bottom:4px">'+(isU?"UTILISATEUR / SYSTÈME":"AGENT")+'</div>'+
+                '<div style="white-space:pre-wrap;font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;line-height:1.55;color:#c4bbaf;background:#120e0a;border:1px solid #241d15;border-radius:8px;padding:9px 11px">'+esc(x.text)+'</div></div>';
+            }).join("")+
+          '</div>'+
+        '</div></div>';
+      host.querySelector('[data-act="tr-close-bg"]').addEventListener("click",function(e){ if(e.target===this) host.innerHTML=""; });
+      host.querySelector('[data-act="tr-close"]').addEventListener("click",function(){ host.innerHTML=""; });
+    }).catch(function(){ tt.close(); toast("Transcript indisponible","bad"); });
+  }
+
+  function createAgent(){
+    var f=state.form; if(!f.name.trim()) return;
+    if(SERVED){
+      var nm=f.name.trim();
+      apiJSON("/pilote/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(f)})
+        .then(function(r){ state.showNew=false; if(r&&r.id) state.sel=r.id; renderModal(); return loadData(); })
+        .then(function(){ renderApp(); toast("Agent « "+nm+" » créé — clique « Lancer » pour un premier run","ok",{ms:5000}); })
+        .catch(function(){ toast("Échec de création de l'agent (voir console serveur)","err"); });
+      return;
+    }
+    var id="agent"+(state.seq+1);
+    var permMap={ Bash:"built-in", Read:"built-in", Gmail:"MCP · lecture", Grist:"MCP · écriture", GitHub:"MCP · lecture" };
+    AGENTS[id]={
+      id:id, name:f.name.trim(), desc:f.desc.trim()||"Agent local", base:"actif", next:"au prochain cron", cron:f.freq,
+      trigger:{ freq:f.freq, tz:"Europe/Paris", cooldown:"—", cap:"—", src:"" },
+      scope:{ dir:f.dir||"~/agent", mode:"print (-p)", tools:(f.tools.length?f.tools:["Bash"]).map(function(n){ return {name:n,perm:permMap[n]||"built-in"}; }) },
+      memory:{ session:"—", sessionFile:"aucun transcript", recover:"pas encore exécuté", guide:"CLAUDE.md", facts:"cursor.json", turns:"--max-turns 10", budget:f.model },
+      mission:["1. À définir dans MISSION.md du dossier."],
+      queue:[], history:[]
+    };
+    state.seq++; state.showNew=false; state.sel=id;
+    state.enabled[id]=true; state.queues[id]=[];
+    renderModal(); renderApp();
+  }
+
+  // ── Données réelles (repli gracieux sur la démo) ─────────────────────
+  function apiJSON(url,opts){ return fetch(url,opts).then(function(r){ if(!r.ok) throw new Error("http "+r.status); return r.json(); }); }
+
+  // ── Retour utilisateur : toasts ──────────────────────────────────────
+  var _toastHost=null;
+  function toastHost(){ if(!_toastHost){ _toastHost=document.createElement("div"); _toastHost.id="toasts"; document.body.appendChild(_toastHost); } return _toastHost; }
+  function toast(msg, kind, opts){
+    opts=opts||{}; kind=kind||"info";
+    var el=document.createElement("div"); el.className="toast "+kind;
+    el.innerHTML=(kind==="pending"?'<span class="tspin"></span>':'')+'<span class="tmsg"></span><span class="tclose">×</span>';
+    el.querySelector(".tmsg").textContent=msg;
+    toastHost().appendChild(el);
+    var timer=null;
+    function remove(){ if(!el.parentNode) return; el.style.transition="opacity .2s"; el.style.opacity="0"; setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); },200); }
+    function schedule(ms){ if(timer) clearTimeout(timer); if(ms) timer=setTimeout(remove,ms); }
+    el.querySelector(".tclose").addEventListener("click",remove);
+    if(kind!=="pending") schedule(opts.ms||3800);
+    return { update:function(m,k){ k=k||"info"; el.className="toast "+k; var sp=el.querySelector(".tspin"); if(sp) sp.remove(); el.querySelector(".tmsg").textContent=m; schedule(opts.ms||3800); }, close:remove };
+  }
+  // Action serveur avec toast pending → ok/err + rechargement des données.
+  function action(url, opts, msgs){
+    var tt=toast(msgs.pending||"…","pending");
+    return apiJSON(url, opts||{method:"POST"}).then(function(r){
+      tt.update((typeof msgs.ok==="function"?msgs.ok(r):msgs.ok)||"Fait","ok");
+      return loadData().then(renderApp);
+    }).catch(function(err){ tt.update(msgs.err||"Échec de l'action","err"); throw err; });
+  }
+
+  function loadData(){
+    return apiJSON("/pilote/api/data").then(function(d){
+      SERVED=true;
+      // La pause est un état SERVEUR (crons réellement désarmés) — plus un état client
+      // qui « oubliait » au rafraîchissement en laissant croire que tout était suspendu.
+      if(d && d.daemon && typeof d.daemon.paused==="boolean") state.daemonOn=!d.daemon.paused;
+      if(d && typeof d.active==="boolean") state.gateOpen=d.active; // gate dormante réelle
+      if(d && d.agents && d.agents.length){
+        DEMO=false;
+        var obj={}, en={}, q={};
+        d.agents.forEach(function(a){ obj[a.id]=a; en[a.id]=a.enabled; q[a.id]=(a.queue||[]).map(function(x){ return x.id; }); });
+        AGENTS=obj; state.enabled=en; state.queues=q;
+        if(!obj[state.sel]) state.sel=d.agents[0].id;
+      }
+      return d;
+    }).catch(function(){ /* serveur absent / file:// → on garde la démo */ });
+  }
+
+  function isReal(){ var a=AGENTS[state.sel]; return !DEMO && a && a.real; }
+
+  // ── Delegated events on the app shell ────────────────────────────────
+  // Déverrouille « Valider » dès que tous les champs manquants sont renseignés,
+  // sans re-render (sinon la saisie en cours serait perdue).
+  function refreshRowGate(el){
+    var row=el.closest&&el.closest("[data-qrow]"); if(!row) return;
+    var ctrls=row.querySelectorAll("[data-need-path]");
+    var filled=Array.prototype.every.call(ctrls,function(x){ return x.value!==""&&x.value!=null; });
+    var blocked=!filled||row.getAttribute("data-legacy")==="1";
+    var ok=row.querySelector('[data-act="q-ok"]'); if(!ok) return;
+    if(blocked){ ok.setAttribute("data-blocked","1"); ok.style.opacity=".45"; ok.style.cursor="not-allowed"; }
+    else { ok.removeAttribute("data-blocked"); ok.style.opacity="1"; ok.style.cursor="pointer"; }
+  }
+  ["input","change"].forEach(function(ev){
+    document.getElementById("app").addEventListener(ev,function(e){
+      if(e.target&&e.target.getAttribute&&e.target.getAttribute("data-need-path")!=null) refreshRowGate(e.target);
+    });
+  });
+
+  document.getElementById("app").addEventListener("click",function(e){
+    var t=e.target.closest("[data-act]"); if(!t) return;
+    var act=t.getAttribute("data-act");
+    var a=AGENTS[state.sel];
+    if(act==="sel"){ state.sel=t.getAttribute("data-id"); renderApp(); }
+    else if(act==="new"){ state.showNew=true; state.form=blankForm(); renderModal(); }
+    else if(act==="transcript"){ showTranscript(); }
+    else if(act==="daemon"){
+      var pausing=state.daemonOn; // on veut mettre en pause si actuellement actif
+      if(SERVED){
+        action("/pilote/api/daemon",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paused:pausing})},
+          {pending:pausing?"Mise en pause…":"Réactivation…",ok:pausing?"Crons désarmés — les agents ne se déclencheront pas":"Crons réarmés"}).catch(function(){});
+      } else { state.daemonOn=!state.daemonOn; renderApp(); }
+    }
+    else if(act==="toggle-active"){
+      if(isReal()){ var willOn=!state.enabled[state.sel]; action("/pilote/api/agent/"+state.sel+"/toggle",{method:"POST"},{pending:"…",ok:willOn?"Agent activé":"Agent désactivé"}).catch(function(){}); }
+      else { state.enabled[state.sel]=!state.enabled[state.sel]; renderApp(); }
+    }
+    else if(act==="validate-all"){
+      if(isReal()){
+        var ids=(a&&a.queue?a.queue:[]).map(function(q){ return q.id; });
+        if(!ids.length) return;
+        var tt=toast("Validation de "+ids.length+" proposition(s)…","pending");
+        Promise.all(ids.map(function(id){ return apiJSON("/pilote/api/agent/"+state.sel+"/decide",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actionId:id,decision:"approve"})}).catch(function(){}); }))
+          .then(function(){ tt.update(ids.length+" proposition(s) validée(s)","ok"); return loadData().then(renderApp); });
+      } else { state.queues[state.sel]=[]; renderApp(); }
+    }
+    else if(act==="q-ok"||act==="q-no"||act==="q-force"){
+      var id=t.getAttribute("data-id");
+      if(act==="q-ok" && t.getAttribute("data-blocked")) return; // champs manquants : validation verrouillée
+      var approve=(act!=="q-no");
+      var forced=(act==="q-force");
+      var payload={ actionId:id, decision:approve?"approve":"reject" };
+      if(approve){
+        var row=t.closest("[data-qrow]");
+        if(row){
+          var res={};
+          Array.prototype.forEach.call(row.querySelectorAll("[data-need-path]"),function(el){
+            if(el.value!==""&&el.value!=null) res[el.getAttribute("data-need-path")]=el.value;
+          });
+          if(Object.keys(res).length) payload.resolved=res;
+        }
+        if(forced) payload.forced=true;
+      }
+      if(isReal()){
+        action("/pilote/api/agent/"+state.sel+"/decide",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)},{pending:approve?"Validation…":"Rejet…",ok:approve?"Validé — clique « Appliquer » pour exécuter":"Proposition rejetée"}).catch(function(){});
+      } else {
+        state.queues[state.sel]=(state.queues[state.sel]||[]).filter(function(x){ return x!==id; }); renderApp();
+      }
+    }
+    else if(act==="apply"){
+      if(isReal()){ t.textContent="Application…"; t.disabled=true; action("/pilote/api/agent/"+state.sel+"/apply",{method:"POST"},{pending:"Application en cours… (l'agent exécute les écritures validées)",ok:"Actions appliquées"}).catch(function(){}); }
+    }
+    else if(act==="run"){
+      if(isReal()){ t.disabled=true; action("/pilote/api/agent/"+state.sel+"/fire",{method:"POST"},{pending:"Lancement de « "+(a?a.name:"agent")+" »… (1-3 min)",ok:"Run terminé"}).catch(function(){}); }
+      else { toast("Démo — lancement simulé","info"); }
+    }
+    else if(act==="continue"){
+      if(isReal() && a && a.canResume){ t.disabled=true; action("/pilote/api/agent/"+state.sel+"/continue",{method:"POST"},{pending:"Reprise de la session…",ok:"Session reprise"}).catch(function(){}); }
+      else if(DEMO){ toast("Démo — reprise simulée","info"); }
+    }
+  });
+
+  renderApp();
+  loadData().then(function(){ renderApp(); });
+  apiJSON("/pilote/api/tools").then(function(t){ TOOLS=t; }).catch(function(){});
+})();
+</script>
+</body>
+</html>

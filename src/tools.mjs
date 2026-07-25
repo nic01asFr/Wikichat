@@ -11,8 +11,8 @@ import { spawn } from "child_process";
 
 import {
   state, pushMessage, sysMsg, getSessionByName, getSessionName,
-  dmChannelKey, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
-  getChannelCount,
+  dmChannelKey, isAgentInDMChannel, resolveAgentName, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
+  getChannelCount, inboxFor,
 } from "./state.mjs";
 import { scanForProjects } from "./scanner.mjs";
 import { loadRegistry, loadConfig, saveRegistry, mergeProjects } from "./registry.mjs";
@@ -21,7 +21,7 @@ import { notifyWaiters, registerWaiter } from "./notifier.mjs";
 import {
   saveSnapshot, loadSnapshot, saveProject, loadSpawnRegistry,
   upsertSpawnRegistry, getAgentStoragePath, writeAgentFile,
-  SESSION_STORE,
+  SESSION_STORE, saveIdentityBinding, getIdentityBinding,
 } from "./persistence.mjs";
 import { pushDashboardUpdate } from "./dashboard.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
@@ -29,9 +29,13 @@ import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./s
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
+import { triggerMemoryPublish } from "./memory-publish-hook.mjs";
 import { dispatch as dispatchIntent, readDispatchLog, recordOutcome } from "./dispatch.mjs";
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
+import { createIdea, updateIdea, listIdeas, getIdea, searchIdeas, ideaStats, deleteIdea } from "./ideas.mjs";
+import { auditProject, auditMany } from "./repo-audit.mjs";
+import { runHarmonizer, formatHarmonizerSummary } from "./harmonizer.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -44,6 +48,19 @@ function notify(channel, excludeId) {
   pushDashboardUpdate();
 }
 
+/** Render the coordination protocol of a message so the RECIPIENT can act on it.
+ * Without this, status/expects_reply/eta were stored on send but never shown on
+ * receive — the "fin de message" turn-taking convention was purely decorative. */
+function coordMarkers(msg) {
+  const m = [];
+  if (msg.status === "over") m.push("🔚 over → à toi");
+  else if (msg.status === "standby") m.push(`⏳ standby${msg.eta_seconds ? ` ~${msg.eta_seconds}s` : ""} → n'attends pas`);
+  else if (msg.status === "done") m.push("✅ done → rien à répondre");
+  if (msg.expects_reply) m.push("❓ réponse attendue");
+  if (msg.eta_seconds && msg.status !== "standby") m.push(`⏱️ ETA ${msg.eta_seconds}s`);
+  return m.length ? `\n     ⟨${m.join(" · ")}⟩` : "";
+}
+
 function formatMsgList(msgs) {
   const lines = msgs.map(msg => {
     const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
@@ -51,10 +68,66 @@ function formatMsgList(msgs) {
     const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
     const readers = state.reads.get(msg.id);
     const ack = readers?.size > 0 ? ` ✓${[...readers].join(",")}` : "";
-    return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${ack}`;
+    return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${ack}${coordMarkers(msg)}`;
   });
   const lastId = msgs.at(-1).id;
   return txt(`🔔 ${msgs.length} nouveau(x) message(s):\n\n${lines.join("\n\n")}\n\n🔖 Dernier: ${lastId.slice(0, 8)}`);
+}
+
+/**
+ * Resolve an agent's "home" — its project channel. An agent registered in a repo
+ * belongs to that project's room: that room is where teammates reach it (by
+ * @mention) and what it polls. This is the stable address the volatile display
+ * name never was. Resolution order: persisted __home_channel → the session's
+ * current_project → the reported cwd matched against the registry (else the
+ * cwd's basename). Returns a channel slug, or null if nothing locates a project.
+ */
+function homeChannelFor(name) {
+  if (!name) return null;
+  const persisted = recall(name, "__home_channel");
+  if (persisted) return persisted;
+  const found = getSessionByName(name);
+  const sess = found ? state.sessions.get(found.id) : null;
+  let proj = sess?.current_project || null;
+  if (!proj) {
+    const cwd = recall(name, "__cwd");
+    if (cwd) {
+      const baseName = path.basename(String(cwd).replace(/[\\/]+$/, ""));
+      try {
+        const norm = p => String(p).replace(/[\\/]+$/, "").toLowerCase();
+        const reg = loadRegistry();
+        const hit = reg.projects.find(p => p.path && norm(p.path) === norm(cwd));
+        proj = hit?.name || hit?.slug || baseName;
+      } catch { proj = baseName; }
+    }
+  }
+  if (!proj) return null;
+  const slug = "proj-" + String(proj).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return slug.length > 5 ? slug : null;
+}
+
+/**
+ * Ensure an agent's home project channel exists, list the agent as a member, and
+ * persist the home so future resolutions are O(1). Returns the slug or null.
+ */
+async function ensureHomeChannel(name) {
+  const slug = homeChannelFor(name);
+  if (!slug) return null;
+  const nameLc = String(name).toLowerCase();
+  let ch = state.channels.get(slug);
+  if (!ch) {
+    ch = { name: slug, description: `🏠 Maison projet — agents y vivent et s'y joignent par @mention`, createdBy: name, createdAt: new Date(), participants: [nameLc] };
+    state.channels.set(slug, ch);
+  } else {
+    if (!Array.isArray(ch.participants)) ch.participants = [];
+    if (!ch.participants.includes(nameLc)) ch.participants.push(nameLc);
+  }
+  remember(name, "__home_channel", slug);
+  const found = getSessionByName(name);
+  const sess = found ? state.sessions.get(found.id) : null;
+  if (sess) sess.home_channel = slug;
+  try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch { /* non-blocking */ }
+  return slug;
 }
 
 /**
@@ -103,9 +176,12 @@ function buildBriefing(sessionId, { since, mission } = {}) {
     return `  📁 ${p.name}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${tasks ? ` | 📋 ${tasks} tâche(s)` : ""}`;
   }).join("\n");
 
-  // Filter messages visible to this session
+  // Filter messages visible to this session.
+  // DM participants are stored by lowercased agent NAME (stable across reconnects),
+  // so we must compare against the name, not the volatile sessionId.
+  const myNameLc = getSessionName(sessionId).toLowerCase();
   let msgs = state.messages.filter(m =>
-    !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(sessionId)
+    !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(myNameLc)
   );
 
   // Apply time filter
@@ -188,20 +264,85 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   return txt(sections.join("\n\n"));
 }
 
-/** Resolve or create a DM channel, return channel key */
+/** Resolve or create a DM channel, return channel key + resolution info.
+ *
+ * The target name is normalised via resolveAgentName() — exact match, then
+ * session-XXX → real name, then unique prefix/substring — so a DM addressed to
+ * "@Bob" reaches an agent registered as "Bob-Dev" instead of vanishing onto a
+ * channel nobody reads. The SAME resolver runs on read_messages/poll_messages,
+ * so both sides compute the identical channel key. */
 function resolveDMChannel(sessionId, targetName) {
-  const target = getSessionByName(targetName);
-  if (!target) return { error: `Session "${targetName}" introuvable. Sessions: ${[...state.sessions.values()].map(s => s.name).join(", ")}` };
-  const key = dmChannelKey(sessionId, target.id);
+  const senderName = getSessionName(sessionId);
+  let resolution = resolveAgentName(targetName);
+  // A DM must never resolve to its own sender (can happen when the typed target
+  // is a substring of the sender's name, e.g. "@Box" while sending as "SenderBox").
+  // Treat that as a literal target instead — never silently self-DM.
+  if (resolution.matched && resolution.name.toLowerCase() === senderName.toLowerCase()) {
+    resolution = { name: targetName, matched: false, online: false };
+  }
+  const resolvedTarget = resolution.name;
+
+  // The DM channel is keyed by AGENT NAMES (stable across reconnections).
+  // Even if the target is currently offline, we can still create the DM
+  // channel — the target will see the message when they reconnect under
+  // the same name. This makes async DMs work correctly.
+  const key = dmChannelKey(senderName, resolvedTarget);
   if (!state.channels.has(key)) {
-    const senderName = getSessionName(sessionId);
     state.channels.set(key, {
-      name: key, description: `DM entre ${senderName} et ${targetName}`,
-      createdBy: "system", createdAt: new Date(),
-      isDM: true, participants: [sessionId, target.id],
+      name: key,
+      description: `DM entre ${senderName} et ${resolvedTarget}`,
+      createdBy: "system",
+      createdAt: new Date(),
+      isDM: true,
+      // Participants stored by NAME, not session-id, so reconnections preserve membership
+      participants: [senderName.toLowerCase(), resolvedTarget.toLowerCase()],
     });
   }
-  return { channel: key };
+  return {
+    channel: key,
+    resolvedTarget,
+    typedTarget: targetName,
+    matched: resolution.matched,
+    online: resolution.online,
+  };
+}
+
+/**
+ * Track the current agent's contribution to a project. Called passively from
+ * claim_task / release_task / add_project_note / close_project / declare_project.
+ *
+ * Maintains <project>/.wikichat/project-state.json#agents{} — a roster of all
+ * agents who ever worked on the project, with their last_seen, role, agent_type,
+ * claude_session_id (if known), and contributions trail.
+ *
+ * Enables list_project_agents() + respawn_project_agents() — bringing the whole
+ * team back when revisiting a project later.
+ */
+function trackAgentOnProject(sessionId, project, contribution) {
+  const session = state.sessions.get(sessionId);
+  if (!session) return;
+  const name = session.name;
+  if (!name || name.startsWith("session-")) return; // anonymous, skip
+  const proj = state.projects.get(project);
+  if (!proj) return;
+  proj.agents = proj.agents || {};
+  const now = new Date().toISOString();
+  const entry = proj.agents[name] || {
+    role: session.role || null,
+    agent_type: session.agent_type || "interactive",
+    claude_session_id: session.claude_session_id || null,
+    first_seen: now,
+    contributions: [],
+    repo_path: session.storage_path ? session.storage_path.replace(/[\\/]\.wikichat[\\/]?$/, "") : null,
+  };
+  entry.last_seen = now;
+  // Keep claude_session_id fresh if session has it now
+  if (session.claude_session_id) entry.claude_session_id = session.claude_session_id;
+  if (contribution && !entry.contributions.includes(contribution)) {
+    entry.contributions.push(contribution);
+    if (entry.contributions.length > 20) entry.contributions = entry.contributions.slice(-20);
+  }
+  proj.agents[name] = entry;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,7 +365,20 @@ export function registerTools(server, sessionId) {
     async ({ name, role, agent_type, claude_session_id }) => {
       const conflict = getSessionByName(name);
       if (conflict && conflict.id !== sessionId) {
-        return txt(`❌ Le nom "${name}" est déjà pris.`);
+        // If the conflicting session is stale or disconnected for >5min, release the name.
+        // This handles the common case : agent disconnects, reconnects under same name.
+        // Without this, the agent had to pick a new name → DM history lost.
+        const lastSeenAge = Date.now() - new Date(conflict.lastSeen || conflict.connectedAt).getTime();
+        const stale = lastSeenAge > 5 * 60 * 1000 || conflict.availability === "stale";
+        if (stale) {
+          // Liberate the name : revert old session to anonymous, transfer identity
+          const oldSession = state.sessions.get(conflict.id);
+          if (oldSession) oldSession.name = `session-${conflict.id.slice(0, 6)}`;
+          sysMsg("system", `Identité "${name}" transférée (session précédente stale depuis ${Math.floor(lastSeenAge/60000)}min)`);
+        } else {
+          const ageMin = Math.floor(lastSeenAge / 60000);
+          return txt(`❌ Le nom "${name}" est déjà pris par une session active (vue il y a ${ageMin}min). Choisis un autre nom ou attends qu'elle expire (5min).`);
+        }
       }
 
       const session = state.sessions.get(sessionId);
@@ -235,6 +389,25 @@ export function registerTools(server, sessionId) {
       session.role = role ?? null;
       session.agent_type = agent_type;
       session.lastSeen = new Date();
+
+      // Bind this connection's stable token → identity so future reconnects are
+      // recognised automatically without re-registering. This is the durable
+      // half of "register once, stay yourself across reconnects".
+      if (session.bindToken) {
+        try { saveIdentityBinding(session.bindToken, name, role ?? null); } catch { /* non-blocking */ }
+      }
+
+      // Migrate DM channel participants when renaming (especially anonymous → real name).
+      // Without this, DMs sent to the old name become invisible after registration.
+      if (oldName !== name) {
+        const oldLc = oldName.toLowerCase();
+        const newLc = name.toLowerCase();
+        for (const ch of state.channels.values()) {
+          if (!ch.isDM || !ch.participants) continue;
+          const idx = ch.participants.indexOf(oldLc);
+          if (idx >= 0) ch.participants[idx] = newLc;
+        }
+      }
 
       // Resolve storage path
       const reg = loadSpawnRegistry();
@@ -271,6 +444,16 @@ export function registerTools(server, sessionId) {
 
       // Auto-restore identity (skills, current_project, availability, memories)
       const identity = restoreIdentity(session, name);
+
+      // Join your project's home channel — your stable address. Teammates reach
+      // you there by @mention; it's what you poll. Best-effort: if your cwd/project
+      // isn't known yet (first turn, hook hasn't reported cwd), it resolves later.
+      let home = null;
+      try { home = await ensureHomeChannel(name); } catch { /* non-blocking */ }
+      const homeHint = home
+        ? `\n\n🏠 Maison : #${home} — c'est là qu'on te joint (@${name}) et ce que tu relèves avec poll().`
+        : `\n\n🏠 Maison : pas encore résolue (projet/cwd inconnu) — elle se fixera dès que ton repo sera connu.`;
+
       const resumeHint = identity.restored
         ? `\n\n📦 Identité restaurée (${timeSince(identity.snapshotAge)}): ${identity.summary}.` +
           (identity.lastInterlocutors.length
@@ -280,7 +463,7 @@ export function registerTools(server, sessionId) {
 
       const isCurator = role && /curator|curateur|meta|méta/i.test(role);
       const workflowByType = {
-        interactive: `💡 Mode interactif: get_briefing() pour le contexte → send_message → poll quand demandé\n   Pas de boucle poll — vous êtes turn-based.`,
+        interactive: `💡 Mode interactif (turn-based): ta maison #${home || "(projet)"} te livre tout ce qui t'est adressé via ton hook, à chaque fin de tour — pas de boucle poll.\n   poll() = relever à la demande tout ce qui t'est adressé depuis ton dernier poll (curseur auto). poll(timeout_seconds=N) = rendez-vous synchrone si tu dois attendre une réponse maintenant.\n   Pour joindre quelqu'un : contact_agent(target, message) dépose dans SA maison ; sa réponse revient dans la tienne.`,
         daemon: `💡 Mode daemon: poll_messages(since_id, timeout=120) en boucle permanente\n   Ne terminez jamais — relancez poll après chaque timeout.`,
         headless: `💡 Mode headless: exécutez votre mission → share_artifact → exit\n   Pas de poll, pas de boucle. One-shot.`,
       };
@@ -292,7 +475,7 @@ export function registerTools(server, sessionId) {
         `✅ Enregistré: "${name}"${role ? ` (${role})` : ""}\n\n` +
         `📡 ${state.sessions.size} session(s)${others ? ":\n" + others : " (vous êtes seul)"}\n\n` +
         `Canaux: ${[...state.channels.keys()].filter(c => !c.startsWith("dm:")).map(c => `#${c}`).join(", ")}\n\n` +
-        workflow + resumeHint
+        workflow + homeHint + resumeHint
       );
     }
   );
@@ -316,9 +499,12 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "remember",
-    "Mémoriser une donnée persistante associée à ton identité (clé/valeur). Survit aux sessions et redémarrages.",
+    "Mémoriser une donnée persistante associée à TON identité d'agent (clé/valeur). Survit aux sessions. " +
+    "⚠️ LIÉ À TON NOM — pas au projet. Un autre agent ne peut pas lire ta mémoire. " +
+    "Pour des notes PROJECT-LEVEL visibles par tous les agents : utilise add_project_note(project, content, type). " +
+    "Usages légitimes de remember : tes préférences, ton état courant, tes config perso.",
     {
-      key: z.string().describe("Clé courte (ex: 'preferred_stack', 'current_pr')"),
+      key: z.string().describe("Clé courte (ex: 'preferred_branch', 'last_review'). Évite les infos projet — utilise add_project_note() pour ça."),
       value: z.string().describe("Valeur à mémoriser (texte libre)"),
     },
     async ({ key, value }) => {
@@ -389,22 +575,41 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "send_message",
-    "Envoyer un message sur un canal ou en DM. Utilisez '@NomSession' comme canal pour un message direct.",
+    "Envoyer un message sur un canal ou en DM. Utilisez '@NomSession' comme canal pour un message direct. " +
+    "Champs de coordination : `expects_reply=true` signale que tu attends une réponse (les autres n'ont pas besoin de poll si ce n'est pas le cas), " +
+    "`eta_seconds` annonce ton temps de travail estimé avant la prochaine action (réduit les polls inutiles). " +
+    "Convention : terminer un message avec `status='over'` = j'ai fini, c'est à toi. `status='standby'` = je travaille, n'attends pas.",
     {
       content: z.string().describe("Contenu du message"),
       channel: z.string().default("general").describe("Canal cible ou '@Nom' pour un DM"),
       reply_to: z.string().optional().describe("ID du message auquel répondre"),
+      expects_reply: z.boolean().optional().describe("Si true : tu attends une réponse. Les autres agents peuvent attendre ton next message avant de re-poll."),
+      eta_seconds: z.number().optional().describe("Temps estimé en secondes avant ton prochain message (ex: 300 = 5 min de travail). Réduit les polls inutiles côté destinataire."),
+      status: z.enum(["over", "standby", "done"]).optional().describe("over = j'ai terminé, c'est à toi | standby = je travaille, n'attends pas de réponse immédiate | done = tâche complètement terminée"),
     },
-    async ({ content, channel, reply_to }) => {
+    async ({ content, channel, reply_to, expects_reply, eta_seconds, status }) => {
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
+      let dmHint = "";
 
       if (channel.startsWith("@")) {
         const res = resolveDMChannel(sessionId, channel.slice(1));
         if (res.error) return txt(`❌ ${res.error}`);
         targetChannel = res.channel;
         isDM = true;
+        // Surface DM resolution so mis-addressing is never silent. Before this,
+        // a DM to a name that didn't exactly match a registered agent was keyed
+        // onto a channel the recipient never read — sent, but invisible.
+        if (res.matched && res.resolvedTarget.toLowerCase() !== res.typedTarget.toLowerCase()) {
+          dmHint = `\n↪️ "@${res.typedTarget}" résolu vers ${res.resolvedTarget}.`;
+        }
+        if (res.matched && !res.online) {
+          dmHint += `\n💤 ${res.resolvedTarget} est hors-ligne — il verra le DM à sa reconnexion.`;
+        }
+        if (!res.matched) {
+          dmHint += `\n⚠️ Aucune session nommée "${res.typedTarget}". Le DM reste en attente, visible uniquement quand un agent s'enregistre EXACTEMENT sous ce nom. Vérifie list_sessions.`;
+        }
       } else if (!state.channels.has(channel)) {
         return txt(`❌ Canal "#${channel}" inexistant. Disponibles: ${[...state.channels.keys()].filter(c => !c.startsWith("dm:")).map(c => `#${c}`).join(", ")}.`);
       }
@@ -413,6 +618,10 @@ export function registerTools(server, sessionId) {
         id: randomUUID(), from: sessionId, fromName: senderName,
         channel: targetChannel, content, timestamp: new Date(),
         replyTo: reply_to ?? null, isDM,
+        // Coordination metadata
+        expects_reply: expects_reply ?? null,
+        eta_seconds: eta_seconds ?? null,
+        status: status ?? null,
       });
       notify(targetChannel, sessionId);
       if (!isDM) notify("__all__", sessionId);
@@ -431,7 +640,7 @@ export function registerTools(server, sessionId) {
         ? `\n⏰ Rappel cron actif → CronDelete("${sender.cron_job_id}") pour l'annuler.` : "";
       if (sender) { sender.eta = null; sender.etaReason = null; }
 
-      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${cronHint}\n\n⚡ Lance poll_messages pour attendre la réponse.`);
+      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}\n\n⚡ Lance poll_messages pour attendre la réponse.`);
     }
   );
 
@@ -441,13 +650,27 @@ export function registerTools(server, sessionId) {
     "read_messages",
     "Lire les messages récents. Filtrage par canal, expéditeur ou période.",
     {
-      channel: z.string().optional().describe("Canal ('__all__' pour tout)"),
+      channel: z.string().optional().describe("Canal ('__all__' pour tout, '@Nom' pour DM avec cet agent, '@me' pour tous mes DMs)"),
       from_session: z.string().optional().describe("Filtrer par expéditeur"),
       since_minutes: z.number().default(30).describe("Messages des N dernières minutes"),
       limit: z.number().default(50).describe("Nombre max"),
       since_id: z.string().optional().describe("Messages après cet ID"),
     },
     async ({ channel, from_session, since_minutes, limit, since_id }) => {
+      // Resolve "@Name" → DM channel key. "@me" / self-reference → DMs only.
+      // Same name resolution as send_message so both sides agree on the key.
+      let dmOnly = false;
+      if (channel?.startsWith("@")) {
+        const myName = getSessionName(sessionId);
+        const targetName = channel.slice(1);
+        if (!targetName || targetName.toLowerCase() === myName.toLowerCase() || targetName === "me") {
+          channel = "__all__";
+          dmOnly = true;
+        } else {
+          channel = dmChannelKey(myName, resolveAgentName(targetName).name);
+        }
+      }
+
       const cutoff = new Date(Date.now() - since_minutes * 60 * 1000);
       let sinceFound = !since_id;
 
@@ -457,10 +680,16 @@ export function registerTools(server, sessionId) {
           return false;
         }
         if (new Date(msg.timestamp) < cutoff) return false;
+        if (dmOnly && !msg.isDM) return false;
         if (channel && channel !== "__all__" && msg.channel !== channel) return false;
         if (msg.isDM) {
+          const myName = getSessionName(sessionId);
+          // Check channel key (stable, derived from names at creation time) OR
+          // participants list (updated on rename). Either match = visible.
           const ci = state.channels.get(msg.channel);
-          if (ci?.participants && !ci.participants.includes(sessionId)) return false;
+          const inByKey = isAgentInDMChannel(msg.channel, myName);
+          const inByParticipants = ci?.participants?.includes(myName.toLowerCase());
+          if (!inByKey && !inByParticipants) return false;
         }
         if (from_session && msg.fromName.toLowerCase() !== from_session.toLowerCase()) return false;
         return true;
@@ -474,7 +703,7 @@ export function registerTools(server, sessionId) {
         const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
         const ch = msg.isDM ? "📩DM" : `#${msg.channel}`;
         const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
-        return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}`;
+        return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${coordMarkers(msg)}`;
       });
       return txt(`📬 ${filtered.length} message(s):\n\n${lines.join("\n\n")}\n\n🔖 Dernier: ${filtered.at(-1).id.slice(0, 8)}`);
     }
@@ -486,14 +715,29 @@ export function registerTools(server, sessionId) {
     "poll_messages",
     "Attendre de nouveaux messages (long-polling). Pour agents actifs dans une conversation. Les curateurs n'en ont PAS besoin — utilisez read_messages().",
     {
-      channel: z.string().default("__all__").describe("Canal à surveiller (défaut: tous)"),
+      channel: z.string().default("__all__").describe("Canal à surveiller. '__all__' = tout. '@Nom' = DM avec cet agent. '@me' = tous mes DMs. (défaut: tous)"),
       timeout_seconds: z.number().default(30).describe("Timeout en secondes (max: 120)"),
       since_id: z.string().optional().describe("Attendre les messages après cet ID"),
+      since_minutes: z.number().default(5).describe("Sans since_id, fenêtre de lookback (défaut 5min) — livre les messages bufferés non lus avant de long-poll. Mettre 0 pour désactiver et n'attendre que du nouveau."),
       types: z.array(z.enum(["message", "direct_message", "system", "broadcast", "artifact"])).optional()
         .describe("Filtrer par types. Ex: ['direct_message','broadcast'] pour ignorer les events système."),
     },
-    async ({ channel, timeout_seconds, since_id, types }) => {
+    async ({ channel, timeout_seconds, since_id, since_minutes, types }) => {
       const timeout = Math.min(timeout_seconds, 120) * 1000;
+
+      // Resolve "@Name" → DM channel key. "@me" or self-reference → "__all__" + dmOnly flag.
+      // Same name resolution as send_message so both sides agree on the key.
+      let dmOnly = false;
+      if (channel.startsWith("@")) {
+        const myName = getSessionName(sessionId);
+        const targetName = channel.slice(1);
+        if (!targetName || targetName.toLowerCase() === myName.toLowerCase() || targetName === "me") {
+          channel = "__all__";
+          dmOnly = true;
+        } else {
+          channel = dmChannelKey(myName, resolveAgentName(targetName).name);
+        }
+      }
 
       const session = state.sessions.get(sessionId);
       if (session) session.lastSeen = new Date();
@@ -503,12 +747,18 @@ export function registerTools(server, sessionId) {
         if (msg.channel === "system" && channel !== "system") {
           if (!types?.includes("system")) return false;
         }
+        // dmOnly: caller used "@me" or "@self" — only return DMs
+        if (dmOnly && !msg.isDM) return false;
         // Channel filter
         if (channel !== "__all__" && msg.channel !== channel && msg.channel !== "__broadcast__") return false;
-        // DM visibility
+        // DM visibility — check both participants list (updated on rename) and
+        // channel key (derived from names at creation time, stable across restarts)
         if (msg.isDM) {
+          const myName = getSessionName(sessionId).toLowerCase();
           const ci = state.channels.get(msg.channel);
-          if (ci?.participants && !ci.participants.includes(sessionId)) return false;
+          const inByParticipants = ci?.participants?.includes(myName);
+          const inByKey = isAgentInDMChannel(msg.channel, myName);
+          if (!inByParticipants && !inByKey) return false;
         }
         // Own messages excluded
         if (msg.from === sessionId) return false;
@@ -522,33 +772,115 @@ export function registerTools(server, sessionId) {
         return false;
       }
 
-      // Check buffered messages since since_id — scan from end (O(recent) not O(all))
+      // 1) since_id : check buffered after this id — scan from end (O(recent) not O(all))
       if (since_id) {
         const idx = state.messages.findLastIndex(m => m.id === since_id || m.id.startsWith(since_id));
         if (idx >= 0) {
           const buffered = state.messages.slice(idx + 1).filter(matchesFilter);
           if (buffered.length > 0) return formatMsgList(buffered);
         }
+      } else if (since_minutes > 0) {
+        // 2) Sans since_id : check buffered dans la fenêtre de lookback.
+        //    Couvre le cas "agent re-connecté qui poll un DM arrivé pendant qu'il était parti".
+        const cutoff = Date.now() - since_minutes * 60 * 1000;
+        const buffered = [];
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          const msg = state.messages[i];
+          if (new Date(msg.timestamp).getTime() < cutoff) break;
+          if (matchesFilter(msg)) buffered.unshift(msg);
+        }
+        if (buffered.length > 0) return formatMsgList(buffered);
       }
 
-      // Long-poll
-      const arrived = await registerWaiter(sessionId, channel, timeout);
+      // 3) Long-poll : wait for a MATCHING message, re-waiting through spurious
+      //    wakeups. A waiter on "__all__" is woken by ANY message — including
+      //    background daemon/system chatter on unrelated channels and DMs to
+      //    other agents. Previously the first such wake returned immediately
+      //    (often "activité détectée" with nothing relevant), so in a live team
+      //    the agent kept dropping the very message it was waiting for. Now we
+      //    keep waiting until a message that passes matchesFilter actually
+      //    arrives, or the timeout elapses.
+      //
+      //    The boundary is tracked by message id (not a time window): we return
+      //    exactly the messages appended after what existed when we started, so
+      //    nothing already seen is re-delivered. findLastIndex re-locates the
+      //    boundary even if eviction shifted indices.
+      const deadline = Date.now() + timeout;
+      let baselineId = state.messages.length ? state.messages[state.messages.length - 1].id : null;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const arrived = await registerWaiter(sessionId, channel, remaining);
+        if (!arrived) break; // genuine timeout
 
-      if (!arrived) {
-        return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
+        if (since_id) {
+          const idx = state.messages.findLastIndex(m => m.id === since_id || m.id.startsWith(since_id));
+          if (idx >= 0) {
+            const buffered = state.messages.slice(idx + 1).filter(matchesFilter);
+            if (buffered.length > 0) return formatMsgList(buffered);
+          }
+        } else {
+          const baseIdx = baselineId ? state.messages.findLastIndex(m => m.id === baselineId) : -1;
+          const fresh = state.messages.slice(baseIdx + 1).filter(matchesFilter);
+          if (fresh.length > 0) return formatMsgList(fresh);
+        }
+        // Spurious wake: nothing matched. Advance the baseline past everything
+        // seen so far and keep waiting for the remaining time.
+        baselineId = state.messages.length ? state.messages[state.messages.length - 1].id : baselineId;
+      }
+      return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
+    }
+  );
+
+  // ── poll (unified inbox) ──────────────────────────────────────────────────────
+  // The turn-based agent's primitive: "poll, point." No target, no channel, no
+  // cursor to manage. Returns EVERYTHING addressed to you (DMs, @mentions,
+  // broadcasts) since your last poll — the cursor lives server-side keyed on your
+  // identity, and is the SAME cursor the Stop-hook mailbox advances. So push and
+  // pull never double-deliver and never drop. Optional long-poll for a sync
+  // rendezvous; otherwise just call it and rendre la main — the hook brings the
+  // rest at your next turn.
+  server.tool(
+    "poll",
+    "Relève ta boîte : TOUT ce qui t'est adressé (DM, @mentions, broadcasts) depuis ton dernier poll. " +
+    "Pas de cible, pas de canal — tu polls, point. Le curseur est tenu côté serveur sur ton identité et avance tout seul " +
+    "(c'est le même que celui du hook boîte mail, donc jamais de doublon ni de manqué). " +
+    "Avec timeout : attend une réponse (rendez-vous synchrone). Sans attente : snapshot immédiat puis rends la main, le hook t'apportera la suite au prochain tour.",
+    {
+      timeout_seconds: z.number().default(0).describe("Attente max si rien de neuf (0-120). 0 (défaut) = snapshot immédiat, pas d'attente bloquante."),
+    },
+    async ({ timeout_seconds }) => {
+      const myName = getSessionName(sessionId);
+      const session = state.sessions.get(sessionId);
+      if (session) session.lastSeen = new Date();
+      const timeout = Math.min(Math.max(timeout_seconds ?? 0, 0), 120) * 1000;
+
+      // First poll under this identity → look back 10min to catch waiting mail;
+      // afterwards → strictly since the server cursor.
+      const cursor = recall(myName, "__inbox_cursor");
+      const first = !cursor;
+      const res = inboxFor(myName, { sinceId: cursor, sinceMinutes: first ? 10 : 0 });
+      if (res.lastId) remember(myName, "__inbox_cursor", res.lastId);
+      if (res.messages.length > 0) return formatMsgList(res.messages);
+
+      if (timeout <= 0) {
+        return txt(`📭 Rien de neuf pour toi.\n💡 Tu peux rendre la main — le hook boîte mail te livrera ce qui arrive à ton prochain tour. Ou poll(timeout_seconds=N) pour attendre maintenant.`);
       }
 
-      // Messages in the last 5 seconds — scan from end only
-      const cutoff = Date.now() - 5000;
-      const recent = [];
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        const msg = state.messages[i];
-        if (new Date(msg.timestamp).getTime() < cutoff) break;
-        if (matchesFilter(msg)) recent.unshift(msg);
+      // Long-poll : wait for a message that lands in MY inbox, re-waiting through
+      // spurious wakeups (any channel activity wakes an "__all__" waiter).
+      const deadline = Date.now() + timeout;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const arrived = await registerWaiter(sessionId, "__all__", remaining);
+        if (!arrived) break; // genuine timeout
+        const cur = recall(myName, "__inbox_cursor");
+        const r = inboxFor(myName, { sinceId: cur, sinceMinutes: 0 });
+        if (r.lastId) remember(myName, "__inbox_cursor", r.lastId);
+        if (r.messages.length > 0) return formatMsgList(r.messages);
       }
-      return recent.length > 0
-        ? formatMsgList(recent)
-        : txt("🔔 Activité détectée. Relancez poll_messages.");
+      return txt(`⏰ Rien de neuf (timeout ${timeout / 1000}s). Ta boîte est à jour — rends la main, le hook t'apportera la suite.`);
     }
   );
 
@@ -629,18 +961,76 @@ export function registerTools(server, sessionId) {
 
   // ══ CHANNELS & SESSIONS ══════════════════════════════════════════════════════
 
-  server.tool("list_sessions", "Lister toutes les sessions connectées.", {}, async () => {
-    if (state.sessions.size === 0) return txt("📡 Aucune session connectée.");
-    const lines = [...state.sessions.entries()].map(([id, s]) => {
-      const me = id === sessionId ? " ← vous" : "";
-      const eta = s.eta && new Date(s.eta) > new Date() ? ` ⏳ ${timeUntil(s.eta)}${s.etaReason ? ` (${s.etaReason})` : ""}` : "";
-      const avail = s.availability && s.availability !== "available" ? ` [${s.availability}]` : "";
-      const task = s.current_task ? `\n    📋 ${s.current_project ? s.current_project + " — " : ""}${s.current_task}` : "";
-      const skills = s.skills?.length ? `\n    🔧 ${s.skills.join(", ")}` : "";
-      return `  • ${s.name}${s.role ? ` [${s.role}]` : ""}${avail}${s.status ? ` 💬 "${s.status}"` : ""}${eta} — actif ${timeSince(s.lastSeen)}${me}${task}${skills}`;
-    });
-    return txt(`📡 ${state.sessions.size} session(s):\n\n${lines.join("\n")}`);
-  });
+  server.tool(
+    "list_sessions",
+    "Lister les sessions connectées. Avec `topic`, élargit aux agents offline pertinents (roster projets + axes KB) — utile pour trouver avec qui collaborer sur un sujet.",
+    { topic: z.string().optional().describe("Filtrer / élargir aux agents travaillant sur ce sujet (online + offline pertinents)") },
+    async ({ topic } = {}) => {
+      const lines = [];
+
+      // ── Online sessions (toujours listées) ──
+      if (state.sessions.size === 0) {
+        lines.push("(aucune session connectée)");
+      } else {
+        for (const [id, s] of state.sessions) {
+          const me = id === sessionId ? " ← vous" : "";
+          const eta = s.eta && new Date(s.eta) > new Date() ? ` ⏳ ${timeUntil(s.eta)}${s.etaReason ? ` (${s.etaReason})` : ""}` : "";
+          const avail = s.availability && s.availability !== "available" ? ` [${s.availability}]` : "";
+          const task = s.current_task ? `\n    📋 ${s.current_project ? s.current_project + " — " : ""}${s.current_task}` : "";
+          const skills = s.skills?.length ? `\n    🔧 ${s.skills.join(", ")}` : "";
+          lines.push(`  • ${s.name}${s.role ? ` [${s.role}]` : ""}${avail}${s.status ? ` 💬 "${s.status}"` : ""}${eta} — actif ${timeSince(s.lastSeen)}${me}${task}${skills}`);
+        }
+      }
+
+      // ── Topic filter: offline contributors from project roster + KB ──
+      if (topic) {
+        const tl = topic.toLowerCase();
+        const liveNames = new Set([...state.sessions.values()].map(s => s.name.toLowerCase()));
+        const offline = new Map(); // name → { role, repo, project, source }
+
+        // 1. Project roster: agents who worked on matching projects
+        for (const proj of state.projects.values()) {
+          const match = (proj.name || "").toLowerCase().includes(tl)
+            || (proj.slug || "").toLowerCase().includes(tl)
+            || (proj.description || "").toLowerCase().includes(tl);
+          if (!match) continue;
+          for (const [aname, ae] of Object.entries(proj.agents || {})) {
+            if (!liveNames.has(aname.toLowerCase()) && !offline.has(aname)) {
+              offline.set(aname, { role: ae.role, project: proj.name, source: "roster" });
+            }
+          }
+        }
+
+        // 2. KB axes: agents mentioned in axis files for this topic
+        const _home = process.env.USERPROFILE || process.env.HOME || "";
+        const KB_DIR = path.join(_home, ".wikichat", "knowledge");
+        try {
+          const matchedAxes = (await import("fs")).default
+            .readdirSync(KB_DIR).filter(f => f.replace(/-axis\.md$/, "").includes(tl));
+          for (const f of matchedAxes) {
+            const raw = (await import("fs")).default.readFileSync(path.join(KB_DIR, f), "utf8");
+            // Extract agent names from "producer:" frontmatter or @mentions
+            for (const m of raw.matchAll(/producer:\s*(\S+)/g)) {
+              const n = m[1].trim();
+              if (!liveNames.has(n.toLowerCase()) && !offline.has(n))
+                offline.set(n, { role: null, project: f.replace(/-axis\.md$/, ""), source: "KB" });
+            }
+          }
+        } catch { /* KB dir absent or unreadable */ }
+
+        if (offline.size > 0) {
+          lines.push(`\n📴 Offline — pertinents pour "${topic}":`);
+          for (const [name, info] of offline) {
+            lines.push(`  • ${name}${info.role ? ` [${info.role}]` : ""} — ${info.project} (${info.source})`);
+          }
+          lines.push(`💡 contact_agent(target="<nom>", ...) pour les joindre`);
+        }
+      }
+
+      const header = `📡 ${state.sessions.size} session(s) connectée(s)${topic ? ` + recherche topic "${topic}"` : ""}:`;
+      return txt(`${header}\n\n${lines.join("\n")}`);
+    }
+  );
 
   server.tool("list_channels", "Lister les canaux de discussion.", {}, async () => {
     const chans = [...state.channels.entries()].filter(([n]) => !n.startsWith("dm:"))
@@ -759,6 +1149,7 @@ export function registerTools(server, sessionId) {
       const expiresAt = new Date(Date.now() + 90 * 60 * 1000);
       proj.tasks.set(task, { id: task, description, claimedBy: name, claimedAt: new Date(), status: "active", outcome: null, claim_expires_at: expiresAt });
       proj.updatedAt = new Date();
+      trackAgentOnProject(sessionId, project, `claim:${task}`);
       saveProject(proj);
 
       const sp = getAgentStoragePath(sessionId);
@@ -790,6 +1181,7 @@ export function registerTools(server, sessionId) {
       if (status === "done") proj.decisions.push(`[${new Date().toLocaleDateString("fr-FR")}] ${task}: ${outcome}`);
       else if (status === "blocked") proj.blockers.push(`${task}: ${outcome}`);
       proj.updatedAt = new Date();
+      trackAgentOnProject(sessionId, project, `release:${task}:${status}`);
       saveProject(proj);
 
       const sp = getAgentStoragePath(sessionId);
@@ -825,22 +1217,213 @@ export function registerTools(server, sessionId) {
       const proj = existing ?? { name, tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null, createdBy: ownerName, createdAt: new Date() };
       Object.assign(proj, { description, repo: repo ?? proj.repo, stack: stack ?? proj.stack ?? [], relations: relations ?? proj.relations ?? [], status: status ?? proj.status, updatedAt: new Date(), updatedBy: ownerName });
       state.projects.set(name, proj);
+      trackAgentOnProject(sessionId, name, existing ? "update_project" : "declare_project");
       saveProject(proj);
+      // Auto-create a dedicated channel for the project (slug = lowercase, spaces → hyphens).
+      // Having a project channel means agents don't fallback to #coordination (which is generic
+      // and shared by all projects), and decisions/updates stay contextualised to the project.
+      const projectSlug = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      if (!state.channels.has(projectSlug)) {
+        state.channels.set(projectSlug, {
+          name: projectSlug,
+          description: `Canal dédié au projet ${name}`,
+          createdBy: ownerName,
+          createdAt: new Date(),
+        });
+      }
       sysMsg("coordination", `${existing ? "📝 Projet mis à jour" : "🆕 Nouveau projet"}: ${name} — ${description}`);
       notify("coordination", sessionId);
-      return txt(`${existing ? "📝 Mis à jour" : "✅ Déclaré"}: "${name}"\n${description}${repo ? `\n🔗 ${repo}` : ""}${stack?.length ? `\n🔧 ${stack.join(", ")}` : ""}`);
+      const channelHint = existing ? "" : `\n📢 Canal projet créé : #${projectSlug}`;
+      return txt(`${existing ? "📝 Mis à jour" : "✅ Déclaré"}: "${name}"\n${description}${repo ? `\n🔗 ${repo}` : ""}${stack?.length ? `\n🔧 ${stack.join(", ")}` : ""}${channelHint}`);
     }
   );
 
-  server.tool("list_projects", "Lister tous les projets.", {}, async () => {
+  // ── Project meta (régie schema) ─────────────────────────────────────────────
+  // Enriches a project with the régie fields :
+  //   purpose   : free-text "why this exists"
+  //   axes      : KB axes this project contributes to / draws from
+  //   lifecycle : ideation | mvp | active | maintenance | archived | closed
+  //   publish   : { github, package, deployed, license } — visibility / release state
+  //   relations : structured links to other projects (depends-on / provides-to / sibling-of / superseded-by)
+  // All fields optional ; partial updates merged into existing meta (deep for `publish`).
+  // `health` is deliberately NOT settable here — populated by RepoAuditor.
+
+  server.tool(
+    "set_project_meta",
+    "Enrichit un projet avec les champs de régie : purpose, axes, lifecycle, publish, relations. " +
+    "Mise à jour partielle — seuls les champs fournis sont écrasés. publish est mergé en deep. " +
+    "Utilise pour structurer un projet : pourquoi il existe, à quels axes KB il contribue, son stade de vie, " +
+    "son état de publication (GitHub / package registry / déploiement / licence), et ses relations avec d'autres projets. " +
+    "Le champ `health` est calculé automatiquement par RepoAuditor — non settable ici.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      purpose: z.string().optional().describe("Pourquoi ce projet existe — phrase ou paragraphe"),
+      axes: z.array(z.string()).optional().describe("Axes KB ('grist', 'auth', 'wikichat-triggers', etc.)"),
+      lifecycle: z.enum(["ideation", "mvp", "active", "maintenance", "archived", "closed"]).optional()
+        .describe("Stade de vie : ideation = idée brute, mvp = scope MVP en cours, active = dev courant, maintenance = stable + patches, archived = inactif mais préservé, closed = clôturé via close_project"),
+      publish: z.object({
+        github: z.object({
+          visibility: z.enum(["public", "private", "none"]).optional(),
+          url: z.string().optional(),
+        }).optional(),
+        package: z.object({
+          registry: z.enum(["npm", "pypi", "cargo", "other"]).optional(),
+          status: z.enum(["unpublished", "draft", "published"]).optional(),
+          name: z.string().optional(),
+          version: z.string().optional(),
+        }).optional(),
+        deployed: z.object({
+          url: z.string().optional(),
+          env: z.enum(["prod", "staging", "preview"]).optional(),
+        }).optional(),
+        license: z.string().optional().describe("Identifiant SPDX ('MIT', 'Apache-2.0', ...) ou 'proprietary'"),
+      }).optional(),
+      relations: z.array(z.object({
+        type: z.enum(["depends-on", "provides-to", "sibling-of", "superseded-by", "fork-of"]),
+        project: z.string(),
+        note: z.string().optional(),
+      })).optional().describe("Liens typés vers d'autres projets — remplace l'ancien array de strings non structuré"),
+    },
+    async ({ project, purpose, axes, lifecycle, publish, relations }) => {
+      const name = getSessionName(sessionId);
+      let proj = state.projects.get(project);
+      if (!proj) {
+        return txt(`❌ Projet "${project}" introuvable. Crée-le via declare_project() d'abord.`);
+      }
+      const before = {
+        purpose: proj.purpose, lifecycle: proj.lifecycle,
+        axes: proj.axes ? [...proj.axes] : [], publish: proj.publish,
+      };
+      const changes = [];
+      if (purpose !== undefined) { proj.purpose = purpose; changes.push("purpose"); }
+      if (axes !== undefined) { proj.axes = axes; changes.push("axes"); }
+      if (lifecycle !== undefined) { proj.lifecycle = lifecycle; changes.push("lifecycle"); }
+      if (publish !== undefined) {
+        // Deep-merge publish so a partial update doesn't wipe sibling subfields
+        proj.publish = proj.publish || {};
+        for (const k of Object.keys(publish)) {
+          if (publish[k] === null) { delete proj.publish[k]; continue; }
+          if (typeof publish[k] === "object" && !Array.isArray(publish[k])) {
+            proj.publish[k] = { ...(proj.publish[k] || {}), ...publish[k] };
+          } else {
+            proj.publish[k] = publish[k];
+          }
+        }
+        changes.push("publish");
+      }
+      if (relations !== undefined) { proj.relations = relations; changes.push("relations"); }
+      if (changes.length === 0) {
+        return txt(`⚠️ set_project_meta("${project}") — aucun champ fourni, rien à mettre à jour.`);
+      }
+      proj.updatedAt = new Date();
+      proj.updatedBy = name;
+      trackAgentOnProject(sessionId, project, `meta:${changes.join(",")}`);
+      saveProject(proj);
+
+      // Surface the change on the project channel — the régie is a transparent system
+      const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const channelTarget = state.channels.has(slug) ? slug : "coordination";
+      sysMsg(channelTarget, `📐 ${name} a mis à jour la meta de ${project} : ${changes.join(", ")}${lifecycle && lifecycle !== before.lifecycle ? ` (lifecycle: ${before.lifecycle || "—"} → ${lifecycle})` : ""}`);
+      notify(channelTarget, sessionId);
+
+      const lines = [`📐 Meta mise à jour : "${project}"`];
+      if (purpose !== undefined) lines.push(`  Purpose : ${purpose}`);
+      if (axes !== undefined) lines.push(`  Axes : ${axes.length ? axes.join(", ") : "(none)"}`);
+      if (lifecycle !== undefined) lines.push(`  Lifecycle : ${lifecycle}`);
+      if (publish !== undefined) {
+        const p = proj.publish || {};
+        const pub = [];
+        if (p.github?.visibility) pub.push(`github=${p.github.visibility}${p.github.url ? ` (${p.github.url})` : ""}`);
+        if (p.package?.status) pub.push(`${p.package.registry || "package"}=${p.package.status}${p.package.version ? `@${p.package.version}` : ""}`);
+        if (p.deployed?.url) pub.push(`deployed=${p.deployed.env || "?"} ${p.deployed.url}`);
+        if (p.license) pub.push(`license=${p.license}`);
+        if (pub.length) lines.push(`  Publish : ${pub.join(" · ")}`);
+      }
+      if (relations !== undefined) lines.push(`  Relations : ${relations.length} link(s)`);
+      lines.push(`\n💡 list_projects() pour voir le projet enrichi.`);
+      return txt(lines.join("\n"));
+    }
+  );
+
+  server.tool(
+    "add_project_note",
+    "Ajoute une note permanente à un projet (décision, blocker, question ouverte). " +
+    "Écrit dans project-state.json — cross-sessions, cross-agents. " +
+    "PRÉFÉRER À remember() pour tout ce qui concerne un projet car remember est lié à une identité d'agent. " +
+    "Types : 'decision' = choix acté, 'blocker' = bloquant à résoudre, 'question' = point ouvert, 'note' (défaut) = info utile.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      content: z.string().describe("Contenu de la note (une ligne suffisante, soyez précis)"),
+      type: z.enum(["decision", "blocker", "question", "note"]).default("note")
+        .describe("decision = choix acté | blocker = bloquant | question = point ouvert | note = information"),
+    },
+    async ({ project, content, type }) => {
+      const name = getSessionName(sessionId);
+      const date = `[${new Date().toLocaleDateString("fr-FR")}]`;
+      let proj = state.projects.get(project);
+      if (!proj) {
+        // Auto-create project if it doesn't exist yet — avoids friction
+        proj = { name: project, tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null, createdBy: name, createdAt: new Date() };
+        state.projects.set(project, proj);
+        // Auto-create channel
+        const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        if (!state.channels.has(slug)) {
+          state.channels.set(slug, { name: slug, description: `Canal dédié au projet ${project}`, createdBy: name, createdAt: new Date() });
+        }
+      }
+      const entry = `${date} ${name}: ${content}`;
+      // Route to the correct array based on type
+      if (type === "decision" || type === "note") {
+        proj.decisions.push(entry);
+      } else if (type === "blocker") {
+        proj.blockers.push(entry);
+      } else if (type === "question") {
+        proj.open_questions.push(entry);
+      }
+      proj.updatedAt = new Date();
+      proj.updatedBy = name;
+      trackAgentOnProject(sessionId, project, `note:${type}`);
+      saveProject(proj);
+      // Notify the project channel (auto-created above if needed) + coordination
+      const slug = project.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const channelTarget = state.channels.has(slug) ? slug : "coordination";
+      const emoji = { decision: "✅", blocker: "🔴", question: "❓", note: "📌" }[type];
+      pushMessage({
+        id: randomUUID(), from: sessionId, fromName: name,
+        channel: channelTarget,
+        content: `${emoji} [${type.toUpperCase()}] ${project}: ${content}`,
+        timestamp: new Date(),
+      });
+      notify(channelTarget, sessionId);
+      return txt(`${emoji} Note ajoutée au projet "${project}" [${type}].\n📝 ${content}\n📁 Persisté dans project-state.json — visible par tous les agents sur ce projet.\n💡 À la prochaine session sur ${project} : recall via list_projects() ou close_project().`);
+    }
+  );
+
+  server.tool("list_projects", "Lister tous les projets — affiche meta de régie (lifecycle, axes, publish) si présentes.", {}, async () => {
     if (!state.projects.size) return txt("📭 Aucun projet.\n💡 declare_project() pour en créer un.");
+    const lifecycleEmoji = {
+      ideation: "💡", mvp: "🌱", active: "🟢", maintenance: "🔧", archived: "📦", closed: "🏁",
+    };
     const lines = [...state.projects.values()].map(p => {
       const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
       const active = [...p.tasks.values()].filter(t => t.status === "active").length;
       const closedFlag = p.closure ? " | 🏁 closed" : "";
-      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${p.status ? `\n    📊 ${p.status}` : ""}${closedFlag}`;
+      const lifecycleFlag = p.lifecycle ? ` | ${lifecycleEmoji[p.lifecycle] || ""} ${p.lifecycle}` : "";
+      const axesFlag = p.axes?.length ? ` | 🏷️ ${p.axes.slice(0, 4).join(", ")}${p.axes.length > 4 ? "+" : ""}` : "";
+      // Publish summary : github visibility + package status + deployed url
+      const pubBits = [];
+      if (p.publish?.github?.visibility && p.publish.github.visibility !== "none") {
+        pubBits.push(`gh:${p.publish.github.visibility}`);
+      }
+      if (p.publish?.package?.status === "published") {
+        pubBits.push(`${p.publish.package.registry || "pkg"}@${p.publish.package.version || "?"}`);
+      }
+      if (p.publish?.deployed?.url) pubBits.push(`🚀${p.publish.deployed.env || "deployed"}`);
+      const pubFlag = pubBits.length ? ` | 📡 ${pubBits.join(" ")}` : "";
+      const purposeLine = p.purpose ? `\n    🎯 ${p.purpose}` : "";
+      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${lifecycleFlag}${axesFlag}${pubFlag}${closedFlag}${purposeLine}${p.status && !p.lifecycle ? `\n    📊 ${p.status}` : ""}`;
     });
-    return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail`);
+    return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail · set_project_meta() pour enrichir un projet`);
   });
 
   server.tool(
@@ -915,7 +1498,12 @@ export function registerTools(server, sessionId) {
       proj.status = "closed";
       proj.updatedAt = new Date();
       proj.updatedBy = name;
+      trackAgentOnProject(sessionId, project, "close");
       saveProject(proj);
+
+      // Capitalisation distante : publie le snapshot mémoire si configuré
+      // (WIKICHAT_MEMORY_REPO). Non-bloquant — la clôture n'attend pas le push.
+      triggerMemoryPublish(`close_project:${project}`);
 
       // Broadcast sur #library pour que le Librarian absorbe la capitalisation.
       if (!state.channels.has("library")) {
@@ -940,6 +1528,167 @@ export function registerTools(server, sessionId) {
       sysMsg("coordination", `🏁 ${name} a clôturé le projet "${project}".`);
       notify("coordination", sessionId);
       return txt(`🏁 Projet "${project}" clôturé.\n📚 Closure persistée dans projects/${project}.json.\n📡 Artifact partagé sur #library — le Librarian l'absorbera dans la KB transverse au prochain digest.`);
+    }
+  );
+
+  // ══ PROJECT AGENT ROSTER ═════════════════════════════════════════════════════
+  // Per-project list of agents who have contributed (auto-tracked via
+  // trackAgentOnProject). Enables bringing the team back when revisiting
+  // a project later, even after machine reboots.
+
+  server.tool(
+    "list_project_agents",
+    "Liste les agents qui ont contribué à un projet (auto-trackés via claim_task / release_task / add_project_note / declare_project / close_project). " +
+    "Affiche pour chacun : online/offline, rôle, type, claude_session_id (pour --resume), dernière contribution. " +
+    "Sert à savoir qui a travaillé sur quoi avant un respawn.",
+    {
+      project: z.string().describe("Nom du projet"),
+    },
+    async ({ project }) => {
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable. list_projects() pour voir la liste.`);
+      const agents = proj.agents || {};
+      const names = Object.keys(agents);
+      if (names.length === 0) return txt(`📭 Aucun agent tracké pour "${project}".\n💡 Les agents sont auto-trackés au premier claim_task/release_task/add_project_note/declare_project sous une identité non-anonyme.`);
+      const liveByName = new Map();
+      for (const s of state.sessions.values()) liveByName.set(s.name?.toLowerCase(), s);
+      const lines = names.map(n => {
+        const e = agents[n];
+        const live = liveByName.get(n.toLowerCase());
+        const onlineFlag = live ? "🟢 online" : "⚪ offline";
+        const role = e.role ? ` (${e.role})` : "";
+        const type = e.agent_type || "interactive";
+        const resumable = e.claude_session_id ? " 🔁resumable" : "";
+        const lastSeen = e.last_seen ? timeSince(e.last_seen) : "?";
+        const contribCount = (e.contributions || []).length;
+        const lastContrib = (e.contributions || []).slice(-1)[0] || "—";
+        return `  • **${n}**${role} [${type}] — ${onlineFlag}${resumable}\n    📅 ${lastSeen} · ${contribCount} contribution(s) · last: ${lastContrib}`;
+      });
+      const onlineCount = names.filter(n => liveByName.has(n.toLowerCase())).length;
+      const resumableCount = names.filter(n => agents[n].claude_session_id).length;
+      return txt(
+        `👥 ${names.length} agent(s) sur "${project}" — 🟢 ${onlineCount} online, ⚪ ${names.length - onlineCount} offline, 🔁 ${resumableCount} resumable\n\n` +
+        lines.join("\n\n") +
+        `\n\n💡 respawn_project_agents("${project}", mode="resume_only") pour ré-éveiller les agents resumables.`
+      );
+    }
+  );
+
+  server.tool(
+    "respawn_project_agents",
+    "Ré-spawne les agents offline d'un projet, capé pour préserver les ressources. " +
+    "mode='resume_only' (défaut) : seulement ceux avec claude_session_id, en --resume (continue leur historique). " +
+    "mode='fresh' : tous, headless one-shot avec contexte projet. " +
+    "mode='daemon' : daemon persistant (réservé principal/service). " +
+    "max=3 par défaut. names=[...] filtre la liste. Respecte budget global + quota owner.",
+    {
+      project: z.string().describe("Nom du projet"),
+      mode: z.enum(["resume_only", "fresh", "daemon"]).default("resume_only")
+        .describe("resume_only = headless --resume si claude_session_id ; fresh = headless one-shot ; daemon = persistant (principal/service uniquement)"),
+      names: z.array(z.string()).optional().describe("Filtrer aux noms listés (défaut : tous les agents offline)"),
+      max: z.number().default(3).describe("Cap dur de respawns simultanés pour préserver les ressources"),
+    },
+    async ({ project, mode, names: filterNames, max }) => {
+      const requester = getSessionName(sessionId);
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable.`);
+      const agents = proj.agents || {};
+      const allNames = Object.keys(agents);
+      if (allNames.length === 0) return txt(`📭 Aucun agent tracké sur "${project}".`);
+
+      // Online check (current sessions)
+      const liveByName = new Map();
+      for (const s of state.sessions.values()) liveByName.set(s.name?.toLowerCase(), s);
+
+      // Build candidate list (offline only — never re-spawn already-online agents)
+      let candidates = allNames.filter(n => !liveByName.has(n.toLowerCase()));
+      if (filterNames && filterNames.length > 0) {
+        const wanted = new Set(filterNames.map(s => s.toLowerCase()));
+        candidates = candidates.filter(n => wanted.has(n.toLowerCase()));
+      }
+      if (candidates.length === 0) {
+        return txt(`📭 Aucun agent offline à ré-spawner sur "${project}" (filtre appliqué : ${filterNames?.length ? filterNames.join(",") : "tous offline"}).`);
+      }
+
+      // Resource preservation : hard cap, prioritise resumables for resume_only mode
+      if (mode === "resume_only") {
+        candidates = candidates.filter(n => agents[n].claude_session_id);
+        if (candidates.length === 0) {
+          return txt(`📭 Aucun agent resumable (avec claude_session_id) offline sur "${project}". Essaie mode="fresh".`);
+        }
+      }
+      const batch = candidates.slice(0, max);
+      const skipped = candidates.slice(max);
+
+      // Resolve canonical repo path : registry > project.repo > agent's tracked path.
+      // The registry is authoritative ; tracked agent paths can point to wikichat's own
+      // storage dir for service-spawned agents.
+      let projectRepo = null;
+      try {
+        const reg = loadRegistry();
+        const lower = project.toLowerCase();
+        const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        const match = reg.projects.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
+        if (match?.path && fs.existsSync(match.path)) projectRepo = match.path;
+      } catch { /* registry optional */ }
+      if (!projectRepo && proj.repo && fs.existsSync(proj.repo)) projectRepo = proj.repo;
+
+      const spawned = [];
+      const failed = [];
+      for (const n of batch) {
+        const e = agents[n];
+        const repoPath = projectRepo || (e.repo_path && fs.existsSync(e.repo_path) ? e.repo_path : null);
+        if (!repoPath) {
+          failed.push({ name: n, reason: `repo_path indisponible (registry/proj.repo/agent.repo_path tous absents)` });
+          continue;
+        }
+        try {
+          if (mode === "daemon") {
+            const r = spawnDaemon(repoPath, {
+              name: n, role: e.role || "agent",
+              port: parseInt(process.env.PORT || "3777"),
+              spawnedBy: requester,
+              sessionId: e.claude_session_id || undefined,
+            });
+            if (r.success) spawned.push({ name: n, mode: "daemon", pid: r.pid });
+            else failed.push({ name: n, reason: r.error });
+          } else {
+            // resume_only or fresh : both headless. resume_only passes resumeSessionId.
+            const prompt = mode === "resume_only"
+              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, attends instructions via poll_messages(timeout_seconds=60).`
+              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll_messages(timeout_seconds=30) pour les messages en attente, puis sors si rien d'urgent.`;
+            // Fire-and-forget — don't block on the headless spawn
+            spawnHeadless(repoPath, prompt, {
+              name: n, role: e.role || "agent",
+              port: parseInt(process.env.PORT || "3777"),
+              spawnedBy: requester,
+              resumeSessionId: mode === "resume_only" ? e.claude_session_id : null,
+            }).catch(() => { /* logged in registry */ });
+            spawned.push({ name: n, mode, resumed: mode === "resume_only" });
+          }
+        } catch (err) {
+          failed.push({ name: n, reason: err.message });
+        }
+      }
+
+      sysMsg("coordination", `🔁 ${requester} ré-spawne ${spawned.length}/${candidates.length} agent(s) sur "${project}" (mode=${mode}).`);
+      notify("coordination", sessionId);
+
+      const lines = [
+        `🔁 Respawn sur "${project}" (mode=${mode}, max=${max})`,
+        `  ✅ Spawned : ${spawned.length}`,
+        ...spawned.map(s => `    • ${s.name}${s.resumed ? " 🔁" : ""}${s.pid ? ` (PID ${s.pid})` : ""}`),
+      ];
+      if (failed.length) {
+        lines.push(`  ❌ Failed : ${failed.length}`);
+        lines.push(...failed.map(f => `    • ${f.name} — ${f.reason}`));
+      }
+      if (skipped.length) {
+        lines.push(`  ⏭  Skipped (cap max=${max}) : ${skipped.length}`);
+        lines.push(`    ${skipped.join(", ")}`);
+      }
+      lines.push(`\n💡 list_project_agents("${project}") dans ~30s pour voir qui est revenu en ligne.`);
+      return txt(lines.join("\n"));
     }
   );
 
@@ -1092,7 +1841,541 @@ export function registerTools(server, sessionId) {
     }
   );
 
+  // ══ IDEAS (régie idea pool) ══════════════════════════════════════════════════
+  // Ideas are first-class objects living outside projects (~/.wikichat/ideas/).
+  // Capture them as you have them ; the Harmonizer routine clusters them later ;
+  // the Bootstrapper agent (next phase) turns scoped ideas into project skeletons.
+  // Status flow : raw → clustered → scoped → started | shelved.
+
+  server.tool(
+    "add_idea",
+    "Capture une idée dans le idea pool. Stocké dans ~/.wikichat/ideas/<id>.json (cross-projet, persistant). " +
+    "Tag avec axes (mots-clés KB) + related_projects (projets connectés). Statut initial 'raw'. " +
+    "À utiliser dès qu'une intuition apparaît — pas besoin de la scoper. La Harmonizer routine la clustera plus tard. " +
+    "PRÉFÉRER À remember() pour les idées : remember est lié à l'identité d'agent ; idea pool est partagé.",
+    {
+      title: z.string().describe("Headline court (1 phrase) — phrase active de préférence"),
+      body: z.string().optional().describe("Description plus longue ; libre"),
+      axes: z.array(z.string()).optional().describe("Axes KB ('grist', 'auth', 'wikichat-triggers'…). Aide la harmonisation."),
+      related_projects: z.array(z.string()).optional().describe("Noms de projets existants connectés à l'idée"),
+      source: z.enum(["user", "channel", "closure", "git-signal", "harmonizer"]).optional()
+        .describe("D'où vient l'idée — par défaut 'user'"),
+    },
+    async ({ title, body, axes, related_projects, source }) => {
+      const name = getSessionName(sessionId);
+      try {
+        const idea = createIdea({ title, body, axes, related_projects, source, created_by: name });
+        // Surface on #ideation if it exists (channel auto-created in J5)
+        if (state.channels.has("ideation")) {
+          pushMessage({
+            id: randomUUID(), from: sessionId, fromName: name,
+            channel: "ideation",
+            content: `💡 Nouvelle idée [${idea.id}] : ${idea.title}${idea.axes.length ? ` · 🏷️ ${idea.axes.join(", ")}` : ""}${idea.related_projects.length ? ` · 🔗 ${idea.related_projects.join(", ")}` : ""}`,
+            timestamp: new Date(),
+          });
+          notify("ideation", sessionId);
+        }
+        const lines = [
+          `💡 Idée capturée [${idea.id}]`,
+          `   ${idea.title}`,
+        ];
+        if (idea.body) lines.push(`   ${idea.body.slice(0, 120)}${idea.body.length > 120 ? "…" : ""}`);
+        if (idea.axes.length) lines.push(`   🏷️ ${idea.axes.join(", ")}`);
+        if (idea.related_projects.length) lines.push(`   🔗 ${idea.related_projects.join(", ")}`);
+        lines.push(`\n💡 list_ideas() pour voir le pool · update_idea("${idea.id}", status="scoped") quand prête à devenir projet.`);
+        return txt(lines.join("\n"));
+      } catch (err) {
+        return txt(`❌ add_idea échoué : ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "list_ideas",
+    "Liste les idées du pool, filtres optionnels. Trié par updated_at desc. " +
+    "Sans filtre, affiche les 20 plus récentes + stats globales (par status, par axis).",
+    {
+      status: z.enum(["raw", "clustered", "scoped", "started", "shelved"]).optional()
+        .describe("Filtrer par status"),
+      axis: z.string().optional().describe("Filtrer aux idées qui touchent cet axe"),
+      project: z.string().optional().describe("Filtrer aux idées liées à ce projet"),
+      since_days: z.number().optional().describe("Seulement les idées modifiées dans les N derniers jours"),
+      limit: z.number().default(20).describe("Cap résultats (défaut 20)"),
+      query: z.string().optional().describe("Recherche keyword sur title+body+axes (court-circuite les autres filtres)"),
+    },
+    async ({ status, axis, project, since_days, limit, query }) => {
+      const stats = ideaStats();
+      if (stats.total === 0) {
+        return txt(`💡 Idea pool vide.\n   add_idea(title="...", axes=[...], related_projects=[...]) pour capturer une idée.`);
+      }
+      let out;
+      if (query) {
+        out = searchIdeas(query, { limit });
+      } else {
+        out = listIdeas({ status, axis, project, since_days, limit });
+      }
+      if (out.length === 0) {
+        return txt(`📭 Aucune idée ne matche le filtre.\n   Pool total : ${stats.total} (${Object.entries(stats.by_status).map(([k,v]) => `${k}=${v}`).join(", ")})`);
+      }
+      const statusEmoji = { raw: "📥", clustered: "🧩", scoped: "🎯", started: "🚀", shelved: "📦" };
+      const lines = out.map(i => {
+        const e = statusEmoji[i.status] || "•";
+        const tagsBits = [];
+        if (i.axes?.length) tagsBits.push(`🏷️ ${i.axes.slice(0, 3).join(", ")}`);
+        if (i.related_projects?.length) tagsBits.push(`🔗 ${i.related_projects.slice(0, 2).join(", ")}`);
+        if (i.cluster_id) tagsBits.push(`🧩 cluster=${i.cluster_id.slice(0, 6)}`);
+        const tags = tagsBits.length ? `\n    ${tagsBits.join(" · ")}` : "";
+        return `  ${e} **[${i.id}]** ${i.title} _(${timeSince(i.updated_at)} · ${i.created_by})_${tags}`;
+      });
+      const statsLine = `📊 Pool : ${stats.total} idée(s) — ${Object.entries(stats.by_status).map(([k,v]) => `${k}:${v}`).join(", ")}`;
+      const filterDesc = [
+        query && `query="${query}"`,
+        status && `status=${status}`,
+        axis && `axis=${axis}`,
+        project && `project=${project}`,
+        since_days && `since_days=${since_days}`,
+      ].filter(Boolean).join(", ");
+      const filterHint = filterDesc ? ` (filtre : ${filterDesc})` : "";
+      return txt(`💡 ${out.length} idée(s)${filterHint} :\n\n${lines.join("\n\n")}\n\n${statsLine}\n💡 update_idea(id, status="...") · get_idea(id) pour le détail`);
+    }
+  );
+
+  server.tool(
+    "update_idea",
+    "Met à jour une idée existante. Champs partiels — seuls ceux fournis sont écrasés. " +
+    "Statuts : raw (initial) → clustered (Harmonizer l'a regroupée) → scoped (prête à devenir projet) → started (projet créé) | shelved (mise au placard, pas de projet).",
+    {
+      id: z.string().describe("ID de l'idée (12 chars, retourné par add_idea / list_ideas)"),
+      title: z.string().optional(),
+      body: z.string().optional(),
+      axes: z.array(z.string()).optional(),
+      related_projects: z.array(z.string()).optional(),
+      status: z.enum(["raw", "clustered", "scoped", "started", "shelved"]).optional(),
+    },
+    async ({ id, ...patch }) => {
+      const name = getSessionName(sessionId);
+      try {
+        const updated = updateIdea(id, patch);
+        if (!updated) return txt(`❌ Idée [${id}] introuvable.`);
+        if (state.channels.has("ideation") && patch.status) {
+          const statusEmoji = { raw: "📥", clustered: "🧩", scoped: "🎯", started: "🚀", shelved: "📦" };
+          pushMessage({
+            id: randomUUID(), from: sessionId, fromName: name,
+            channel: "ideation",
+            content: `${statusEmoji[patch.status] || "•"} ${name} a marqué [${id}] comme ${patch.status} : ${updated.title}`,
+            timestamp: new Date(),
+          });
+          notify("ideation", sessionId);
+        }
+        const changed = Object.keys(patch).filter(k => patch[k] !== undefined);
+        return txt(`✅ Idée [${id}] mise à jour (${changed.join(", ")}).\n   ${updated.title}\n   Status : ${updated.status}`);
+      } catch (err) {
+        return txt(`❌ update_idea échoué : ${err.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "get_idea",
+    "Récupère le détail complet d'une idée par id.",
+    { id: z.string().describe("ID de l'idée (12 chars)") },
+    async ({ id }) => {
+      const idea = getIdea(id);
+      if (!idea) return txt(`❌ Idée [${id}] introuvable.`);
+      const lines = [
+        `💡 **[${idea.id}] ${idea.title}**`,
+        `   Status : ${idea.status} · Source : ${idea.source} · Auteur : ${idea.created_by}`,
+        `   Créée : ${timeSince(idea.created_at)} · Mise à jour : ${timeSince(idea.updated_at)}`,
+      ];
+      if (idea.body) lines.push(`\n${idea.body}`);
+      if (idea.axes?.length) lines.push(`\n🏷️ Axes : ${idea.axes.join(", ")}`);
+      if (idea.related_projects?.length) lines.push(`🔗 Projets liés : ${idea.related_projects.join(", ")}`);
+      if (idea.cluster_id) lines.push(`🧩 Cluster : ${idea.cluster_id}`);
+      if (idea.similar_to?.length) lines.push(`🔄 Similaires : ${idea.similar_to.join(", ")}`);
+      return txt(lines.join("\n"));
+    }
+  );
+
+  // ══ REPO AUDIT (régie health) ════════════════════════════════════════════════
+  // Computes the project.health snapshot from filesystem + git. The score is a
+  // coarse 0-100 mix of doc completeness, hygiene, recent activity, and sync state.
+  // `set_project_meta` refuses the health field on purpose — it lives here.
+
+  server.tool(
+    "audit_project",
+    "Audite un projet : calcule sa health (README/LICENSE/.gitignore/tests/CI + git status/last commit/ahead-behind) et écrit le résultat dans project.health. " +
+    "Score 0-100 + warnings textuels. Pour batch (tout le registry), utiliser audit_all_projects.",
+    {
+      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      persist: z.boolean().default(true).describe("Si true (défaut), écrit le résultat dans project.health (saveProject). Si false, retourne juste l'audit."),
+    },
+    async ({ project, persist }) => {
+      const proj = state.projects.get(project);
+      if (!proj) return txt(`❌ Projet "${project}" introuvable.`);
+      // Resolve repo path : project.repo > registry path > agent's tracked path
+      let repoPath = proj.repo;
+      if (!repoPath) {
+        try {
+          const reg = loadRegistry();
+          const lower = project.toLowerCase();
+          const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+          const match = reg.projects.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
+          if (match?.path) repoPath = match.path;
+        } catch { /* */ }
+      }
+      if (!repoPath) return txt(`❌ Aucun repo_path connu pour "${project}". Set proj.repo via declare_project ou enregistre le projet dans le registry.`);
+
+      const audit = await auditProject(repoPath);
+      if (persist) {
+        proj.health = audit;
+        proj.updatedAt = new Date();
+        proj.updatedBy = getSessionName(sessionId);
+        saveProject(proj);
+      }
+
+      const lines = [
+        `🩺 Audit : "${project}"`,
+        `   📁 ${audit.repo_path}`,
+      ];
+      if (!audit.exists) {
+        lines.push(`   ❌ ${audit.error || "repo missing"}`);
+      } else {
+        lines.push(`   📊 Score : ${audit.score}/100`);
+        const docBits = [];
+        docBits.push(audit.readme_present ? `README (${audit.readme_age_days}d)` : "no README");
+        docBits.push(audit.claude_md_present ? "CLAUDE.md ✓" : "no CLAUDE.md");
+        if (audit.license) docBits.push(`license=${audit.license}`);
+        lines.push(`   📚 ${docBits.join(" · ")}`);
+        const hygBits = [];
+        hygBits.push(audit.gitignore_present ? ".gitignore ✓" : "no .gitignore");
+        hygBits.push(audit.has_tests ? "tests ✓" : "no tests");
+        if (audit.ci) hygBits.push(`ci=${audit.ci}`);
+        lines.push(`   🧹 ${hygBits.join(" · ")}`);
+        if (audit.is_git_repo) {
+          const gitBits = [];
+          if (audit.branch) gitBits.push(`branch=${audit.branch}`);
+          if (audit.last_commit_age_days !== null) gitBits.push(`last_commit=${audit.last_commit_age_days}d ago`);
+          if (audit.uncommitted) gitBits.push(`${audit.uncommitted} uncommitted`);
+          if (audit.ahead_of_remote) gitBits.push(`+${audit.ahead_of_remote} ahead`);
+          if (audit.behind_remote) gitBits.push(`-${audit.behind_remote} behind`);
+          lines.push(`   🌳 ${gitBits.join(" · ")}`);
+        }
+        if (audit.warnings?.length) {
+          lines.push(`   ⚠️ ${audit.warnings.join(" · ")}`);
+        }
+      }
+      if (persist) lines.push(`\n💾 Persisté dans project-state.json (project.health).`);
+      return txt(lines.join("\n"));
+    }
+  );
+
+  server.tool(
+    "harmonize_ideas",
+    "Lance une passe de harmonisation : cluster les idées par similarité (Jaccard sur title+body+axes+related_projects), " +
+    "met à jour cluster_id + similar_to sur chaque idée, et propose des syntheses sur #ideation. " +
+    "Idempotent : re-rouler stabilise les clusters tant que les idées n'ont pas changé. " +
+    "À déclencher manuellement ou via cron (register_trigger type=cron).",
+    {
+      threshold: z.number().default(0.25).describe("Seuil Jaccard min pour lier deux idées (0.0-1.0). Défaut 0.25."),
+      min_cluster_size: z.number().default(2).describe("Taille min d'un cluster pour être reporté. Défaut 2."),
+      post_to_channel: z.boolean().default(true).describe("Si true (défaut), poste un summary sur #ideation."),
+      statuses: z.array(z.enum(["raw", "clustered", "scoped", "started", "shelved"])).optional()
+        .describe("Statuses à inclure dans le scan. Défaut : raw + clustered."),
+    },
+    async ({ threshold, min_cluster_size, post_to_channel, statuses }) => {
+      const name = getSessionName(sessionId);
+      const report = await runHarmonizer({ threshold, min_cluster_size, statuses });
+      const summary = formatHarmonizerSummary(report);
+      if (post_to_channel && state.channels.has("ideation") && report.clusters.length > 0) {
+        pushMessage({
+          id: randomUUID(), from: sessionId, fromName: name,
+          channel: "ideation",
+          content: summary,
+          timestamp: new Date(),
+        });
+        notify("ideation", sessionId);
+      }
+      const meta = `\n📊 ${report.total_ideas} idée(s) scannée(s) · ${report.links_found} lien(s) au seuil ${report.threshold} · ${report.clusters.length} cluster(s) ≥ ${report.min_cluster_size}`;
+      return txt(summary + meta);
+    }
+  );
+
+  server.tool(
+    "audit_all_projects",
+    "Audite tous les projets du registry en batch (concurrence cap=4). Persistance optionnelle. " +
+    "Coûteux — ~50-200ms par projet. Pour 132 projets, attendre ~5-10s. Préférer audit_project pour les check ponctuels.",
+    {
+      persist: z.boolean().default(false).describe("Si true, écrit chaque audit dans project-state.json. Défaut false (read-only)."),
+      concurrency: z.number().default(4).describe("Nombre d'audits parallèles. 4 = bon équilibre."),
+      min_score: z.number().optional().describe("Filtrer la sortie aux projets dont le score est ≤ ce seuil"),
+      limit: z.number().default(20).describe("Cap du résultat affiché"),
+    },
+    async ({ persist, concurrency, min_score, limit }) => {
+      const reg = loadRegistry();
+      const projects = reg.projects.filter(p => p.path && p.name).map(p => ({ name: p.name, path: p.path }));
+      if (projects.length === 0) return txt(`📭 Aucun projet avec path dans le registry.`);
+
+      const startedAt = Date.now();
+      const audits = await auditMany(projects, concurrency);
+      const elapsed = Date.now() - startedAt;
+
+      // Persist to project-state if requested
+      if (persist) {
+        for (const [name, audit] of audits) {
+          const proj = state.projects.get(name);
+          if (proj && audit.exists) {
+            proj.health = audit;
+            proj.updatedAt = new Date();
+            proj.updatedBy = getSessionName(sessionId);
+            saveProject(proj);
+          }
+        }
+      }
+
+      // Build summary, optionally filtered by min_score
+      const rows = [...audits.entries()]
+        .filter(([, a]) => a.exists)
+        .map(([name, a]) => ({ name, score: a.score, warnings: a.warnings, last_commit_age_days: a.last_commit_age_days }))
+        .filter(r => min_score === undefined || r.score <= min_score)
+        .sort((a, b) => a.score - b.score);
+
+      const missing = [...audits.entries()].filter(([, a]) => !a.exists).map(([n]) => n);
+      const top = rows.slice(0, limit);
+
+      const lines = [
+        `🩺 Audit batch terminé : ${audits.size} projets en ${elapsed}ms${persist ? " (persisté)" : " (read-only)"}`,
+        `   📊 Scores : min=${rows[0]?.score ?? "—"} max=${rows[rows.length - 1]?.score ?? "—"} avg=${rows.length ? Math.round(rows.reduce((s, r) => s + r.score, 0) / rows.length) : "—"}`,
+      ];
+      if (missing.length) lines.push(`   ⚠️ ${missing.length} projet(s) avec path manquant : ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}`);
+      if (top.length === 0) {
+        lines.push(`\n📭 Aucun projet ne matche le filtre (min_score=${min_score}).`);
+      } else {
+        lines.push(`\n${min_score !== undefined ? `Top ${top.length} avec score ≤ ${min_score}` : `Top ${top.length} (par score croissant) :`}\n`);
+        for (const r of top) {
+          const w = r.warnings?.length ? ` — ${r.warnings.slice(0, 3).join(" · ")}${r.warnings.length > 3 ? "…" : ""}` : "";
+          lines.push(`  ${r.score < 30 ? "🔴" : r.score < 60 ? "🟡" : "🟢"} ${r.score}/100  ${r.name}${w}`);
+        }
+      }
+      lines.push(`\n💡 audit_project("<name>") pour le détail · set_project_meta() pour enrichir purpose/axes/lifecycle.`);
+      return txt(lines.join("\n"));
+    }
+  );
+
   // ══ SPAWN ═════════════════════════════════════════════════════════════════════
+
+  server.tool(
+    "contact_agent",
+    "Joindre un agent en déposant un message dans SA maison (canal-projet), en le @mentionnant. " +
+    "Async par défaut : il le relève à son prochain tour via son hook boîte mail — qu'il soit en ligne ou pas, tu ne bloques jamais. Sa réponse te reviendra dans TA maison. " +
+    "wake=true pour réveiller activement un agent offline (reprise --resume). " +
+    "Avec `also_invite` + `thread` : crée un canal partagé multi-parties.",
+    {
+      target: z.string().describe("Nom de l'agent principal à contacter"),
+      message: z.string().describe("Le message / la demande à transmettre"),
+      expects_reply: z.boolean().optional().describe("Si true, on demande explicitement une réponse"),
+      wake: z.boolean().optional().describe("Si true et l'agent est offline : le réveiller activement (spawn --resume). Défaut false = livraison async, il verra à son retour."),
+      repo_path: z.string().optional().describe("Override du repo (sinon auto-résolu)"),
+      also_invite: z.array(z.string()).optional().describe("Autres agents à inviter dans la discussion (multi-parties)"),
+      thread: z.string().optional().describe("Nom du canal partagé à créer/réutiliser (ex: 'zebra-qgis-filter'). Si absent avec also_invite, auto-généré."),
+    },
+    async ({ target, message, expects_reply, wake, repo_path, also_invite, thread }) => {
+      const senderName = getSessionName(sessionId);
+      const resolution = resolveAgentName(target);
+      const name = resolution.name;
+      if (name.toLowerCase() === senderName.toLowerCase()) return txt(`❌ Tu ne peux pas te contacter toi-même.`);
+
+      // ── MULTI-PARTY THREAD : also_invite → canal partagé + invitations ────────
+      const allParticipants = also_invite?.length ? [name, ...also_invite] : null;
+      if (allParticipants) {
+        // Create or reuse the shared channel
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+        const channelSlug = thread
+          ? thread.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 40)
+          : `thread-${name.toLowerCase().replace(/[^a-z0-9]/g, "")}-${date}`;
+
+        if (!state.channels.has(channelSlug)) {
+          state.channels.set(channelSlug, {
+            name: channelSlug,
+            description: `Discussion ${senderName} + ${allParticipants.join(", ")}${thread ? ` — ${thread}` : ""}`,
+            createdBy: senderName, createdAt: new Date(),
+          });
+          try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch {}
+        }
+
+        // Post opening message on the shared channel
+        pushMessage({
+          id: randomUUID(), from: sessionId, fromName: senderName,
+          channel: channelSlug, content: message, timestamp: new Date(),
+          expects_reply: expects_reply ?? true, status: "over",
+        });
+        notify(channelSlug, sessionId);
+
+        // Invite each participant via DM (online) or contact (offline)
+        const results = [];
+        for (const pName of allParticipants) {
+          const res = resolveAgentName(pName);
+          const pResolved = res.name;
+          const pFound = getSessionByName(pResolved);
+          const pLive = pFound ? state.sessions.get(pFound.id) : null;
+          const pOnline = pLive && pLive.availability !== "stale" &&
+            (!pLive.lastSeen || Date.now() - new Date(pLive.lastSeen).getTime() < 5 * 60 * 1000) &&
+            pFound?.id !== sessionId;
+          const invite = `📬 ${senderName} t'invite sur #${channelSlug} — rejoins la discussion et poste via send_message(channel="${channelSlug}").`;
+          if (pOnline) {
+            const dm = resolveDMChannel(sessionId, pResolved);
+            pushMessage({ id: randomUUID(), from: sessionId, fromName: senderName, channel: dm.channel, content: invite, timestamp: new Date(), isDM: true, expects_reply: true, status: "over" });
+            notify(dm.channel, sessionId);
+            results.push(`  📩 ${pResolved} (online) — DM d'invitation envoyé`);
+          } else {
+            // Best-effort offline contact — fire and forget
+            const csid = recall(pResolved, "__claude_session_id");
+            const stripWk = p => p ? p.replace(/[\\/]\.wikichat[\\/]?$/, "") : null;
+            const pRepo = repo_path || recall(pResolved, "__cwd")
+              || stripWk(pLive?.storage_path)
+              || (() => { const e = loadSpawnRegistry().find(x => x.name === pResolved); return stripWk(e?.storage_path); })()
+              || (() => { for (const p of state.projects.values()) { const a = p.agents?.[pResolved]; if (a?.repo_path) return a.repo_path; } return null; })();
+            if (pRepo && fs.existsSync(pRepo)) {
+              const spawnPrompt = `📨 ${senderName} t'invite sur #${channelSlug} :\n\n${message}\n\nregister(name="${pResolved}") puis poste sur #${channelSlug} via send_message(channel="${channelSlug}", ..., status="over").`;
+              spawnHeadless(pRepo, spawnPrompt, { name: pResolved, role: pLive?.role || "agent", port: parseInt(process.env.PORT || "3777"), spawnedBy: senderName, resumeSessionId: csid || null }).catch(() => {});
+              results.push(`  🔁 ${pResolved} (offline) — spawn ${csid ? "--resume" : "frais"}`);
+            } else {
+              results.push(`  ⚠️ ${pResolved} — offline, repo inconnu (relance-le d'abord)`);
+            }
+          }
+        }
+        return txt(
+          `🧵 Canal #${channelSlug} ouvert — ${allParticipants.length} participant(s) invité(s):\n${results.join("\n")}\n\n` +
+          `💬 Poste sur #${channelSlug} via send_message(channel="${channelSlug}", ...)\n` +
+          `👁️ Chaque participant reçoit les nouveaux messages via son hook boîte mail.`
+        );
+      }
+
+      const found = getSessionByName(name);
+      const live = found ? state.sessions.get(found.id) : null;
+      const online = live && live.availability !== "stale" &&
+        (!live.lastSeen || Date.now() - new Date(live.lastSeen).getTime() < 5 * 60 * 1000) &&
+        found.id !== sessionId;
+
+      // ── DEFAULT : deposit in the recipient's HOME (project channel), @mentioning
+      //    them. This is the stable address the volatile display name never was —
+      //    it works identically online or offline (the hook delivers at their next
+      //    turn), and their reply lands in YOUR home. No blocking, no spawn, no
+      //    fresh-lineage hallucination. ──────────────────────────────────────────
+      const targetHome = homeChannelFor(name);
+      if (targetHome) {
+        let ch = state.channels.get(targetHome);
+        if (!ch) {
+          ch = { name: targetHome, description: `🏠 Maison projet — agents y vivent et s'y joignent par @mention`, createdBy: name, createdAt: new Date(), participants: [name.toLowerCase()] };
+          state.channels.set(targetHome, ch);
+          try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch { /* */ }
+        }
+        const msg = pushMessage({
+          id: randomUUID(), from: sessionId, fromName: senderName,
+          channel: targetHome, content: `@${name} ${message}`, timestamp: new Date(),
+          expects_reply: expects_reply ?? true, status: "over",
+        });
+        notify(targetHome, sessionId);
+
+        // Optionally wake an offline agent so it answers now instead of at its
+        // next human-driven turn. Opt-in (wake=true) so we never silently spawn a
+        // fresh lineage that invents context.
+        let wakeNote = "";
+        if (!online && wake) {
+          const csid0 = recall(name, "__claude_session_id");
+          const stripWk0 = p => p ? p.replace(/[\\/]\.wikichat[\\/]?$/, "") : null;
+          const repo0 = repo_path || recall(name, "__cwd")
+            || stripWk0(live?.storage_path)
+            || (() => { const e = loadSpawnRegistry().find(x => x.name === name); return stripWk0(e?.storage_path); })();
+          if (repo0 && fs.existsSync(repo0)) {
+            const wakePrompt = `📨 ${senderName} t'a déposé un message dans ta maison #${targetHome} :\n\n${message}\n\nTu es "${name}". ${csid0 ? "Reprends ta session — garde ton contexte. " : ""}register(name="${name}") si besoin, lis via poll(), réponds via send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over").`;
+            spawnHeadless(repo0, wakePrompt, { name, role: live?.role || "agent", port: parseInt(process.env.PORT || "3777"), spawnedBy: senderName, resumeSessionId: csid0 || null }).catch(() => {});
+            wakeNote = `\n🔁 Réveil ${csid0 ? "--resume" : "frais"} lancé (wake=true).`;
+          } else {
+            wakeNote = `\n⚠️ wake demandé mais repo inconnu — il verra le message à son retour.`;
+          }
+        }
+
+        const stateNote = online
+          ? `Il est EN LIGNE — il le relèvera à son prochain tour (hook).`
+          : `Il est offline — le message l'attend dans sa maison, livré dès son retour.${wake ? "" : " (wake=true pour le réveiller maintenant.)"}`;
+        return txt(
+          `📬 Déposé dans la maison de ${name} → #${targetHome} (🆔 ${msg.id.slice(0, 8)}), il est @mentionné.\n${stateNote}${wakeNote}\n` +
+          `↩️ Sa réponse te reviendra dans TA maison — relève avec poll().`
+        );
+      }
+
+      // ── FALLBACK : home unknown (cwd/projet jamais reporté) → legacy. Online =
+      //    DM direct ; offline = reprise seulement si wake (sinon on ne peut rien
+      //    faire d'utile sans adresse stable). ──────────────────────────────────
+      if (online) {
+        const dm = resolveDMChannel(sessionId, name);
+        const msg = pushMessage({
+          id: randomUUID(), from: sessionId, fromName: senderName,
+          channel: dm.channel, content: message, timestamp: new Date(),
+          isDM: true, expects_reply: expects_reply ?? null, status: "over",
+        });
+        notify(dm.channel, sessionId);
+        return txt(`📩 ${name} est EN LIGNE (maison inconnue) — DM envoyé (🆔 ${msg.id.slice(0, 8)}). Il le relèvera à son prochain tour.`);
+      }
+
+      if (!wake) {
+        return txt(`📭 ${name} est offline et sa maison (canal-projet) est inconnue — rien à quoi l'adresser de stable.\n💡 Passe wake=true pour le réveiller (reprise --resume), ou repo_path=... pour fixer son repo.`);
+      }
+
+      // ── OFFLINE + wake → reprise (--resume) ou spawn frais ──
+      const csid = recall(name, "__claude_session_id");
+      const stripWk = p => p ? p.replace(/[\\/]\.wikichat[\\/]?$/, "") : null;
+      let repo = repo_path
+        || recall(name, "__cwd")
+        || stripWk(live?.storage_path)
+        || (() => { const e = loadSpawnRegistry().find(x => x.name === name); return stripWk(e?.storage_path); })()
+        || (() => { for (const p of state.projects.values()) { const a = p.agents?.[name]; if (a?.repo_path) return a.repo_path; } return null; })();
+
+      if (!repo || !fs.existsSync(repo)) {
+        return txt(`❌ ${name} est offline et je ne sais pas où reprendre sa session (cwd/registry/roster introuvables). Relance-le une fois pour qu'il s'enregistre, ou passe repo_path=...`);
+      }
+
+      const prompt =
+        `📨 Message direct de ${senderName} (via WikiChat) :\n\n${message}\n\n` +
+        `Tu es "${name}". ${csid ? "Tu reprends ta session précédente — garde ton contexte. " : ""}` +
+        `register(name="${name}") si tu n'es pas déjà enregistré, puis réponds à ${senderName} via ` +
+        `send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over"). ` +
+        `Si rien à ajouter, send_message(..., status="done").`;
+
+      const ticketId = randomUUID().slice(0, 8);
+      state.spawnTickets.set(ticketId, {
+        id: ticketId, name, mode: "contact", repo: path.basename(repo),
+        spawnedBy: senderName, spawnerId: sessionId,
+        status: "running", createdAt: new Date(), completedAt: null, result: null,
+      });
+
+      const resumed = !!csid;
+      sysMsg("coordination", `📨 ${senderName} contacte "${name}" (offline) → ${resumed ? "reprise --resume" : "spawn frais"} [ticket:${ticketId}]`);
+      notify("coordination", sessionId);
+
+      spawnHeadless(repo, prompt, {
+        name, role: live?.role || "agent",
+        port: parseInt(process.env.PORT || "3777"),
+        spawnedBy: senderName,
+        resumeSessionId: csid || null,
+      }).then(result => {
+        const t = state.spawnTickets.get(ticketId);
+        if (t) { t.status = result.success ? "completed" : "failed"; t.completedAt = new Date(); t.result = { success: result.success, exitCode: result.exitCode }; }
+        notifyWaiters("__tickets__", null);
+        pushDashboardUpdate();
+      }).catch(() => {
+        const t = state.spawnTickets.get(ticketId);
+        if (t) { t.status = "failed"; t.completedAt = new Date(); }
+        notifyWaiters("__tickets__", null);
+      });
+
+      return txt(
+        `🔁 ${name} est OFFLINE → ${resumed ? "reprise de SA session (--resume) " : "spawn frais "}avec ton message [ticket:${ticketId}].\n` +
+        `${resumed ? "Il continue à la suite de son historique." : "⚠️ Pas de claude_session_id connu → contexte neuf (il se ré-enregistre)."}\n` +
+        `💡 poll_ticket("${ticketId}") ou poll_messages(channel="@${name}") pour sa réponse.`
+      );
+    }
+  );
 
   server.tool(
     "spawn_session",
@@ -1138,12 +2421,34 @@ export function registerTools(server, sessionId) {
           spawnedBy: launcherName,
         }).then(result => {
           const status = result.success ? "✅ terminé" : `❌ échec (exit ${result.exitCode})`;
-          // Update ticket
           ticket.status = result.success ? "completed" : "failed";
           ticket.completedAt = new Date();
           ticket.result = { success: result.success, exitCode: result.exitCode };
           sysMsg("coordination", `${status} — headless "${name}" dans ${repoName} [ticket:${ticketId}]`);
-          // Notify spawner via waiters
+          // DM the spawner on pre-flight failures so they know what happened
+          if (!result.success && result.exitCode < 0) {
+            const reason =
+              result.exitCode === -2 ? `Budget atteint — trop de sessions actives` :
+              result.exitCode === -3 ? `Profondeur de spawn maximale atteinte` :
+              result.exitCode === -4 ? `Quota quotidien/concurrent atteint` :
+              result.stderr?.slice(0, 200) || "Échec inconnu";
+            const spawnerSession = getSessionByName(launcherName);
+            const dmKey = dmChannelKey("Système", launcherName);
+            if (!state.channels.has(dmKey)) {
+              state.channels.set(dmKey, {
+                name: dmKey, description: `DM Système → ${launcherName}`,
+                createdBy: "system", createdAt: new Date(),
+                isDM: true, participants: ["système", launcherName.toLowerCase()],
+              });
+            }
+            pushMessage({
+              id: randomUUID(), from: "system", fromName: "🔔 Système",
+              channel: dmKey, isDM: true,
+              content: `❌ Spawn échoué pour "${name}" (exit ${result.exitCode}): ${reason}`,
+              timestamp: new Date(),
+            });
+            if (spawnerSession) notify(dmKey, null);
+          }
           notifyWaiters("__tickets__", null);
           pushDashboardUpdate();
         }).catch(() => {
@@ -1196,6 +2501,23 @@ export function registerTools(server, sessionId) {
           ticket.status = "failed";
           ticket.completedAt = new Date();
           ticket.result = { success: false, error: result.error };
+          // DM the spawner so they know why the daemon failed to start
+          const dmKey = dmChannelKey("Système", launcherName);
+          if (!state.channels.has(dmKey)) {
+            state.channels.set(dmKey, {
+              name: dmKey, description: `DM Système → ${launcherName}`,
+              createdBy: "system", createdAt: new Date(),
+              isDM: true, participants: ["système", launcherName.toLowerCase()],
+            });
+          }
+          pushMessage({
+            id: randomUUID(), from: "system", fromName: "🔔 Système",
+            channel: dmKey, isDM: true,
+            content: `❌ Spawn daemon échoué pour "${name}": ${result.error}`,
+            timestamp: new Date(),
+          });
+          const spawnerSession = getSessionByName(launcherName);
+          if (spawnerSession) notify(dmKey, null);
           return txt(`❌ Échec daemon "${name}": ${result.error}`);
         }
       }
