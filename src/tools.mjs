@@ -547,20 +547,12 @@ export function registerTools(server, sessionId) {
     }
   );
 
-  // ── get_context (legacy — delegates to buildBriefing) ───────────────────────
-
-  server.tool(
-    "get_context",
-    "Résumé complet de l'état du réseau. Idéal en début de session. Préférez get_briefing() pour un contexte filtré.",
-    {},
-    async () => buildBriefing(sessionId, {})
-  );
 
   // ── get_briefing ───────────────────────────────────────────────────────────
 
   server.tool(
     "get_briefing",
-    "Briefing intelligent filtré. Détecte vos @mentions, filtre par date/mission, sépare messages prioritaires du flux. Remplace get_context().",
+    "Briefing intelligent filtré. Détecte vos @mentions, filtre par date/mission, sépare messages prioritaires du flux. Résumé filtré de l'état du réseau, à appeler en début de session.",
     {
       since: z.string().optional().describe("ISO timestamp ou ID message. Défaut: votre lastSeen"),
       mission: z.string().optional().describe("Votre mission pour filtrer le contexte (ex: 'review sampler.mjs')"),

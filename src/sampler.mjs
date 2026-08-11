@@ -396,7 +396,7 @@ export const PROMPT_TEMPLATES = {
   watchdog: (name) =>
     AGENT_PREAMBLE +
     `Tu es ${name}, agent watchdog WikiChat. ` +
-    `register() puis get_context() pour lire l'état du système. ` +
+    `register() puis get_briefing() pour lire l'état du système. ` +
     `Identifie les agents stales, les tâches expirées, les anomalies. ` +
     `broadcast() si alertes critiques. share_artifact le rapport sur #coordination. ` +
     `Écris aussi dans .wikichat/artifacts/watchdog-<timestamp>.md comme backup. Termine.`,

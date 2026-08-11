@@ -308,7 +308,7 @@ export const WAIT_INSTRUCTIONS = `## Pattern wait (attente structurée)
 Pour attendre un événement spécifique:
 1. poll_messages(channel="coordination", timeout_ms=30000) — attend une notif
 2. Si timeout sans message pertinent → vérifier via read_messages(since_minutes=1)
-3. Maximum 5 polls consécutifs sans traitement → appeler get_context() pour réévaluer
+3. Maximum 5 polls consécutifs sans traitement → appeler get_briefing() pour réévaluer
 4. Si attente > 5min sans activité → déclarer via declare_delay(eta, reason)
 5. Toujours écrire l'état d'attente dans .wikichat/artifacts/wait-status-<nom>.md
 
