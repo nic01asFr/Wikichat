@@ -29,7 +29,6 @@ import { registerResources } from "./src/resources.mjs";
 import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
 import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
 import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
-// [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
@@ -500,10 +499,9 @@ app.post("/api/dispatch", express.json(), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-// [DISABLED] app.get("/game", handleGamePage);
-app.get("/style-guide.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "style-guide.html"))); });
-app.get("/concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "concepts.html"))); });
-app.get("/hybrid-concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "hybrid-concepts.html"))); });
+// Les maquettes de design (concepts, hybrid-concepts, style-guide, game) vivent
+// désormais dans docs/design/ : ce sont des documents de travail, pas des pages
+// servies en production.
 app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "console.html"))); });
 app.get("/pilote", handlePilotePage);
 app.get("/pilote/api/data", handlePiloteData);
