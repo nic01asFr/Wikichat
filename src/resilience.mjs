@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *  - Persist cron job registrations to disk (survive server restart)
- *  - Session watchdog: detect stale/dead spawned sessions and auto-respawn
+ *  - Session watchdog: detect stale sessions (émet un événement stale)
  *  - Heartbeat tracking: update lastSeen, flag dead sessions
  *  - Spawn retry queue: if a spawn fails, retry with backoff
  */
@@ -111,12 +111,10 @@ const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
  * Start a watchdog that runs every 60 seconds.
  *
  * @param {Object} appState  — shared in-memory state (state.sessions, etc.)
- * @param {Function} spawnRegistryLoader — () => Array of spawn registry entries
- * @param {Function} respawnFn — async (entry) => void, called when auto-respawn needed
- * @param {Function} pushUpdate — () => void, called after each cycle
+ * (les paramètres spawnRegistryLoader/respawnFn ont disparu avec l'auto-respawn)
  * @returns {NodeJS.Timeout} — interval handle for stopWatchdog()
  */
-export function startWatchdog(appState, spawnRegistryLoader, respawnFn) {
+export function startWatchdog(appState) {
   const handle = setInterval(async () => {
     const now = Date.now();
 
@@ -134,30 +132,15 @@ export function startWatchdog(appState, spawnRegistryLoader, respawnFn) {
       }
     }
 
-    // 2. Auto-respawn dead spawned sessions
-    let spawnRegistry;
-    try {
-      spawnRegistry = spawnRegistryLoader();
-    } catch {
-      spawnRegistry = [];
-    }
+    // L'auto-respawn vivait ici. Il testait `entry.type === "spawned"` et
+    // `entry.autoRespawn`, deux champs qu'aucun writer n'a jamais posés : sur
+    // 54 entrées du registre, zéro les portait. La boucle était donc
+    // inatteignable depuis toujours, alors que README et CLAUDE.md annonçaient
+    // un « daemon auto-respawn ». Retirée plutôt que réparée : les daemons
+    // résidents ont été remplacés par des spawns déclenchés sur événement,
+    // il n'y a plus de processus à maintenir en vie.
 
-    for (const entry of spawnRegistry) {
-      if (entry.type !== "spawned") continue;
-      if (!entry.autoRespawn) continue;
-
-      const live = [...appState.sessions.values()].find(s => s.name === entry.name);
-      if (!live) {
-        console.log(`[Watchdog] "${entry.name}" not found — attempting auto-respawn…`);
-        try {
-          await respawnFn(entry);
-        } catch (err) {
-          console.error(`[Watchdog] Respawn failed for "${entry.name}":`, err.message);
-        }
-      }
-    }
-
-    // 3. Check overdue cron agents
+    // 2. Check overdue cron agents
     let crons;
     try {
       crons = loadCronRegistry();

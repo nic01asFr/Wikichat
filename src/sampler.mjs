@@ -248,6 +248,15 @@ PROTOCOLE OBLIGATOIRE — MCP-FIRST:
 5. Écris aussi ton résultat dans .wikichat/artifacts/<timestamp>_<titre>.md comme backup local.
 6. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
    format: {"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>","data":{"title":"...","content":"..."}}
+
+AVANT DE TERMINER — consigne ce qui doit survivre à ta session :
+- Décision actée, blocage rencontré ou question laissée ouverte qui engage le projet
+  → add_project_note(project=<projet>, type="decision"|"blocker"|"question", content=<une ligne précise>).
+- Chose comprise qui servira à la prochaine session portant TON nom (et à elle seule)
+  → remember(<clé>, <valeur>).
+Ton historique de conversation, lui, ne survit pas : il appartient à Claude Code et
+disparaît. Ces deux traces sont ce qu'on retrouvera de toi. N'y mets rien d'autre —
+pas de compte rendu, pas de recopie de l'artefact.
 `;
 
 // ── KB context injection ──────────────────────────────────────────────────────

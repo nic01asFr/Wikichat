@@ -178,23 +178,8 @@ if (persistedCrons.length > 0) {
   console.log(`[WikiChat] ${persistedCrons.length} cron(s) persistés chargés`);
 }
 
-// Start watchdog (runs every 60s: stale detection, auto-respawn, cron health)
-const watchdogHandle = startWatchdog(
-  state,
-  loadSpawnRegistry,
-  async (entry) => {
-    if (entry.mode === "daemon" && entry.repo_path) {
-      console.log(`[Watchdog] Auto-respawning daemon: ${entry.name}`);
-      spawnDaemon(entry.repo_path, {
-        name: entry.name, role: entry.role, task: entry.task,
-        port: PORT, spawnedBy: "watchdog-respawn",
-      });
-      sysMsg("coordination", `🔄 Watchdog relance "${entry.name}" (daemon auto-respawn)`);
-    } else {
-      console.log(`[Watchdog] Would respawn: ${entry.name}`);
-    }
-  }
-);
+// Watchdog (60s) : détection des sessions inactives + alerte crons en retard
+const watchdogHandle = startWatchdog(state);
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 function gracefulShutdown(signal) {
   console.log(`[WikiChat] ${signal} received — shutting down gracefully...`);
