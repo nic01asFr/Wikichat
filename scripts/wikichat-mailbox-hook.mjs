@@ -104,13 +104,21 @@ async function main() {
   // cursor — it just asks "anything new for me?" and the server dedupes via the
   // shared cursor. since_minutes=10 only matters on first activation (when the
   // server has no cursor yet) to catch already-waiting mail.
-  const q = `agent=${encodeURIComponent(agent)}&since_minutes=10`;
+  // wait_ms : le serveur ne guette QUE si cet agent est déjà dans un échange
+  // récent — sinon il répond immédiatement. Sans cette fenêtre, une session ne
+  // reçoit qu'à la fin de ses propres tours : deux sessions interactives qui
+  // s'organisent doivent alors être relancées à la main pour avancer d'un tour.
+  // Avec elle, celle qui vient de parler attend la réponse et enchaîne seule.
+  const WAIT_MS = parseInt(process.env.WIKICHAT_HOOK_WAIT_MS || "45000");
+  const q = `agent=${encodeURIComponent(agent)}&since_minutes=10&wait_ms=${WAIT_MS}`;
   const url = `${base}/api/inbox?${q}`;
 
   let data;
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 3000); // never hang the turn on a down server
+    // Marge au-delà de l'attente serveur : on ne coupe jamais une écoute en cours,
+    // mais on ne pend jamais non plus si le serveur est tombé.
+    const t = setTimeout(() => ctrl.abort(), WAIT_MS + 5000);
     const resp = await fetch(url, { signal: ctrl.signal });
     clearTimeout(t);
     if (!resp.ok) return done();

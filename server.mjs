@@ -23,7 +23,7 @@ import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMess
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE, getIdentityBinding, saveIdentityBinding, touchIdentityBinding } from "./src/persistence.mjs";
 import { loadMemories, flushMemories, restoreIdentity, remember, recall } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
-import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
+import { clearWaiters, notifyWaiters, registerWaiter } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
 import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
@@ -745,10 +745,34 @@ app.get("/api/messages", (req, res) => {
 // new lastId to store. Without since_id, pass since_minutes=N to catch recent
 // unread on first activation (so already-pending messages aren't missed); with
 // neither, an empty baseline + current lastId is returned (arm without replay).
-app.get("/api/inbox", (req, res) => {
+/**
+ * Une conversation est "chaude" quand cet agent a émis ou reçu un message dans
+ * la fenêtre récente. C'est le signal qui autorise le hook à guetter au lieu de
+ * rendre la main immédiatement : deux sessions qui s'organisent enchaînent
+ * alors leurs tours toutes seules, sans que l'humain relance l'une des deux.
+ * Hors conversation, la réponse reste instantanée — aucune latence ajoutée.
+ */
+const CONVERSATION_WINDOW_MS = 4 * 60 * 1000;
+function conversationIsHot(agent) {
+  const lc = agent.toLowerCase();
+  const cutoff = Date.now() - CONVERSATION_WINDOW_MS;
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const m = state.messages[i];
+    if (new Date(m.timestamp).getTime() < cutoff) break; // messages triés : inutile de remonter plus loin
+    if (m.from === "system") continue;
+    const mine = (m.fromName || "").toLowerCase() === lc;
+    const forMe = (m.content || "").toLowerCase().includes(`@${lc}`)
+      || (m.isDM && isAgentInDMChannel(agent, m.channel));
+    if (mine || forMe) return true;
+  }
+  return false;
+}
+
+app.get("/api/inbox", async (req, res) => {
   const agent = (req.query.agent || "").toString().trim();
   if (!agent) { res.status(400).json({ error: "agent required" }); return; }
   const sinceMin = parseFloat(req.query.since_minutes) || 0;
+  const waitMs = Math.min(Math.max(parseInt(req.query.wait_ms) || 0, 0), 60000);
 
   // Unified cursor : the server owns ONE cursor per identity, in the same
   // persistent identity memory used by the `poll` MCP tool. So push (this hook
@@ -760,7 +784,19 @@ app.get("/api/inbox", (req, res) => {
   const serverCursor = recall(agent, "__inbox_cursor");
   const sinceId = explicitSince || serverCursor || null;
 
-  const result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+  let result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+
+  // Boîte vide + conversation en cours → on guette au lieu de rendre la main.
+  // C'est ce qui permet à deux sessions interactives de s'enchaîner : sans
+  // cette attente, chacune ne reçoit qu'à la fin de ses propres tours, donc il
+  // faut relancer l'une des deux à la main pour que l'échange progresse.
+  let waited = false;
+  if (result.messages.length === 0 && waitMs > 0 && conversationIsHot(agent)) {
+    waited = true;
+    await registerWaiter(`hook:${agent}`, "__all__", waitMs);
+    clearWaiters(`hook:${agent}`);
+    result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+  }
 
   // Advance the shared cursor to the newest id we just accounted for (covers
   // resync/baseline too — arm at the head without replaying history).
@@ -775,6 +811,7 @@ app.get("/api/inbox", (req, res) => {
   res.json({
     agent, count: messages.length, messages,
     lastId: result.lastId ?? sinceId,
+    waited,
     ...(result.resynced ? { resynced: true } : {}),
     ...(result.baseline ? { baseline: true } : {}),
   });
