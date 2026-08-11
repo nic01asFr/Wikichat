@@ -42,6 +42,7 @@ import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daem
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
 import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
+import { emitEvent } from "./src/events.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
 import { auditProject, auditMany } from "./src/repo-audit.mjs";
@@ -332,6 +333,7 @@ setInterval(async () => {
         console.log(`[WikiChat] Picked up ${items.length} queue item(s) from ${p.slug}`);
         for (const item of items) {
           sysMsg("coordination", `📥 [${p.slug}] ${item.agent}: ${item.type}${item.data?.message ? " — " + item.data.message : ""}`);
+          emitEvent("queue", `${p.slug} — ${item.agent} a déposé "${item.type}" hors ligne`, { project: p.slug, agent: item.agent });
         }
       }
 
@@ -341,6 +343,7 @@ setInterval(async () => {
         console.log(`[WikiChat] Recovered ${artifacts.length} local artifact(s) from ${p.slug}`);
         for (const art of artifacts) {
           sysMsg("coordination", `📄 [${p.slug}] ${art.agent} → "${art.title}" (récupéré localement)`);
+          emitEvent("artifact", `${p.slug} — ${art.agent} a produit "${art.title}"`, { project: p.slug, agent: art.agent });
         }
       }
 
@@ -372,6 +375,7 @@ setInterval(async () => {
         task.outcome = "TTL expiré — libéré automatiquement";
         task.completedAt = now;
         proj.blockers.push(`${id}: claim expiré (${task.claimedBy} injoignable ?)`);
+        emitEvent("task-expired", `${proj.name} — tâche ${id} libérée (${task.claimedBy} injoignable)`, { project: proj.name, agent: task.claimedBy });
         changed = true;
         sysMsg("coordination", `⏰ Tâche "${id}" libérée automatiquement (TTL expiré — ${task.claimedBy} injoignable)`);
       }
@@ -431,16 +435,17 @@ setInterval(async () => {
     const projects = (registry.projects || []).filter(p => p.status !== "missing" && p.path);
     const changed = await scanForChanges(projects);
     if (changed.length > 0) {
-      // Auto-create #insights channel if needed
-      if (!state.channels.has("insights")) {
-        state.channels.set("insights", { name: "insights", description: "Changements et insights détectés automatiquement", createdBy: "system", createdAt: new Date() });
-        saveChannels();
-      }
+      // Un événement par changement, pas un message par projet : les triggers
+      // matchent sur un type précis (`[event:commits`), pas sur un résumé
+      // multi-lignes où plusieurs types se mélangeraient.
       for (const { project, changes } of changed) {
-        const details = changes.changes
-          ? changes.changes.map(c => `  • ${c.detail}`).join("\n")
-          : changes.reason || "changement détecté";
-        sysMsg("insights", `📊 ${project.name}: ${changes.type === "new" ? "premier scan" : "changements détectés"}\n${details}`);
+        if (changes.type === "new") {
+          emitEvent("new-project", `${project.name} — premier snapshot`, { project: project.name });
+          continue;
+        }
+        for (const c of (changes.changes || [])) {
+          emitEvent(c.type, `${project.name} — ${c.detail}`, { project: project.name });
+        }
       }
       console.log(`[WikiChat] Change detection: ${changed.length} project(s) changed`);
     }

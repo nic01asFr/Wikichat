@@ -10,7 +10,7 @@ Headless one-shot. Spécialisation du Librarian pour la compilation initiale d'u
 - Librarian-Absorber (headless) : ingestion d'une closure dans un axe existant
 
 **BOUCLE (one-shot, paramétré par {topic}) :**
-1. `register(name="LibrarianCompiler-<topic>", role="librarian-compiler", agent_type="headless")`
+1. `register(name="LibrarianCompiler-<topic>", role="librarian-compiler", agent_type="headless", claude_session_id="$CLAUDE_SESSION_ID")`
 2. `list_projects()` + `scan_projects()` pour lister tout ce qui peut concerner le topic
 3. Filtre : nom/slug/path/stack/description matchent le topic (case-insensitive)
 4. Pour chaque projet pertinent :

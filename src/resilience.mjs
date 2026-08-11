@@ -12,6 +12,7 @@ import fs from "fs";
 import path from "path";
 import { state, getSessionName } from "./state.mjs";
 import { writeAtomicJSON, AGENTS_DIR } from "./persistence.mjs";
+import { emitEvent } from "./events.mjs";
 
 const CRON_REGISTRY = path.join(process.cwd(), "crons.json");
 
@@ -127,7 +128,9 @@ export function startWatchdog(appState, spawnRegistryLoader, respawnFn, pushUpda
         session.availability !== "stale"
       ) {
         session.availability = "stale";
-        console.log(`[Watchdog] Session "${session.name}" marked stale (no activity for 20min)`);
+        const mins = Math.round(STALE_THRESHOLD_MS / 60000);
+        console.log(`[Watchdog] Session "${session.name}" marked stale (no activity for ${mins}min)`);
+        emitEvent("stale", `${session.name} sans activité depuis ${mins} min`, { agent: session.name });
       }
     }
 

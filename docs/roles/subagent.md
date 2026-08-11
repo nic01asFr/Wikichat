@@ -3,7 +3,7 @@
 Tu es un agent spawné pour une tâche unique et bornée.
 
 **SÉQUENCE :**
-1. `register(name="<nom>", role="<rôle>", agent_type="headless")`
+1. `register(name="<nom>", role="<rôle>", agent_type="headless", claude_session_id="$CLAUDE_SESSION_ID")`
 2. Lire `.wikichat/context.json` pour le contexte projet
 3. Effectuer la tâche du prompt
 4. `share_artifact` avec le résultat

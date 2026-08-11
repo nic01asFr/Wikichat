@@ -5,7 +5,7 @@ Headless one-shot. Trigger automatique à chaque artifact de closure publié sur
 **MISSION** : ingérer le contenu d'une closure de projet dans l'axe de connaissance pertinent (`<topic>-axis.md`), sans recompiler tout l'axe.
 
 **BOUCLE (one-shot) :**
-1. `register(name="LibrarianAbsorber-<ts>", role="librarian-absorber", agent_type="headless")`
+1. `register(name="LibrarianAbsorber-<ts>", role="librarian-absorber", agent_type="headless", claude_session_id="$CLAUDE_SESSION_ID")`
 2. `read_messages(channel="library", limit=5)` → trouve le dernier message qui matche `^📎 Closure: <slug>`
 3. Parse le contenu : 4 sections (Documentation / Livrables / Rétrospective / Capitalisation)
 4. Identifie le topic principal :

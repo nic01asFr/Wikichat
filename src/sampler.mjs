@@ -27,6 +27,7 @@ import { writeAtomicJSON } from "./persistence.mjs";
 import { upsertSpawnRegistry } from "./persistence.mjs";
 import { randomUUID } from "crypto";
 import { state } from "./state.mjs";
+import { recall } from "./identity.mjs";
 
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
@@ -500,8 +501,16 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     if (allowedTools) baseArgs.push("--allowedTools", Array.isArray(allowedTools) ? allowedTools.join(",") : String(allowedTools));
     if (maxTurns) baseArgs.push("--max-turns", String(maxTurns));
     if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
-    if (resumeSessionId) {
-      baseArgs.push("--resume", resumeSessionId);
+    // Même garde que pour les daemons : un ID sans transcript fait échouer le CLI.
+    // Contrairement au daemon, jamais de reprise implicite ici — un headless est
+    // one-shot par nature, il ne reprend que si l'appelant le demande.
+    const resumeHeadless = resumeSessionId
+      ? resolveResumeSession(name, projectPath, resumeSessionId)
+      : null;
+    if (resumeHeadless) {
+      baseArgs.push("--resume", resumeHeadless.sessionId);
+    } else if (resumeSessionId) {
+      console.log(`[spawn] ${name} : transcript de ${resumeSessionId} introuvable — démarrage frais.`);
     }
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
@@ -552,6 +561,79 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
       resolve({ success: false, stdout, stderr: err.message, exitCode: -1 });
     });
   });
+}
+
+// ── Reprise de session (--resume) ─────────────────────────────────────────────
+
+/** Plafond de taille d'un transcript repris. Au-delà, démarrage frais. */
+const MAX_RESUME_BYTES = parseInt(process.env.WIKICHAT_MAX_RESUME_MB || "5") * 1024 * 1024;
+
+/**
+ * Resolve the Claude session an agent should resume, and verify its transcript
+ * still exists on disk and is small enough to be worth reloading.
+ *
+ * `remember(name, "__claude_session_id")` only stores an ID — the actual
+ * conversation lives in ~/.claude/projects/<slug>/<id>.jsonl, which Claude Code
+ * rotates independently. Passing --resume with a rotated ID makes the CLI fail
+ * at startup, so the ID alone is never sufficient : we check the file first and
+ * fall back to a fresh session when it is gone.
+ *
+ * Size matters as much as existence. Long-lived agents accumulate transcripts
+ * that reach hundreds of megabytes ; reloading one would exhaust the daemon's
+ * --max-budget-usd before its first poll. Past MAX_RESUME_BYTES we start fresh —
+ * a resident that loses its history still works, one that burns its budget on
+ * boot does not.
+ *
+ * @param {string} name          - Agent name (memory key)
+ * @param {string} projectPath   - cwd the agent runs in (used to derive the slug)
+ * @param {string} [explicitId]  - Caller-supplied ID ; takes precedence over memory
+ * @returns {{ sessionId: string, transcript: string, bytes: number } | null}
+ */
+export function resolveResumeSession(name, projectPath, explicitId = null) {
+  let sessionId = explicitId;
+  if (!sessionId) {
+    if (!name) return null;
+    try { sessionId = recall(name, "__claude_session_id"); } catch { return null; }
+  }
+  if (!sessionId) return null;
+
+  const projectsDir = path.join(os.homedir(), ".claude", "projects");
+  // Claude Code slugifies the absolute cwd : every non-alphanumeric char → "-".
+  const slug = String(projectPath || "").replace(/[^a-zA-Z0-9]/g, "-");
+
+  let transcript = null;
+  const direct = path.join(projectsDir, slug, `${sessionId}.jsonl`);
+  if (fs.existsSync(direct)) {
+    transcript = direct;
+  } else {
+    // The agent may have moved between repos, or the slug casing may differ —
+    // scan the sibling project dirs before giving up.
+    try {
+      for (const dir of fs.readdirSync(projectsDir)) {
+        const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
+        if (fs.existsSync(candidate)) { transcript = candidate; break; }
+      }
+    } catch { /* no transcripts dir — treat as fresh */ }
+  }
+
+  // Known ID, transcript gone : the memory is stale, not the agent.
+  if (!transcript) return null;
+
+  // statSync peut échouer si le fichier disparaît entre le existsSync et ici,
+  // ou sur un souci de droits. Ne jamais faire échouer un spawn pour ça.
+  let size = 0;
+  try { size = fs.statSync(transcript).size; } catch { return null; }
+
+  if (size > MAX_RESUME_BYTES) {
+    console.log(
+      `[spawn] ${name || sessionId} : transcript de ${(size / 1048576).toFixed(0)} Mo ` +
+      `> plafond ${(MAX_RESUME_BYTES / 1048576).toFixed(0)} Mo — démarrage frais ` +
+      `(WIKICHAT_MAX_RESUME_MB pour ajuster).`
+    );
+    return null;
+  }
+
+  return { sessionId, transcript, bytes: size };
 }
 
 // ── spawnDaemon — persistent background agent ────────────────────────────────
@@ -627,7 +709,9 @@ export function spawnDaemon(projectPath, options = {}) {
     task ? `Ta mission: ${task}` : "",
     ``,
     `PROTOCOLE DAEMON — BOUCLE INFINIE:`,
-    `1. register(name="${name}"${role ? `, role="${role}"` : ""})`,
+    `1. register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID")`,
+    `   → claude_session_id est OBLIGATOIRE : sans lui ton transcript devient introuvable`,
+    `     et tes prochains réveils repartent de zéro au lieu de reprendre ce contexte.`,
     `2. send_message(channel="coordination", content="🟢 ${name} en ligne, prêt.")`,
     `3. BOUCLE INFINIE (MINIMUM 100 itérations):`,
     `   - poll_messages(timeout_seconds=30, types=["message","direct_message","broadcast","artifact"])`,
@@ -657,8 +741,14 @@ export function spawnDaemon(projectPath, options = {}) {
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
     }
-    if (options.sessionId) {
-      baseArgs.push("--resume", options.sessionId);
+    // Reprise de contexte. Résolue ici plutôt que chez l'appelant : routines,
+    // triggers, watchdog et outils MCP passent tous par spawnDaemon, et aucun
+    // ne transmettait l'ID — les résidents repartaient de zéro à chaque réveil.
+    const resume = resolveResumeSession(name, projectPath, options.sessionId);
+    if (resume) {
+      baseArgs.push("--resume", resume.sessionId);
+    } else if (options.sessionId) {
+      console.log(`[spawn] ${name} : transcript de ${options.sessionId} introuvable — démarrage frais.`);
     }
     baseArgs.push("--max-budget-usd", "5");
 
@@ -702,11 +792,15 @@ export function spawnDaemon(projectPath, options = {}) {
           const continuePrompt = [
             AGENT_PREAMBLE,
             `Tu es ${name}${role ? `, ${role}` : ""}. Redémarrage #${respawnCount}.`,
-            `register(name="${name}"${role ? `, role="${role}"` : ""}) puis poll_messages.`,
+            `register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID") puis poll_messages.`,
             `Sois CONCIS. Boucle poll_messages(timeout_seconds=30).`,
           ].join("\n");
+          // Re-résolu à chaud : l'agent a pu enregistrer un ID plus récent depuis
+          // le spawn initial, et le transcript a pu disparaître entre-temps.
+          const respawnResume = resolveResumeSession(name, projectPath);
           const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
             ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
+            ...(respawnResume ? ["--resume", respawnResume.sessionId] : []),
             "--model", model, "--max-budget-usd", "5"];
           const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
           const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {

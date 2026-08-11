@@ -82,6 +82,11 @@ export function loadTriggers() {
     if (!fs.existsSync(TRIGGERS_FILE)) return;
     const raw = JSON.parse(fs.readFileSync(TRIGGERS_FILE, "utf8"));
     for (const [id, t] of Object.entries(raw)) {
+      // Même normalisation qu'à l'enregistrement : le fichier peut contenir des
+      // configs sérialisées en chaîne, écrites avant que registerTrigger ne les
+      // normalise. Les réparer ici évite de faire migrer triggers.json à la main.
+      t.config = _asObject(t.config);
+      if (t.action) t.action.params = _asObject(t.action.params);
       _triggers.set(id, t);
       // CRITICAL : activate the runtime side of each enabled trigger.
       // Without this, persisted triggers are "in memory" but their cron tasks /
@@ -107,13 +112,31 @@ export function getTrigger(id) {
  * Register a new trigger (or replace an existing one with the same id).
  * Returns the stored trigger object.
  */
+/**
+ * Les appelants MCP passent souvent `config` / `action.params` en JSON encodé
+ * (le schéma est `z.any()`, qui accepte une chaîne sans broncher). Stockée
+ * telle quelle, la chaîne fait échouer tous les accès `config.pattern` en
+ * silence — et un channel_match sans pattern matche alors tout. On normalise
+ * ici plutôt que chez chaque appelant.
+ */
+function _asObject(v) {
+  if (typeof v !== "string") return v || {};
+  try {
+    const parsed = JSON.parse(v);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export function registerTrigger(spec) {
   const id = spec.id || randomUUID().slice(0, 8);
+  const action = spec.action ? { ...spec.action, params: _asObject(spec.action.params) } : spec.action;
   const trigger = {
     id,
     type: spec.type,
-    config: spec.config || {},
-    action: spec.action,
+    config: _asObject(spec.config),
+    action,
     enabled: spec.enabled !== false,
     cooldown_s: spec.cooldown_s ?? 30,
     max_per_day: spec.max_per_day ?? 100,
@@ -254,7 +277,22 @@ function _startListener(t) {
   }
   if (t.type === "channel_match") {
     const channel = t.config?.channel;
-    const pattern = t.config?.pattern ? new RegExp(t.config.pattern, t.config?.flags || "i") : null;
+    // Sans canal ni pattern, le prédicat matcherait chaque message de chaque
+    // canal — un spawn par message. On refuse d'activer plutôt que de laisser
+    // une config incomplète se comporter comme un curseur universel.
+    if (!channel && !t.config?.pattern) {
+      console.warn(`[Triggers] "${t.id}" ignoré : channel_match sans channel ni pattern (matcherait tout).`);
+      return;
+    }
+    let pattern = null;
+    if (t.config?.pattern) {
+      try {
+        pattern = new RegExp(t.config.pattern, t.config?.flags || "i");
+      } catch (err) {
+        console.warn(`[Triggers] "${t.id}" ignoré : pattern invalide (${err.message}).`);
+        return;
+      }
+    }
     _mentionListeners.set(t.id, (msg) => {
       if (channel && msg.channel !== channel) return false;
       if (pattern && !pattern.test(msg.content)) return false;
