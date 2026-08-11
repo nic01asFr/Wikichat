@@ -33,7 +33,6 @@ import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.m
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook } from "./src/triggers.mjs";
 import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
-import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } from "./src/dispatch.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
@@ -150,45 +149,6 @@ configureTriggers({
   routineFn: (id, params, opts) => runRoutine(id, params, opts),
 });
 
-// Configure dispatch — reuse the spawn callback from routines, plus DM helper
-configureDispatch({
-  spawn: async (params) => {
-    const repo = params.repo_path || process.cwd();
-    const ticketId = randomUUID().slice(0, 8);
-    state.spawnTickets.set(ticketId, {
-      id: ticketId, name: params.name, mode: "headless", repo,
-      spawnedBy: params.spawnedBy, spawnerId: null,
-      status: "running", createdAt: new Date(),
-      completedAt: null, result: null,
-    });
-    spawnHeadless(repo, params.task || "register puis exécute la mission.", params).then(res => {
-      const t = state.spawnTickets.get(ticketId);
-      if (t) {
-        t.status = res.success ? "completed" : "failed";
-        t.completedAt = new Date();
-        t.result = { success: res.success, exitCode: res.exitCode };
-      }
-      notifyWaiters("__tickets__", null);
-    }).catch(() => {});
-    return { success: true, ticketId };
-  },
-  sendDM: ({ to, content }) => {
-    // DM via dedicated channel (dm:wikichat-dispatch ↔ to)
-    const target = getSessionByName(to);
-    if (!target) return null;
-    const m = pushMessage({
-      id: randomUUID(),
-      from: "wikichat-dispatch", fromName: "🎯 Dispatch",
-      channel: `dm:dispatch-${target.id.slice(0, 8)}`,
-      content, isDM: true,
-      timestamp: new Date(),
-    });
-    notifyWaiters(`dm:dispatch-${target.id.slice(0, 8)}`, null);
-    return m;
-  },
-});
-loadDispatchRecord();
-
 // Phase 6 PR6 — start dormant gate watcher + wire wake/sleep callbacks.
 // On wake: re-fire lifecycle triggers (covers the case where principal arrives
 // after server boot). On sleep: log and let watchdog/quota mechanisms do the
@@ -206,29 +166,6 @@ onSleep(() => {
 startPiloteCatchup();
 startDormantWatch();
 
-// Channel #dispatch : every user message becomes a dispatch automatically.
-// Low-latency hook: when a non-system message lands on #dispatch, fire dispatch.
-const _origPushMessage = state.__origPushMessage || null;
-import("./src/state.mjs").then(({ pushMessage: pm }) => {
-  // We can't easily monkey-patch the named export. Instead we observe via
-  // notifier: a setInterval scans #dispatch for unprocessed messages.
-});
-let _dispatchSeenIds = new Set();
-setInterval(() => {
-  if (!recentlyActive(5 * 60 * 1000)) return; // idle-gate
-  const msgs = state.messages.filter(m => m.channel === "dispatch" && m.from !== "wikichat-dispatch");
-  for (const m of msgs.slice(-20)) {
-    if (_dispatchSeenIds.has(m.id)) continue;
-    _dispatchSeenIds.add(m.id);
-    if (m.fromName?.includes("Système")) continue; // skip system events
-    dispatchIntent({ intent: m.content, spawnedBy: m.fromName || "channel-dispatch" }).catch(() => {});
-  }
-  // Bound the seen set
-  if (_dispatchSeenIds.size > 500) {
-    const arr = [..._dispatchSeenIds].slice(-200);
-    _dispatchSeenIds = new Set(arr);
-  }
-}, 5000);
 const teamResult = bootstrapAutonomousTeam();
 if (teamResult.provisioned > 0) {
   console.log(`[WikiChat] Autonomous team: ${teamResult.provisioned}/${teamResult.total} triggers provisioned`);
@@ -470,16 +407,6 @@ app.post("/api/routines/run", express.json(), async (req, res) => {
     const result = await runRoutine(id, params || {}, { spawnedBy: "rest-api" });
     res.json(result);
   } catch (err) { res.status(500).json({ error: err.message }); }
-});
-app.post("/api/dispatch", express.json(), async (req, res) => {
-  try {
-    const { intent, context, prefer } = req.body || {};
-    if (!intent) return res.status(400).json({ error: "intent required" });
-    const result = await dispatchIntent({ intent, context, prefer, spawnedBy: "rest-api" });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 // Les maquettes de design (concepts, hybrid-concepts, style-guide, game) vivent
 // désormais dans docs/design/ : ce sont des documents de travail, pas des pages
