@@ -582,6 +582,7 @@ export function registerTools(server, sessionId) {
       let targetChannel = channel;
       let isDM = false;
       let dmHint = "";
+      let autoCreated = false;
 
       if (channel.startsWith("@")) {
         const res = resolveDMChannel(sessionId, channel.slice(1));
@@ -601,7 +602,18 @@ export function registerTools(server, sessionId) {
           dmHint += `\n⚠️ Aucune session nommée "${res.typedTarget}". Le DM reste en attente, visible uniquement quand un agent s'enregistre EXACTEMENT sous ce nom. Vérifie list_sessions.`;
         }
       } else if (!state.channels.has(channel)) {
-        return txt(`❌ Canal "#${channel}" inexistant. Disponibles: ${[...state.channels.keys()].filter(c => !c.startsWith("dm:")).map(c => `#${c}`).join(", ")}.`);
+        // Même raison que dans share_artifact : refuser un canal inexistant rend
+        // les triggers channel_match inutilisables sur un sujet neuf — personne
+        // ne peut écrire là où le trigger écoute tant que le canal n'existe pas.
+        // On crée, et on le signale pour qu'une faute de frappe reste visible.
+        state.channels.set(channel, {
+          name: channel,
+          description: `Canal auto-créé par send_message (${senderName})`,
+          createdBy: senderName,
+          createdAt: new Date(),
+        });
+        try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch { /* */ }
+        autoCreated = true;
       }
 
       const msg = pushMessage({
@@ -630,7 +642,7 @@ export function registerTools(server, sessionId) {
         ? `\n⏰ Rappel cron actif → CronDelete("${sender.cron_job_id}") pour l'annuler.` : "";
       if (sender) { sender.eta = null; sender.etaReason = null; }
 
-      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}\n\n⚡ Lance poll_messages pour attendre la réponse.`);
+      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.`);
     }
   );
 

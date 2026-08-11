@@ -1,104 +1,161 @@
 #!/usr/bin/env node
 /**
- * Test script: simulates two Claude Code sessions communicating via InterChat
- * 
- * Usage: 
- *   1. Start the server: npm start
- *   2. In another terminal: node test-e2e.mjs
+ * test-e2e.mjs — Vérifie que les mécanismes critiques fonctionnent réellement.
+ *
+ * Chaque cas correspond à un bug qui a existé en production. Le motif récurrent
+ * de ce projet est le mécanisme écrit mais pas branché : la syntaxe est valide,
+ * le serveur démarre, et rien ne se passe. `node --check` ne l'attrape pas ;
+ * ces assertions, si.
+ *
+ * Usage :
+ *   npm start &    (le serveur doit tourner)
+ *   npm test
+ *
+ * Sortie : code 1 si un cas échoue, pour être utilisable en CI.
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 const SERVER_URL = process.env.SERVER_URL || "http://localhost:3777";
+const SUFFIX = Date.now().toString(36).slice(-5); // évite les collisions entre runs
 
-async function createSession(name) {
+let passed = 0, failed = 0;
+const failures = [];
+
+function check(label, condition, detail = "") {
+  if (condition) { passed++; console.log(`  ✅ ${label}`); }
+  else { failed++; failures.push(label); console.log(`  ❌ ${label}${detail ? ` — ${detail}` : ""}`); }
+}
+
+function section(title) { console.log(`\n── ${title}`); }
+
+async function connect(name) {
   const transport = new SSEClientTransport(new URL(`${SERVER_URL}/sse`));
-  const client = new Client({ name: `test-${name}`, version: "1.0.0" });
+  const client = new Client({ name: `e2e-${name}`, version: "1.0.0" });
   await client.connect(transport);
-  console.log(`✅ ${name} connected`);
-  return { client, transport, name };
+  return {
+    name, transport,
+    async call(tool, args = {}) {
+      const r = await client.callTool({ name: tool, arguments: args });
+      return r.content?.map(c => c.text).join("\n") || "";
+    },
+    close: () => transport.close().catch(() => {}),
+  };
 }
 
-async function callTool(session, toolName, args = {}) {
-  const result = await session.client.callTool({ name: toolName, arguments: args });
-  const text = result.content?.map(c => c.text).join("\n") || "(no output)";
-  console.log(`\n[${session.name}] → ${toolName}(${JSON.stringify(args)}):`);
-  console.log(text.split("\n").map(l => `  ${l}`).join("\n"));
-  return text;
-}
+// ─────────────────────────────────────────────────────────────────────────────
 
-async function main() {
-  console.log("🧪 MCP InterChat E2E Test\n");
-  console.log(`Connecting to ${SERVER_URL}...\n`);
+section("Fonctions pures (sans serveur)");
 
-  // Create two sessions
-  const alice = await createSession("Alice");
-  const bob = await createSession("Bob");
+// Bug réel : l'affichage préfixe les canaux d'un '#', un agent le recopiait, et
+// "#insights" devenait un canal distinct de "insights" — invisible aux triggers.
+const { normalizeChannel } = await import("./src/state.mjs");
+check("normalizeChannel retire les dièses de tête", normalizeChannel("##insights") === "insights");
+check("normalizeChannel préserve les DM", normalizeChannel("dm:a__b") === "dm:a__b");
+check("normalizeChannel préserve les cibles @", normalizeChannel("@Bob") === "@Bob");
+check("normalizeChannel préserve les canaux internes", normalizeChannel("__broadcast__") === "__broadcast__");
 
-  try {
-    // Register
-    await callTool(alice, "register", { name: "Alice", role: "architecte" });
-    await callTool(bob, "register", { name: "Bob", role: "développeur" });
+// Bug réel : --resume était passé sans vérifier que le transcript existe, ce qui
+// faisait échouer le CLI au démarrage (49 identifiants sur 67 pointaient à vide).
+const { resolveResumeSession } = await import("./src/sampler.mjs");
+check("resolveResumeSession refuse un identifiant inconnu",
+  resolveResumeSession("AgentQuiNExistePas", process.cwd()) === null);
+check("resolveResumeSession refuse un identifiant sans transcript",
+  resolveResumeSession(null, process.cwd(), "00000000-0000-0000-0000-000000000000") === null);
 
-    // List sessions
-    await callTool(alice, "list_sessions");
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // Get context
-    await callTool(bob, "get_context");
+section("Serveur HTTP");
 
-    // Create a channel
-    await callTool(alice, "create_channel", { 
-      name: "design", 
-      description: "Discussion d'architecture" 
-    });
+const health = await fetch(`${SERVER_URL}/api/health`).then(r => r.json()).catch(() => null);
+check("le serveur répond sur /api/health", health?.status === "healthy",
+  health ? JSON.stringify(health).slice(0, 60) : "injoignable — lancer `npm start`");
+if (!health) { console.log("\n⛔ Serveur injoignable, arrêt."); process.exit(1); }
 
-    // Send messages
-    await callTool(alice, "send_message", {
-      content: "Salut Bob ! On part sur quelle stack pour le nouveau service ?",
-      channel: "design",
-    });
+// Bug réel : le hook prenait un instantané et rendait la main, donc deux sessions
+// interactives ne pouvaient pas s'enchaîner sans relance humaine.
+const t0 = Date.now();
+const froid = await fetch(`${SERVER_URL}/api/inbox?agent=__e2e_froid_${SUFFIX}&wait_ms=4000`).then(r => r.json());
+const dtFroid = Date.now() - t0;
+check("hors conversation, /api/inbox répond immédiatement", dtFroid < 2000 && froid.waited === false,
+  `${dtFroid} ms, waited=${froid.waited}`);
 
-    // Bob reads messages
-    await callTool(bob, "read_messages", { channel: "design" });
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // Bob replies
-    await callTool(bob, "send_message", {
-      content: "Je propose Node.js + Express + PostgreSQL. Simple et éprouvé.",
-      channel: "design",
-    });
+section("Messagerie entre deux sessions");
 
-    // Alice reads the reply
-    await callTool(alice, "read_messages", { channel: "design" });
+const alice = await connect("alice");
+const bob = await connect("bob");
+const ALICE = `__e2e_alice_${SUFFIX}`, BOB = `__e2e_bob_${SUFFIX}`;
 
-    // Direct message
-    await callTool(alice, "send_message", {
-      content: "Petit message privé : tu peux merger la PR #42 ?",
-      channel: "@Bob",
-    });
+const regA = await alice.call("register", { name: ALICE, role: "e2e", agent_type: "headless" });
+check("register retourne une confirmation", /Enregistré/i.test(regA), regA.slice(0, 60));
+await bob.call("register", { name: BOB, role: "e2e", agent_type: "headless" });
 
-    // Bob reads DMs
-    await callTool(bob, "read_messages", { channel: "__all__", since_minutes: 5 });
+// Le canal est volontairement écrit avec un dièse : un agent qui recopie
+// l'affichage ne doit pas créer un salon parallèle.
+const CANAL = `#e2e-${SUFFIX}`;
+await alice.call("send_message", { channel: CANAL, content: `@${BOB} ping e2e`, expects_reply: true });
 
-    // Broadcast
-    await callTool(alice, "broadcast", {
-      content: "Réunion dans 5 minutes sur #design !",
-      priority: "warning",
-    });
+const vuParBob = await bob.call("read_messages", { channel: CANAL.replace(/^#+/, ""), since_minutes: 2 });
+check("un message envoyé sur '#canal' est lisible sur 'canal'", /ping e2e/.test(vuParBob),
+  "la normalisation de canal ne s'applique pas");
 
-    // Final read
-    await callTool(bob, "read_messages", { channel: "__all__", since_minutes: 5 });
+// Bug réel : le curseur devait être partagé entre le hook et poll, sans doublon.
+const poll1 = await bob.call("poll", {});
+const poll2 = await bob.call("poll", {});
+check("poll livre le message adressé", /ping e2e/.test(poll1));
+check("poll ne re-livre pas le même message", !/ping e2e/.test(poll2), "curseur non avancé");
 
-    console.log("\n\n🎉 All tests passed!");
+// ─────────────────────────────────────────────────────────────────────────────
 
-  } finally {
-    await alice.client.close();
-    await bob.client.close();
-    console.log("\n🔌 Sessions disconnected.");
-  }
-}
+section("Triggers");
 
-main().catch((err) => {
-  console.error("❌ Test failed:", err);
-  process.exit(1);
+const TRIG = `__e2e_trig_${SUFFIX}`;
+// Bug réel : register_trigger stockait la config en chaîne JSON sans la parser,
+// donc config.pattern valait undefined et un channel_match matchait TOUT.
+await alice.call("register_trigger", {
+  id: TRIG, type: "channel_match",
+  config: { channel: `e2e-${SUFFIX}`, pattern: "MOTIF_UNIQUE_E2E", flags: "i" },
+  action_type: "broadcast",
+  action_params: { channel: `e2e-${SUFFIX}`, content: "trigger e2e déclenché" },
+  cooldown_s: 0, max_per_day: 10,
 });
+const listeTrig = await alice.call("list_triggers", {});
+check("le trigger est enregistré et actif", new RegExp(`🟢 ${TRIG}`).test(listeTrig));
+
+await alice.call("send_message", { channel: `e2e-${SUFFIX}`, content: "ceci contient MOTIF_UNIQUE_E2E" });
+await new Promise(r => setTimeout(r, 1500));
+const apresMatch = await alice.call("list_triggers", {});
+const ligne = apresMatch.split("\n\n").find(b => b.includes(TRIG)) || "";
+check("un channel_match fire sur son motif", /fired [1-9]/.test(ligne), ligne.split("\n").pop());
+
+// Le pendant : un motif absent ne doit rien déclencher.
+const avant = (ligne.match(/fired (\d+)/) || [])[1];
+await alice.call("send_message", { channel: `e2e-${SUFFIX}`, content: "message sans le motif" });
+await new Promise(r => setTimeout(r, 1200));
+const apresNonMatch = await alice.call("list_triggers", {});
+const ligne2 = apresNonMatch.split("\n\n").find(b => b.includes(TRIG)) || "";
+const apres = (ligne2.match(/fired (\d+)/) || [])[1];
+check("un channel_match ne fire pas hors motif", avant === apres, `${avant} → ${apres}`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+section("Connaissance et projets");
+
+const kb = await alice.call("search_knowledge", { query: "axis", limit: 3 });
+check("search_knowledge répond sans erreur", !/❌|Error/i.test(kb), kb.slice(0, 60));
+
+const projets = await alice.call("list_projects", {});
+check("list_projects retourne le registre", /projet/i.test(projets), projets.slice(0, 60));
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+await alice.call("delete_trigger", { id: TRIG }).catch(() => {});
+await alice.close(); await bob.close();
+
+console.log(`\n${"─".repeat(52)}`);
+console.log(`${passed} réussis, ${failed} échoués`);
+if (failed) { console.log(`\nÉchecs :\n${failures.map(f => `  • ${f}`).join("\n")}`); }
+process.exit(failed ? 1 : 0);
