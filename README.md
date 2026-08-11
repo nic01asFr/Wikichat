@@ -88,7 +88,7 @@ Entrée : `server.mjs`. Environ 11 000 lignes au total.
 
 ```
 src/state.mjs        — état en mémoire (sessions, canaux, messages, projets)
-src/tools.mjs        — les 49 outils MCP
+src/tools.mjs        — les 52 outils MCP
 src/persistence.mjs  — I/O atomique
 src/events.mjs       — bus d'événements : détecteurs → triggers
 src/triggers.mjs     — moteur de triggers (cron, mention, channel_match, file_watch, webhook, lifecycle)
@@ -148,7 +148,7 @@ register_trigger({
 
 Un `git add .wikichat/` dans chaque projet sauvegarde sa connaissance avec son code. Tu changes de machine, l'état suit.
 
-## Outils MCP (49)
+## Outils MCP (52)
 
 | Catégorie | Outils |
 |---|---|

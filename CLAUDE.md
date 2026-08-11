@@ -89,7 +89,7 @@ Modular — 25 files in `src/`, entry point `server.mjs`. ~11 000 lines total.
 ```
 server.mjs          — Express routes, SSE transport, boot sequence
 src/state.mjs       — In-memory state (sessions, channels, messages, projects)
-src/tools.mjs       — 49 MCP tool definitions
+src/tools.mjs       — 52 MCP tool definitions
 src/persistence.mjs — Atomic file I/O (sessions, projects, spawn registry, channels, messages)
 src/events.mjs      — Event bus: deterministic detectors → #insights → triggers
 src/triggers.mjs    — Trigger engine (cron, mention, channel_match, file_watch, webhook, lifecycle)
@@ -126,7 +126,7 @@ it finds nothing; when it does, it publishes `[event:type project:x] summary` on
 Named agents resume their previous session (`--resume`) when the transcript still
 exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 
-## MCP Tools (49 total)
+## MCP Tools (52 total)
 
 **Identity:** register, set_status, get_briefing, remember, recall, forget
 **Messaging:** send_message, read_messages, poll, poll_messages, broadcast, share_artifact
