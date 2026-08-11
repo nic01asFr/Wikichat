@@ -48,6 +48,24 @@ for (const [name, description] of [
 /** Channel message count cache — O(1) lookup instead of filtering */
 const _channelCounts = new Map();
 export function getChannelCount(channel) { return _channelCounts.get(channel) || 0; }
+
+/**
+ * Normalise un nom de canal saisi par un agent.
+ *
+ * L'affichage préfixe les canaux d'un `#` décoratif (`[#insights] …`). Un agent
+ * qui recopie ce qu'il lit envoie alors sur "#insights", et le serveur crée un
+ * canal distinct de "insights" — deux salons pour un même sujet, dont un que
+ * les triggers `channel_match` ne voient pas. On enlève les dièses de tête à
+ * l'entrée : le nom canonique n'en porte jamais.
+ *
+ * Les DM (`dm:…`) et les canaux internes (`__broadcast__`) passent inchangés.
+ */
+export function normalizeChannel(name) {
+  if (typeof name !== "string") return name;
+  const trimmed = name.trim();
+  if (trimmed.startsWith("@") || trimmed.startsWith("dm:") || trimmed.startsWith("__")) return trimmed;
+  return trimmed.replace(/^#+/, "");
+}
 /** Rebuild channel counts from current messages (call after loading persisted messages) */
 export function rebuildChannelCounts() {
   _channelCounts.clear();

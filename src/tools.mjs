@@ -12,7 +12,7 @@ import { spawn } from "child_process";
 import {
   state, pushMessage, sysMsg, getSessionByName, getSessionName,
   dmChannelKey, isAgentInDMChannel, resolveAgentName, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
-  getChannelCount, inboxFor,
+  getChannelCount, inboxFor, normalizeChannel,
 } from "./state.mjs";
 import { scanForProjects } from "./scanner.mjs";
 import { loadRegistry, loadConfig, saveRegistry, mergeProjects } from "./registry.mjs";
@@ -576,7 +576,8 @@ export function registerTools(server, sessionId) {
       eta_seconds: z.number().optional().describe("Temps estimé en secondes avant ton prochain message (ex: 300 = 5 min de travail). Réduit les polls inutiles côté destinataire."),
       status: z.enum(["over", "standby", "done"]).optional().describe("over = j'ai terminé, c'est à toi | standby = je travaille, n'attends pas de réponse immédiate | done = tâche complètement terminée"),
     },
-    async ({ content, channel, reply_to, expects_reply, eta_seconds, status }) => {
+    async ({ content, channel: rawChannel, reply_to, expects_reply, eta_seconds, status }) => {
+      const channel = normalizeChannel(rawChannel);
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
@@ -645,7 +646,8 @@ export function registerTools(server, sessionId) {
       limit: z.number().default(50).describe("Nombre max"),
       since_id: z.string().optional().describe("Messages après cet ID"),
     },
-    async ({ channel, from_session, since_minutes, limit, since_id }) => {
+    async ({ channel: rawChannel, from_session, since_minutes, limit, since_id }) => {
+      const channel = normalizeChannel(rawChannel);
       // Resolve "@Name" → DM channel key. "@me" / self-reference → DMs only.
       // Same name resolution as send_message so both sides agree on the key.
       let dmOnly = false;
@@ -907,7 +909,8 @@ export function registerTools(server, sessionId) {
       channel: z.string().default("general").describe("Canal ou '@Nom' pour DM"),
       language: z.string().optional().describe("Langage (pour le code)"),
     },
-    async ({ title, artifact_type, content: body, channel, language }) => {
+    async ({ title, artifact_type, content: body, channel: rawChannel, language }) => {
+      const channel = normalizeChannel(rawChannel);
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
@@ -1035,7 +1038,7 @@ export function registerTools(server, sessionId) {
       description: z.string().optional().describe("Description"),
     },
     async ({ name, description }) => {
-      const clean = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+      const clean = normalizeChannel(name).toLowerCase().replace(/[^a-z0-9-]/g, "-");
       if (state.channels.has(clean)) return txt(`❌ "#${clean}" existe déjà.`);
       state.channels.set(clean, {
         name: clean, description: description ?? `Canal ${clean}`,
