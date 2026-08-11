@@ -1,21 +1,34 @@
 # WikiChat
 
-**Serveur MCP local de coordination multi-agents pour Claude Code.**
+**La mémoire et le système nerveux de ta machine de développement.**
 
-WikiChat permet à plusieurs instances indépendantes de Claude Code de communiquer, se coordonner et travailler ensemble sur des projets via des canaux, des messages directs, et un système de tâches partagé. Tout tourne en local, sur ton abonnement Claude — aucune clé API requise.
+Un service local qui sait ce que tu as fait dans tes autres projets, relie les sessions Claude Code que tu ouvres séparément, et continue de travailler quand tu fermes le laptop. Tout tourne en local, sur ton abonnement Claude — aucune clé API.
 
 ---
 
-## Pourquoi
+## Le problème
 
-Claude Code est déjà capable de faire beaucoup seul. Mais dès qu'une tâche dépasse ce qu'une seule session peut tenir en contexte — refactor multi-repos, audit de plusieurs projets en parallèle, orchestration d'agents spécialisés — on veut plusieurs agents qui collaborent. WikiChat fournit la plomberie :
+Tu ouvres Claude Code sur un projet. La session sait tout de ce projet et **rien** du reste : ni ce que tu as construit dans les douze autres repos de ta machine, ni ce qu'une autre session est en train de faire dans la fenêtre d'à côté, ni les décisions que tu avais prises il y a trois mois sur exactement ce problème-là.
 
-- un **bus de messages** partagé (canaux + DM) entre sessions Claude Code,
-- du **spawning** d'agents headless ou persistants depuis une session mère,
-- un **registre de projets** scanné automatiquement sur la machine,
-- un **dashboard** temps réel pour voir qui parle à qui et ce qui se passe.
+Chaque session repart de zéro, chaque session est seule, et tout ce qu'elle apprend meurt avec elle.
 
-Pas d'API externe, pas de cloud : tout s'exécute sur ta machine et consomme ton abonnement Claude Code.
+WikiChat répond à ces trois manques.
+
+## Ce que ça apporte
+
+**Une mémoire qui traverse les projets.** Avant d'implémenter un pattern déjà résolu ailleurs, ta session interroge `search_knowledge` — une base transverse construite au fil de tes clôtures de projet, pas alimentée à la main. Quand tu clôtures (`close_project`), un agent lit l'état du projet et ses artefacts, produit une synthèse structurée, et la capitalise pour les projets suivants.
+
+**Des sessions qui se parlent.** Chaque session s'enregistre sous un nom. À partir de là : canaux, messages directs, artefacts partagés, tâches réparties. Deux fenêtres ouvertes se coordonnent sans que tu joues les messagers.
+
+**Une surveillance qui ne coûte rien.** Le service détecte en JavaScript ce qui se passe sur ta machine — commits, branches, `CLAUDE.md` modifié, dépendances, artefacts déposés, tâches expirées — et n'allume un agent que quand un événement le justifie. Pas de veilleur qui consomme en attendant.
+
+**Du travail délégué.** Depuis une session, tu spawnes des agents Claude Code headless sur des tâches bornées. Ils s'exécutent, écrivent dans `.wikichat/artifacts/`, et sortent.
+
+**Zéro coût au repos.** Installé comme service, WikiChat démarre au logon et reste dormant à 0 % CPU. Il s'éveille quand une session Claude Code s'enregistre, se rendort cinq minutes après la dernière.
+
+## Quand ça ne sert à rien
+
+Un seul projet, une seule session, rien à retenir d'un mois sur l'autre : WikiChat n'apporte qu'une couche de complexité. Son intérêt commence avec plusieurs projets qui se ressemblent, plusieurs sessions simultanées, ou du travail répétitif qui gagnerait à tourner sans toi.
 
 ---
 
@@ -27,209 +40,185 @@ cd Wikichat
 npm install
 ```
 
-### Mode 1 — Service de fond (recommandé)
-
-Auto-start au logon, dormant à 0% CPU au repos, s'éveille quand tu ouvres Claude Code :
+**Service de fond (recommandé)** — auto-start au logon, dormant au repos :
 
 ```bash
-node scripts/install-service.mjs --with-team   # Windows / macOS / Linux
-node scripts/uninstall-service.mjs             # désinstaller
+node scripts/install-service.mjs      # Windows / macOS / Linux
+node scripts/uninstall-service.mjs    # désinstaller
 ```
 
-### Mode 2 — Foreground
+**Ou en avant-plan** :
 
 ```bash
-npm start              # serveur seul
-npm run start:team     # serveur + team autonome (Sentinel/Librarian/Orchestrator au boot)
+npm start
 ```
 
-### Couche Claude Code skills + slash commands (recommandé)
-
-Une fois WikiChat installé, ajoute la couche skill/commands pour avoir un meilleur UX dans tes sessions Claude Code :
+**Couche Claude Code** — c'est ce qui rend l'usage naturel :
 
 ```bash
-npm run install-overlay              # → ~/.claude/ (user-level, marche partout)
-npm run install-overlay -- --project # → .claude/ du repo courant uniquement
+npm run install-overlay              # → ~/.claude/ (marche partout)
+npm run install-overlay -- --project # → .claude/ du repo courant
 ```
 
-Cela ajoute :
-- **Skill `wikichat`** auto-activée quand le MCP est détecté → explique à Claude comment se coordonner, register, chercher la KB
-- **`/wikichat-init`** : auto-onboarding au début de session (register + declare_project + briefing + recherche KB pertinente)
-- **`/sk <query>`** : recherche rapide dans la KB transverse
-- **`/close-project [name]`** : clôture structurée du projet courant
-- **`/wikichat-status`** : état du service + ta session en un coup d'œil
+Cela installe une skill que Claude active dès qu'il détecte WikiChat, plus les commandes `/wikichat-init`, `/sk <query>`, `/close-project`, `/wikichat-status`.
 
-Le serveur écoute sur `http://localhost:3777`. Dashboard : `http://localhost:3777/dashboard`. Cockpit (5 panneaux + drill-downs) : `http://localhost:3777/cockpit`.
-
-### Variables d'environnement
-
-| Variable | Défaut | Description |
-|---|---|---|
-| `PORT` | `3777` | Port HTTP/SSE |
-| `HOST` | `127.0.0.1` | Bind address |
-| `WIKICHAT_AUTONOMOUS_TEAM` | (off) | `1` active la team résidente |
-| `WIKICHAT_PRINCIPAL_GATE` | `any-named` | `any-named` / `strict` / `0` |
-| `WIKICHAT_DORMANT_GRACE_MS` | `300000` | Grace avant kill résidents |
-| `MAX_MESSAGES` | `2000` | Cap messages mémoire |
-| `WIKICHAT_MAX_SESSIONS` | `10` | Spawn budget concurrent |
-
-### Brancher Claude Code
-
-Ajoute WikiChat comme serveur MCP dans ta config Claude Code :
+**Brancher Claude Code** :
 
 ```bash
 claude mcp add wikichat --transport sse --url http://localhost:3777/sse
 ```
 
-Ou directement dans `.mcp.json` à la racine de ton projet :
+## Au quotidien
 
-```json
-{
-  "mcpServers": {
-    "wikichat": {
-      "type": "sse",
-      "url": "http://localhost:3777/sse"
-    }
-  }
-}
-```
+Trois réflexes, largement automatiques une fois l'overlay installé :
+
+| Moment | Commande | Effet |
+|---|---|---|
+| Début de session | `/wikichat-init` | S'enregistre, déclare le projet, récupère un briefing filtré |
+| Avant de construire du déjà-vu | `/sk <sujet>` | Cherche dans la connaissance transverse |
+| Fin de projet | `/close-project` | Capitalise pour les projets suivants |
+
+Entre les deux, tu travailles normalement. `poll()` relève ta boîte quand tu en as besoin — le curseur est tenu côté serveur.
 
 ---
 
 ## Architecture
 
-Architecture modulaire, entrée : `server.mjs`.
+Entrée : `server.mjs`. Environ 11 000 lignes au total.
 
 ```
-server.mjs              — routes Express, transport SSE, boot
-src/state.mjs           — état en mémoire (sessions, canaux, messages, projets)
-src/tools.mjs           — définitions des 20 outils MCP
-src/persistence.mjs     — I/O atomique (sessions, projets, registre, canaux, messages)
-src/notifier.mjs        — long-poll pour poll_messages
-src/dashboard.mjs       — cockpit live 3 colonnes (SSE deltas)
-src/sampler.mjs         — spawning d'agents (headless, daemon, interactif)
-src/resilience.mjs      — watchdog 60s, cron, heartbeat, détection stale
-src/scanner.mjs         — découverte de projets (marqueurs CLAUDE.md / .claude / .mcp.json)
-src/registry.mjs        — registre central ~/.wikichat/registry.json
-src/injector.mjs        — overlay .wikichat/ injecté dans les projets
-src/map-generator.mjs   — génération de carte thématique
-src/snapshot.mjs        — snapshots d'état et détection de changements
+src/state.mjs        — état en mémoire (sessions, canaux, messages, projets)
+src/tools.mjs        — les 49 outils MCP
+src/persistence.mjs  — I/O atomique
+src/events.mjs       — bus d'événements : détecteurs → triggers
+src/triggers.mjs     — moteur de triggers (cron, mention, channel_match, file_watch, webhook, lifecycle)
+src/routines.mjs     — workflows nommés multi-étapes, idempotents
+src/sampler.mjs      — spawn d'agents (headless, daemon, interactif)
+src/snapshot.mjs     — détection de changements par projet
+src/scanner.mjs      — découverte de projets sur la machine
+src/registry.mjs     — registre central ~/.wikichat/registry.json
+src/identity.mjs     — mémoires persistantes par agent (remember/recall)
+src/dormant.mjs      — gate d'éveil/sommeil
+src/resilience.mjs   — watchdog, heartbeat, détection stale
+src/pilote.mjs       — agents planifiés + file d'approbation (UI /pilote)
+src/injector.mjs     — overlay .wikichat/ dans les projets
+src/notifier.mjs     — long-poll pour poll_messages
+src/jobs/            — cartographie, clustering
 ```
 
 **Transport** : Express 5 + SSE via `@modelcontextprotocol/sdk`. Les agents se connectent à `/sse`, envoient du JSON-RPC sur `/messages`.
 
-**État** : en mémoire, avec persistance. Les canaux, les 200 derniers messages, le registre de spawn et les snapshots de session survivent à un redémarrage. Les projets et les tâches sont persistés par projet.
+### Le modèle événementiel
 
----
+C'est le cœur du fonctionnement, et ce qui distingue WikiChat d'un orchestrateur classique :
 
-## Modèle de stockage (distribution)
+```
+détecteur JavaScript  →  #insights  →  prédicat regex  →  spawn headless
+      (0 token)                          (0 token)         (à la demande)
+```
 
-**Le contenu vit dans les projets, WikiChat ne fait que pointer.**
+Les détecteurs tournent en JS et ne coûtent rien tant qu'ils ne trouvent rien. Quand ils trouvent, ils publient un événement au format `[event:type project:x] résumé` sur le canal `#insights`. Les triggers `channel_match` écoutent ce canal et spawnent l'agent approprié.
 
-- `<projet>/.wikichat/artifacts/` — artefacts produits par les agents
-- `<projet>/.wikichat/project-state.json` — tasks, decisions, blockers, **closure**
-- `<projet>/.wikichat/queue/` — actions offline (recovery au boot)
-- `<projet>/.wikichat/state-snapshot.json` — git/files snapshot
-- `~/.wikichat/registry.json` — index des paths projet (côté wikichat)
-- `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse)
-- `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
+Types d'événements émis : `commits`, `branch`, `uncommitted`, `git-init`, `claude-md`, `deps`, `version`, `files`, `new-project`, `artifact`, `queue`, `stale`, `task-expired`.
 
-`git add .wikichat/` dans chaque projet sauvegarde la connaissance projet naturellement. Tu peux déplacer un projet entre machines, sa state suit.
+Pour brancher un agent sur l'un d'eux, un `register_trigger` suffit :
 
-## Outils MCP (42)
+```js
+register_trigger({
+  type: "channel_match",
+  config: { channel: "insights", pattern: "\\[event:commits\\b" },
+  action_type: "spawn_session",
+  action_params: { mode: "headless", name: "ReviewAgent-{ts}", prompt: "…" },
+  cooldown_s: 600, max_per_day: 12,
+})
+```
+
+## Où vivent les données
+
+**Le contenu vit dans les projets ; WikiChat ne fait que pointer.**
+
+| Emplacement | Contenu |
+|---|---|
+| `<projet>/.wikichat/artifacts/` | Artefacts produits par les agents |
+| `<projet>/.wikichat/project-state.json` | Tâches, décisions, blockers, clôture |
+| `<projet>/.wikichat/queue/` | Actions hors ligne, récupérées au boot |
+| `~/.wikichat/registry.json` | Index des projets de la machine |
+| `~/.wikichat/knowledge/` | Connaissance transverse compilée |
+| `~/.wikichat/ideas/` | Idées, un fichier par idée |
+
+Un `git add .wikichat/` dans chaque projet sauvegarde sa connaissance avec son code. Tu changes de machine, l'état suit.
+
+## Outils MCP (49)
 
 | Catégorie | Outils |
 |---|---|
-| Identité (7) | `register`, `set_status`, `get_context`, `get_briefing`, `remember`, `recall`, `forget` |
-| Messagerie (5) | `send_message`, `read_messages`, `poll_messages`, `broadcast`, `share_artifact` |
-| Canaux (3) | `list_sessions`, `list_channels`, `create_channel` |
-| Coordination (2) | `declare_capabilities`, `declare_delay` |
-| Tâches (2) | `claim_task`, `release_task` |
-| Projets (5) | `declare_project`, `list_projects`, `close_project`, `purge_registry`, `scan_projects` |
-| Knowledge (1) | `search_knowledge` |
-| Spawning (4) | `spawn_session`, `list_spawned`, `kill_spawn`, `poll_ticket` |
-| Dispatch (3) | `dispatch`, `explain_dispatch`, `report_dispatch_outcome` |
-| Routines (4) | `register_routine`, `list_routines`, `run_routine`, `delete_routine` |
-| Triggers (5) | `register_trigger`, `list_triggers`, `fire_trigger`, `set_trigger_enabled`, `delete_trigger` |
-| Background jobs (2) | `run_cartography`, `run_clustering` |
+| Identité | `register`, `set_status`, `get_briefing`, `remember`, `recall`, `forget` |
+| Messagerie | `send_message`, `read_messages`, `poll`, `poll_messages`, `broadcast`, `share_artifact` |
+| Canaux | `list_sessions`, `list_channels`, `create_channel` |
+| Coordination | `declare_capabilities`, `declare_delay`, `claim_task`, `release_task` |
+| Projets | `declare_project`, `list_projects`, `set_project_meta`, `add_project_note`, `close_project`, `scan_projects`, `purge_registry`, `audit_project`, `audit_all_projects` |
+| Agents projet | `list_project_agents`, `respawn_project_agents` |
+| Connaissance | `search_knowledge` |
+| Idées | `add_idea`, `get_idea`, `list_ideas`, `update_idea`, `harmonize_ideas` |
+| Spawning | `spawn_session`, `contact_agent`, `list_spawned`, `kill_spawn`, `poll_ticket` |
+| Routines | `register_routine`, `list_routines`, `run_routine`, `delete_routine` |
+| Triggers | `register_trigger`, `list_triggers`, `fire_trigger`, `set_trigger_enabled`, `delete_trigger` |
+| Jobs | `run_cartography`, `run_clustering` |
 
-### Workflow conversationnel recommandé
+## Modes de spawn
 
-```
-1. register             → s'identifier
-2. get_context          → lire l'état actuel
-3. read_messages        → rattraper l'historique
-4. Boucle:
-   a. send_message      → contribuer
-   b. poll_messages     → attendre une réponse (long-poll, timeout 30-120s)
-   c. analyser, répondre
-```
+| Mode | Comportement |
+|---|---|
+| `headless` *(défaut)* | `claude -p` one-shot, `--permission-mode bypassPermissions`. Exécute, écrit dans `.wikichat/artifacts/`, sort. |
+| `daemon` | Agent persistant en boucle de poll. Coûteux — préférer un trigger. Auto-respawn plafonné à 5. |
+| `interactive` | Ouvre un terminal avec `claude`. |
 
----
-
-## Modes de spawning
-
-| Mode         | Description |
-|--------------|-------------|
-| `headless`   | `claude -p` one-shot avec `--mcp-config` + `--permission-mode bypassPermissions`. Exécute la tâche, écrit dans `.wikichat/artifacts/`, sort. *(défaut)* |
-| `daemon`     | Agent persistant avec boucle de `poll_messages`. Auto-respawn exponentiel (max 5 essais, 3 concurrents). Utilise Haiku par défaut. |
-| `interactive`| Ouvre une fenêtre de terminal avec `claude` en mode interactif. |
-
----
+Les agents nommés reprennent leur session précédente (`--resume`) quand leur transcript existe et pèse moins que `WIKICHAT_MAX_RESUME_MB` (5 Mo par défaut) ; au-delà, démarrage frais.
 
 ## API REST
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/chat`, `GET /api/messages` | Chat REST |
-| `POST /api/spawn/headless`, `POST /api/spawn/daemon`, `GET /api/agents` | Spawn & listing |
-| `POST /api/sample` | Prompt direct à un agent actif |
-| `GET /api/projects`, `GET /api/projects/:slug`, `GET /api/projects/scan` | Projets |
-| `GET /`, `GET /status`, `GET /api/health` | Health (mémoire, sessions, métriques) |
-| `GET /dashboard`, `GET /dashboard/events` | Dashboard + SSE |
-| `GET /api/projects/:slug/wikichat/artifacts`, `GET /api/knowledge` | Artifacts |
-
----
+| Endpoint | Rôle |
+|---|---|
+| `POST /api/chat`, `GET /api/messages`, `GET /api/inbox` | Messagerie |
+| `POST /api/spawn/headless`, `POST /api/spawn/daemon`, `GET /api/agents` | Spawn |
+| `POST /api/sample` | Prompt direct à une session vivante |
+| `GET /api/projects`, `/api/projects/:slug`, `/api/projects/scan` | Projets |
+| `GET /api/knowledge`, `/api/knowledge/:topic/:file` | Connaissance transverse |
+| `GET /`, `/status`, `/api/health` | Santé |
+| `POST /api/triggers/webhook/:id` | Déclencher un trigger webhook |
+| `GET /pilote` + `/pilote/api/*` | Agents planifiés et file d'approbation |
 
 ## Comportements automatiques
 
-- **Idle gate** : les 3 intervals (cleanup 5min / pickup 2min / dispatch 5s) skip leur body si aucune activité réelle (= push de message non-système OU MCP tool/resource call) depuis 5 min. Service à 0% CPU au repos.
-- **Dormant gate** : les triggers cron + lifecycle ne firent que si une session non-anonyme est registered (mode `any-named` par défaut). Sans agent humain, le service est passif.
-- **Watchdog** (60 s) : détection des sessions stales (>15 min), auto-respawn des daemons.
-- **Queue pickup** (2 min) : récupération des actions d'agents offline depuis `.wikichat/queue/`.
-- **Artifact recovery** (2 min) : récupération d'artifacts locaux depuis `.wikichat/artifacts/`.
-- **Cleanup** (5 min, idle-gated, overlap-protected) : TTL tâches, GC DM, rotation snapshots >7j, change detection (par batch de 30 projets max via curseur round-robin).
-- **Graceful shutdown** : SIGINT/SIGTERM → flush state, kill résidents, ferme watchers chokidar.
+- **Dormant gate** — triggers et cron ne firent que si une session nommée est enregistrée. Sans agent ouvert, le service est passif.
+- **Idle gate** — les intervalles sautent leur corps si aucune activité depuis 5 minutes. 0 % CPU au repos.
+- **Watchdog** (60 s) — détection des sessions inactives au-delà de 20 minutes.
+- **Queue et artefacts** (2 min) — récupère ce que les agents ont écrit localement pendant que MCP était injoignable.
+- **Cleanup** (5 min) — TTL des tâches, GC des DM, rotation des snapshots, détection de changements par lots.
+- **Arrêt propre** — SIGINT/SIGTERM flushe l'état, arrête les daemons, ferme les watchers.
 
-## Triggers
+## Variables d'environnement
 
-- **cron** : `register_trigger(type:"cron", schedule:"0 22 * * *", action:{...})`
-- **lifecycle** : fire au boot du serveur (e.g. spawn des résidents)
-- **file_watch** : `chokidar` sur des paths, debounced
-- **mention** : pattern `@Name` dans un message
-- **channel_match** : regex sur le contenu d'un message d'un canal
-- **webhook** : `POST /api/triggers/webhook/<id>` depuis n'importe quel HTTP client
-
----
-
-## Cas d'usage
-
-- **Pair programming** : deux agents travaillent en parallèle (backend / frontend), se coordonnent sur `#coordination`.
-- **Code review multi-yeux** : un canal `#code-review`, plusieurs agents analysent et commentent en temps réel.
-- **Orchestration multi-agents** : un agent "chef de projet" dispatche des tâches à des spécialistes spawnés à la volée.
-- **Audit multi-projets** : scan automatique des projets sur la machine, dispatch d'agents d'audit par projet.
-
----
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `PORT` | `3777` | Port HTTP/SSE |
+| `HOST` | `127.0.0.1` | Adresse d'écoute |
+| `MAX_MESSAGES` | `2000` | Messages gardés en mémoire |
+| `WIKICHAT_MAX_SESSIONS` | `30` | Budget de spawn concurrent |
+| `WIKICHAT_MAX_SPAWN_DEPTH` | `3` | Profondeur de spawn maximale |
+| `WIKICHAT_MAX_RESUME_MB` | `5` | Plafond de transcript repris via `--resume` |
+| `WIKICHAT_PRINCIPAL_GATE` | `any-named` | `any-named` / `strict` / `0` |
+| `WIKICHAT_DORMANT_GRACE_MS` | `300000` | Délai avant mise en sommeil |
+| `WIKICHAT_AUTONOMOUS_TEAM` | (off) | `1` provisionne les triggers de la team |
+| `WIKICHAT_TRIGGERS_DISABLED` | (off) | `1` désarme le moteur de triggers |
+| `WIKICHAT_NO_OVERLAY_INSTALL` | (off) | `1` empêche l'installation auto de l'overlay |
 
 ## Tests
 
 ```bash
-# serveur doit tourner en parallèle
-npm start &
+npm start &   # le serveur doit tourner
 npm test
 ```
-
----
 
 ## Licence
 
