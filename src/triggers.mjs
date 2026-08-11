@@ -28,7 +28,7 @@ import cron from "node-cron";
 import chokidar from "chokidar";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { state, sysMsg } from "./state.mjs";
-import { isActive } from "./dormant.mjs";
+import { isActive, onWake } from "./dormant.mjs";
 
 const TRIGGERS_FILE = path.join(os.homedir(), ".wikichat", "triggers.json");
 
@@ -75,6 +75,86 @@ export function configureTriggers({ spawnFn, budgetCheckFn, routineFn }) {
   _spawnFn = spawnFn || null;
   _budgetCheckFn = budgetCheckFn || null;
   _routineFn = routineFn || null;
+}
+
+// ── Rattrapage des crons manqués pendant le sommeil ──────────────────────────
+//
+// La dormant gate refuse tout fire quand aucune session nommée n'est ouverte.
+// Or les routines de fond sont programmées la nuit — précisément aux heures où
+// personne n'est là. Sans rattrapage, un cron nocturne ne s'exécute jamais :
+// c'est ce qui a mis la chaîne de capitalisation à l'arrêt (digest quotidien
+// à 22 h, dernier passage réel trois semaines plus tôt).
+//
+// Plutôt que d'empiler une file de jobs en attente, on recalcule ce qui était
+// dû à partir de `schedule` + `last_fired` — les deux seules sources de vérité —
+// et on relance UNE fois par trigger au réveil, quel que soit le nombre
+// d'occurrences manquées. Les garde-fous habituels (cooldown, cap quotidien)
+// restent en vigueur.
+
+/** Développe un champ cron ("*", "1-5", "*∕15", "1,3") en ensemble de valeurs. */
+export function parseCronField(f, min, max) {
+  const ok = new Set();
+  String(f).split(",").forEach((part) => {
+    let step = 1, range = part;
+    const slash = part.split("/");
+    if (slash.length === 2) { range = slash[0]; step = parseInt(slash[1], 10) || 1; }
+    let lo, hi;
+    if (range === "*") { lo = min; hi = max; }
+    else if (range.indexOf("-") !== -1) { const ab = range.split("-"); lo = parseInt(ab[0], 10); hi = parseInt(ab[1], 10); }
+    else { lo = hi = parseInt(range, 10); }
+    if (isNaN(lo)) return;
+    if (isNaN(hi)) hi = lo;
+    for (let v = lo; v <= hi; v += step) if (v >= min && v <= max) ok.add(v);
+  });
+  return ok;
+}
+
+/** Prochaine occurrence d'un schedule après `from`, ou null au-delà de 60 jours. */
+export function cronNext(schedule, from) {
+  const parts = String(schedule || "").trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const mins = parseCronField(parts[0], 0, 59), hrs = parseCronField(parts[1], 0, 23),
+        doms = parseCronField(parts[2], 1, 31), mons = parseCronField(parts[3], 1, 12),
+        dows = parseCronField(parts[4], 0, 6);
+  const domStar = parts[2] === "*", dowStar = parts[4] === "*";
+  let d = new Date(from.getTime() + 60000); d.setSeconds(0, 0);
+  const limit = new Date(from.getTime() + 60 * 24 * 3600 * 1000);
+  while (d < limit) {
+    const dayOk = (domStar && dowStar) ? true
+      : domStar ? dows.has(d.getDay())
+      : dowStar ? doms.has(d.getDate())
+      : (doms.has(d.getDate()) || dows.has(d.getDay()));
+    if (mons.has(d.getMonth() + 1) && dayOk && hrs.has(d.getHours()) && mins.has(d.getMinutes())) return new Date(d);
+    d = new Date(d.getTime() + 60000);
+  }
+  return null;
+}
+
+/** Relance les crons dont une occurrence est passée pendant le sommeil. */
+export async function catchupMissedCrons() {
+  const now = new Date();
+  const due = [..._triggers.values()].filter(t => {
+    if (t.type !== "cron" || t.enabled === false) return false;
+    const since = t.last_fired ? new Date(t.last_fired) : (t.created_at ? new Date(t.created_at) : null);
+    if (!since || isNaN(since.getTime())) return false;
+    const next = cronNext(t.config?.schedule, since);
+    return !!(next && next <= now);
+  });
+  if (due.length === 0) return { fired: 0 };
+  console.log(`[Triggers] Rattrapage au réveil : ${due.length} cron(s) en retard — ${due.map(t => t.id).join(", ")}`);
+  let fired = 0;
+  for (const t of due) {
+    try {
+      const r = await fireTrigger(t.id, { source: "catchup-wake" });
+      if (r.ok) fired++;
+    } catch { /* non bloquant */ }
+  }
+  return { fired, due: due.length };
+}
+
+/** Branche le rattrapage sur l'ouverture de la gate. À appeler une fois au boot. */
+export function startCronCatchup() {
+  onWake(() => { catchupMissedCrons().catch(() => { /* non bloquant */ }); });
 }
 
 export function loadTriggers() {
