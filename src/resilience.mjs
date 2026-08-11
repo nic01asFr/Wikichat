@@ -116,7 +116,7 @@ const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
  * @param {Function} pushUpdate — () => void, called after each cycle
  * @returns {NodeJS.Timeout} — interval handle for stopWatchdog()
  */
-export function startWatchdog(appState, spawnRegistryLoader, respawnFn, pushUpdate) {
+export function startWatchdog(appState, spawnRegistryLoader, respawnFn) {
   const handle = setInterval(async () => {
     const now = Date.now();
 
@@ -181,10 +181,6 @@ export function startWatchdog(appState, spawnRegistryLoader, respawnFn, pushUpda
       }
     }
 
-    // 4. Notify dashboard
-    try {
-      pushUpdate();
-    } catch { /* non-blocking */ }
   }, 60 * 1000);
 
   return handle;

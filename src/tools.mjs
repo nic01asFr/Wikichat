@@ -23,7 +23,6 @@ import {
   upsertSpawnRegistry, getAgentStoragePath, writeAgentFile,
   SESSION_STORE, saveIdentityBinding, getIdentityBinding,
 } from "./persistence.mjs";
-import { pushDashboardUpdate } from "./dashboard.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
@@ -45,7 +44,6 @@ function txt(text) { return { content: [{ type: "text", text }] }; }
 
 function notify(channel, excludeId) {
   notifyWaiters(channel, excludeId);
-  pushDashboardUpdate();
 }
 
 /** Render the coordination protocol of a message so the RECIPIENT can act on it.
@@ -2362,7 +2360,6 @@ export function registerTools(server, sessionId) {
         const t = state.spawnTickets.get(ticketId);
         if (t) { t.status = result.success ? "completed" : "failed"; t.completedAt = new Date(); t.result = { success: result.success, exitCode: result.exitCode }; }
         notifyWaiters("__tickets__", null);
-        pushDashboardUpdate();
       }).catch(() => {
         const t = state.spawnTickets.get(ticketId);
         if (t) { t.status = "failed"; t.completedAt = new Date(); }
@@ -2450,7 +2447,6 @@ export function registerTools(server, sessionId) {
             if (spawnerSession) notify(dmKey, null);
           }
           notifyWaiters("__tickets__", null);
-          pushDashboardUpdate();
         }).catch(() => {
           ticket.status = "failed";
           ticket.completedAt = new Date();

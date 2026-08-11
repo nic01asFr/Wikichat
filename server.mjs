@@ -7,7 +7,7 @@
  *   src/persistence.mjs  — atomic file I/O (sessions, projects, spawn registry)
  *   src/notifier.mjs     — long-poll waiter/notification system
  *   src/tools.mjs        — all MCP tool definitions
- *   src/dashboard.mjs    — live web dashboard (GET /dashboard)
+ *   src/events.mjs       — bus d'événements système (détecteurs → triggers)
  */
 
 import express from "express";
@@ -26,8 +26,6 @@ import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
-import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
-import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
 import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -39,7 +37,6 @@ import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } fro
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
-import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
 import { emitEvent } from "./src/events.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
@@ -258,8 +255,7 @@ const watchdogHandle = startWatchdog(
     } else {
       console.log(`[Watchdog] Would respawn: ${entry.name}`);
     }
-  },
-  pushDashboardUpdate
+  }
 );
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 function gracefulShutdown(signal) {
@@ -346,7 +342,6 @@ setInterval(async () => {
         }
       }
 
-      if (items.length > 0 || artifacts.length > 0) pushDashboardUpdate();
     }
   } catch (e) {
     console.error("[WikiChat] Queue/artifact pickup error:", e.message);
@@ -452,7 +447,6 @@ setInterval(async () => {
     console.error("[WikiChat] Change detection error:", e.message);
   }
 
-  pushDashboardUpdate();
   } finally { _cleanupInProgress = false; }
 }, 5 * 60 * 1000);
 
@@ -470,22 +464,10 @@ app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
 
 const transports = new Map(); // sessionId → { transport, server }
 
-// Dashboard & Game
-app.get("/dashboard", handleDashboardPage);
-app.get("/dashboard/events", handleDashboardEvents);
-
-// Phase 6 PR7 — Cockpit (5-panneaux)
-app.get("/cockpit", handleCockpitPage);
-app.get("/cockpit/data", handleCockpitData);
-app.get("/cockpit/events", handleCockpitEvents);
-app.get("/cockpit/agent/:name", handleAgentInspector);
-app.get("/cockpit/routine/:id", handleRoutineInspector);
-app.get("/cockpit/project/:slug", handleProjectView);
-app.get("/cockpit/decisions", handleDecisionsLog);
 app.post("/api/routines/run", express.json(), async (req, res) => {
   try {
     const { id, params } = req.body || {};
-    const result = await runRoutine(id, params || {}, { spawnedBy: "cockpit-ui" });
+    const result = await runRoutine(id, params || {}, { spawnedBy: "rest-api" });
     res.json(result);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -493,7 +475,7 @@ app.post("/api/dispatch", express.json(), async (req, res) => {
   try {
     const { intent, context, prefer } = req.body || {};
     if (!intent) return res.status(400).json({ error: "intent required" });
-    const result = await dispatchIntent({ intent, context, prefer, spawnedBy: "cockpit-ui" });
+    const result = await dispatchIntent({ intent, context, prefer, spawnedBy: "rest-api" });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -502,7 +484,6 @@ app.post("/api/dispatch", express.json(), async (req, res) => {
 // Les maquettes de design (concepts, hybrid-concepts, style-guide, game) vivent
 // désormais dans docs/design/ : ce sont des documents de travail, pas des pages
 // servies en production.
-app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "console.html"))); });
 app.get("/pilote", handlePilotePage);
 app.get("/pilote/api/data", handlePiloteData);
 app.get("/pilote/api/tools", handlePiloteTools);
@@ -516,7 +497,6 @@ app.post("/pilote/api/agent/:id/continue", handlePiloteContinue);
 app.post("/pilote/api/agent/:id/decide", handlePiloteDecide);
 app.post("/pilote/api/agent/:id/apply", handlePiloteApply);
 app.delete("/pilote/api/agent/:id", handlePiloteDelete);
-app.get("/regie", (_req, res) => res.redirect("/console"));
 
 // MCP SSE endpoint
 app.get("/sse", async (req, res) => {
@@ -575,7 +555,6 @@ app.get("/sse", async (req, res) => {
     }
   }
   console.log(`[WikiChat] +session ${sid.slice(0, 8)}${session.name.startsWith("session-") ? "" : ` (${session.name})`} (total: ${state.sessions.size})`);
-  pushDashboardUpdate();
 
   res.on("close", () => {
     const session = state.sessions.get(sid);
@@ -587,7 +566,6 @@ app.get("/sse", async (req, res) => {
     clearWaiters(sid);
     if (wasRegistered) {
       sysMsg("system", `${name} s'est déconnecté.`);
-      pushDashboardUpdate();
     }
     console.log(`[WikiChat] -session ${name} (total: ${state.sessions.size})`);
   });
@@ -624,16 +602,6 @@ app.get("/api/projects", (_req, res) => {
   }
 });
 
-app.get("/api/map/generate", (_req, res) => {
-  try {
-    const registry = loadRegistry();
-    const map = generateMap(registry.projects || []);
-    res.json(map);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 app.get("/api/projects/scan", async (_req, res) => {
   res.json({ status: "scanning", message: "Scan started" });
   try {
@@ -647,7 +615,6 @@ app.get("/api/projects/scan", async (_req, res) => {
     for (const p of updated) {
       await injectProject(p).catch(() => {});
     }
-    pushDashboardUpdate();
     console.log(`[WikiChat] /api/projects/scan done — ${scanned.length} project(s) found.`);
   } catch (e) {
     console.error("[Scan] error:", e);
@@ -764,7 +731,6 @@ app.post("/api/action", async (req, res) => {
     spawnedBy: "wikichat-ui",
   }).then(result => {
     if (!result.success) console.warn(`[Action] ${jobName} failed (exit ${result.exitCode})`);
-    pushDashboardUpdate();
   }).catch(() => {});
 
   res.json({
@@ -773,7 +739,7 @@ app.post("/api/action", async (req, res) => {
     projectSlug,
     status: "running",
     artifactsIn: `${project.path}/.wikichat/artifacts/`,
-    note: "Résultat disponible dans 1-3min via artifacts ou dashboard",
+    note: "Résultat disponible dans 1-3min via artifacts",
   });
 });
 
@@ -816,7 +782,6 @@ app.post("/api/chat", (req, res) => {
 
   notifyWaiters(targetChannel);
   notifyWaiters("__all__");
-  pushDashboardUpdate();
 
   res.json({ ok: true, id: msg.id, channel: targetChannel });
 });
@@ -913,11 +878,10 @@ app.post("/api/spawn/daemon", (req, res) => {
   const result = spawnDaemon(projectPath, {
     name, role, task, model,
     port: PORT,
-    spawnedBy: "cockpit",
+    spawnedBy: "rest-api",
   });
   if (result.success) {
     sysMsg("coordination", `🟢 Cockpit lance "${name}" en mode daemon dans ${projectPath.split(/[/\\]/).pop()}`);
-    pushDashboardUpdate();
   }
   res.json(result);
 });
@@ -971,7 +935,7 @@ app.post("/api/projects/:slug/inject", async (req, res) => {
 });
 
 // ── .wikichat/ folder API ──────────────────────────────────────────────────────
-// These routes let the dashboard/game read .wikichat/ content directly.
+// Ces routes exposent le contenu de .wikichat/ aux agents et aux clients REST.
 // Each project has its own .wikichat/ overlay; global knowledge lives in ~/.wikichat/
 
 const GLOBAL_WIKICHAT = join(homedir(), ".wikichat");
@@ -1085,220 +1049,6 @@ app.get("/api/knowledge/:topic/:file", async (req, res) => {
   }
 });
 
-// ── REGIE / IDEATION REST API ──────────────────────────────────────────────────
-// Drives the /console UI : ideas + project meta + audit + harmonize, all
-// without going through the MCP layer. Read-mostly + a few targeted POSTs.
-
-// Projects with régie meta (lifecycle, axes, purpose, publish, health) and live agents
-app.get("/api/regie/projects", (_req, res) => {
-  const out = [];
-  for (const p of state.projects.values()) {
-    const liveAgents = [...state.sessions.values()]
-      .filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase())
-      .map(s => ({ id: s.sessionId, name: s.name, role: s.role }));
-    const trackedAgents = p.agents ? Object.keys(p.agents).length : 0;
-    out.push({
-      name: p.name,
-      description: p.description,
-      purpose: p.purpose || null,
-      axes: p.axes || [],
-      lifecycle: p.lifecycle || null,
-      publish: p.publish || null,
-      relations: p.relations || [],
-      health: p.health || null,
-      tasks_active: [...(p.tasks?.values() || [])].filter(t => t.status === "active").length,
-      blockers: (p.blockers || []).length,
-      decisions: (p.decisions || []).length,
-      open_questions: (p.open_questions || []).length,
-      closed: !!p.closure,
-      tracked_agents: trackedAgents,
-      live_agents: liveAgents,
-      updatedAt: p.updatedAt,
-      repo: p.repo || null,
-    });
-  }
-  out.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-  res.json({ projects: out });
-});
-
-// PATCH a single project's meta — backs the "edit lifecycle / purpose / axes" UI inline edits
-app.patch("/api/regie/projects/:name", express.json(), (req, res) => {
-  const proj = state.projects.get(req.params.name);
-  if (!proj) return res.status(404).json({ error: "project not found" });
-  const { purpose, axes, lifecycle, publish, relations } = req.body || {};
-  if (purpose !== undefined) proj.purpose = purpose;
-  if (axes !== undefined) proj.axes = Array.isArray(axes) ? axes : [];
-  if (lifecycle !== undefined) {
-    const valid = ["ideation", "mvp", "active", "maintenance", "archived", "closed"];
-    if (!valid.includes(lifecycle)) return res.status(400).json({ error: "invalid lifecycle" });
-    proj.lifecycle = lifecycle;
-  }
-  if (publish !== undefined) {
-    proj.publish = proj.publish || {};
-    for (const k of Object.keys(publish)) {
-      if (publish[k] === null) { delete proj.publish[k]; continue; }
-      if (typeof publish[k] === "object" && !Array.isArray(publish[k])) {
-        proj.publish[k] = { ...(proj.publish[k] || {}), ...publish[k] };
-      } else {
-        proj.publish[k] = publish[k];
-      }
-    }
-  }
-  if (relations !== undefined) proj.relations = relations;
-  proj.updatedAt = new Date();
-  proj.updatedBy = "console";
-  saveProject(proj);
-  res.json({ ok: true, project: proj.name });
-});
-
-// Ideas — list with filters
-app.get("/api/regie/ideas", (req, res) => {
-  const { status, axis, project, since_days, limit, query } = req.query;
-  let out;
-  if (query) {
-    out = searchIdeas(String(query), { limit: parseInt(limit) || 20 });
-  } else {
-    out = listIdeas({
-      status: status || undefined,
-      axis: axis || undefined,
-      project: project || undefined,
-      since_days: since_days ? parseInt(since_days) : undefined,
-      limit: limit ? parseInt(limit) : 50,
-    });
-  }
-  res.json({ ideas: out, stats: ideaStats() });
-});
-
-// Ideas — create
-app.post("/api/regie/ideas", express.json(), (req, res) => {
-  const { title, body, axes, related_projects, source, created_by } = req.body || {};
-  if (!title) return res.status(400).json({ error: "title required" });
-  try {
-    const idea = createIdea({ title, body, axes, related_projects, source, created_by: created_by || "console" });
-    res.status(201).json({ idea });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Ideas — partial update
-app.patch("/api/regie/ideas/:id", express.json(), (req, res) => {
-  try {
-    const updated = updateIdea(req.params.id, req.body || {});
-    if (!updated) return res.status(404).json({ error: "idea not found" });
-    res.json({ idea: updated });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Ideas — hard delete
-app.delete("/api/regie/ideas/:id", (req, res) => {
-  const ok = deleteIdea(req.params.id);
-  if (!ok) return res.status(404).json({ error: "idea not found" });
-  res.json({ ok: true });
-});
-
-// Audit a single project (uses project.repo > registry path)
-app.post("/api/regie/audit", express.json(), async (req, res) => {
-  const { project, persist = true } = req.body || {};
-  if (!project) return res.status(400).json({ error: "project required" });
-  const proj = state.projects.get(project);
-  if (!proj) return res.status(404).json({ error: "project not found" });
-
-  // Resolve repo path : project.repo > registry path
-  let repoPath = proj.repo;
-  if (!repoPath) {
-    try {
-      const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
-      const lower = project.toLowerCase();
-      const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-      const match = reg.projects?.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
-      if (match?.path) repoPath = match.path;
-    } catch { /* */ }
-  }
-  if (!repoPath) return res.status(400).json({ error: "no repo_path known for this project" });
-
-  const audit = await auditProject(repoPath);
-  if (persist && audit.exists) {
-    proj.health = audit;
-    proj.updatedAt = new Date();
-    saveProject(proj);
-  }
-  res.json({ audit });
-});
-
-// Audit all projects in registry (batch, concurrency-capped)
-app.post("/api/regie/audit-all", express.json(), async (req, res) => {
-  const { persist = false, concurrency = 4 } = req.body || {};
-  try {
-    const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
-    const projects = (reg.projects || []).filter(p => p.path && p.name).map(p => ({ name: p.name, path: p.path }));
-    const startedAt = Date.now();
-    const audits = await auditMany(projects, concurrency);
-    if (persist) {
-      for (const [name, audit] of audits) {
-        const proj = state.projects.get(name);
-        if (proj && audit.exists) {
-          proj.health = audit;
-          proj.updatedAt = new Date();
-          saveProject(proj);
-        }
-      }
-    }
-    const out = [...audits.entries()].map(([name, audit]) => ({ name, ...audit }));
-    res.json({ audits: out, count: out.length, elapsed_ms: Date.now() - startedAt });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Run a Harmonizer pass — clusters ideas, optionally posts a summary on #ideation
-app.post("/api/regie/harmonize", express.json(), async (req, res) => {
-  const { threshold, min_cluster_size, post_to_channel = true } = req.body || {};
-  const report = await runHarmonizer({ threshold, min_cluster_size });
-  const summary = formatHarmonizerSummary(report);
-  if (post_to_channel && state.channels.has("ideation") && report.clusters.length > 0) {
-    pushMessage({
-      id: randomUUID(), from: "system", fromName: "Harmonizer (console)",
-      channel: "ideation",
-      content: summary,
-      timestamp: new Date(),
-    });
-    notifyWaiters("ideation", null);
-  }
-  res.json({ report, summary });
-});
-
-// Live sessions snapshot — used by the console left rail
-app.get("/api/regie/sessions", (_req, res) => {
-  const out = [];
-  for (const s of state.sessions.values()) {
-    out.push({
-      id: s.sessionId,
-      name: s.name,
-      role: s.role,
-      agent_type: s.agent_type,
-      availability: s.availability,
-      current_project: s.current_project,
-      lastSeen: s.lastSeen,
-      anonymous: !s.name || s.name.startsWith("session-"),
-    });
-  }
-  out.sort((a, b) => Number(a.anonymous) - Number(b.anonymous) || a.name.localeCompare(b.name));
-  res.json({ sessions: out });
-});
-
-// Channels snapshot for the rail
-app.get("/api/regie/channels", (_req, res) => {
-  const out = [...state.channels.values()].map(c => ({
-    name: c.name,
-    description: c.description,
-    isSystem: !!c.isSystem,
-    isDM: c.name.startsWith("dm:"),
-  }));
-  res.json({ channels: out });
-});
 
 // Global artifacts (wikichat project itself)
 app.get("/api/wikichat/artifacts", async (_req, res) => {
@@ -1340,7 +1090,7 @@ app.get("/", (req, res) => {
     channels: [...state.channels.keys()].filter(c => !c.startsWith("dm:")),
     totalMessages: state.messages.length,
     uptime: Math.floor(process.uptime()),
-    dashboard: `http://localhost:${PORT}/dashboard`,
+    pilote: `http://localhost:${PORT}/pilote`,
   });
 });
 
@@ -1411,7 +1161,7 @@ app.listen(PORT, HOST, () => {
 ║                                                  ║
 ║  🌐 http://localhost:${PORT}                       ║
 ║  📡 SSE:  http://localhost:${PORT}/sse               ║
-║  📊 Dashboard: http://localhost:${PORT}/dashboard    ║
+║  🛠️  Pilote: http://localhost:${PORT}/pilote          ║
 ║                                                  ║
 ╚══════════════════════════════════════════════════╝
   `);
