@@ -159,6 +159,29 @@ register_trigger({
 
 Un `git add .wikichat/` dans chaque projet sauvegarde sa connaissance avec son code. Tu changes de machine, l'état suit.
 
+### Consulter sa mémoire à distance (optionnel)
+
+Toute cette mémoire vit sur une seule machine. Un pipeline en trois briques la rend consultable ailleurs — depuis un téléphone, un autre poste — sans exposer la machine ni ses secrets :
+
+```
+export sanitisé  →  dépôt git privé  →  serveur MCP lecture seule
+   (whitelist)        (idempotent)         (snapshot déjà propre)
+```
+
+**Export** — balaye les sources de mémoire, filtre le bruit, et n'émet qu'une liste blanche de champs. Un scan anti-secret tourne sur le résultat : jetons de processus, clés, identifiants sont retirés avant écriture. L'export refuse de produire un snapshot où il détecte un secret.
+
+**Publication** — ne committe que si le hash du manifest a changé, et retire les fichiers orphelins quand un projet disparaît. Quand rien n'a bougé, c'est un no-op.
+
+**Consultation** — un serveur MCP hébergeable, strictement lisible : il ne connaît que le snapshot déjà sanitisé, ne spawne rien, n'écrit rien. Son jeton se lit depuis un fichier plutôt que d'apparaître dans le script de démarrage.
+
+La boucle est bidirectionnelle : une idée capturée à distance atterrit dans `inbox/` du dépôt, et le passage suivant l'intègre en local. Une capture externe devient toujours une **idée taguée**, jamais une mutation directe d'état projet — le local reste l'autorité.
+
+```bash
+npm run memory:sync -- --repo <clone-local>          # un passage manuel
+npm run memory:refresh -- --repo <clone-local>       # battement toutes les 15 min
+npm run memory:refresh -- --uninstall                # retirer le battement
+```
+
 ## Outils MCP (51)
 
 | Catégorie | Outils |

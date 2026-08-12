@@ -9,7 +9,7 @@
  *   wikichat://kb/{topic}        — knowledge base entry
  *
  * Resources complement tools: tools are for actions, resources for context.
- * IDEs display resources in panels — Nicolas can see agent state without the dashboard.
+ * IDEs display resources in panels — the user sees agent state without opening a UI.
  */
 
 import fs from "fs";

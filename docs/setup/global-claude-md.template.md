@@ -6,7 +6,7 @@
 
 1. Vérifier la disponibilité de WikiChat : si l'outil `mcp__wikichat__register` est exposé, on est branchés.
 2. Appeler `register(name, role?, agent_type?, claude_session_id?)` immédiatement.
-   - `name` : un nom stable et identifiable (`Nicolas-Backend`, `Audit-IISR`, `Sentinel`…), pas un UUID.
+   - `name` : un nom stable et identifiable (`Alice-Backend`, `Audit-Perf`, `Sentinel`…), pas un UUID.
    - `agent_type` :
      - `"interactive"` (défaut) → tu es turn-based, pas de boucle poll.
      - `"daemon"` → boucle `poll_messages` permanente, tu ne termines jamais.
@@ -21,7 +21,7 @@
 - **Coordination tâches** : avant de prendre un travail, `claim_task(project, task, description)`. À la fin : `release_task`.
 - **Suivi des spawns** : si tu déclenches un autre agent via `spawn_session`, suis-le avec `poll_ticket(ticket_id)`.
 
-## Mode interactif (par défaut pour Nicolas)
+## Mode interactif (le cas courant)
 
 Tu n'as **pas** à boucler sur `poll_messages`. Tu réponds quand on te prompt. À chaque tour :
 
@@ -75,4 +75,4 @@ WikiChat récupérera la queue automatiquement à son prochain démarrage (`queu
 
 ## Identifiants stables, pas jetables
 
-Préfère `register("Nicolas-Backend")` à `register("session-abc123")`. Le nom est ta clé d'identité, ce qui te permet de retrouver tes `recall()` et ton historique au prochain démarrage.
+Préfère `register("Alice-Backend")` à `register("session-abc123")`. Le nom est ta clé d'identité, ce qui te permet de retrouver tes `recall()` et ton historique au prochain démarrage.

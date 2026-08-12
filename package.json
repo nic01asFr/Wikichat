@@ -14,7 +14,10 @@
     "test": "node test-e2e.mjs",
     "install-service": "node scripts/install-service.mjs",
     "uninstall-service": "node scripts/uninstall-service.mjs",
-    "install-overlay": "node scripts/install-claude-overlay.mjs"
+    "install-overlay": "node scripts/install-claude-overlay.mjs",
+    "memory:sync": "node scripts/sync-memory.mjs",
+    "memory:refresh": "node scripts/install-memory-refresh.mjs",
+    "memory:server": "node remote/memory-mcp-server.mjs"
   },
   "keywords": [
     "mcp",
