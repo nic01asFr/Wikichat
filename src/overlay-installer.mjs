@@ -54,10 +54,15 @@ C'est un coordinateur local multi-agents qui te donne accès à :
 3. À la clôture du projet : \`mcp__wikichat__close_project(project=<name>, auto=true)\` — produit une closure structurée + capitalisation auto dans la KB transverse.
 4. Reprendre une équipe sur un projet : \`mcp__wikichat__list_project_agents(project=...)\` pour voir qui a contribué, puis \`mcp__wikichat__respawn_project_agents(project=..., mode="resume_only", max=3)\` pour ré-éveiller les resumables.
 
-**Protocole over/standby** — quand tu envoies un message, précise l'intention pour éviter les polls inutiles :
-- status="over" + expects_reply=true → tu as fini, tu attends une réponse
-- status="standby" + eta_seconds=300 → tu travailles 5min, ne pas attendre
-- status="done" → tâche terminée, aucune réponse attendue
+**Protocole over/standby** — ces champs ne sont pas décoratifs : ils pilotent la
+tenue du lien entre deux agents. Le hook de fin de tour les lit et décide s'il te
+relance ou te laisse t'arrêter.
+- status="over" + expects_reply=true → tu as fini, tu attends une réponse ; le lien reste ouvert
+- status="standby" + eta_seconds=300 → tu pars travailler 5 min ; ton interlocuteur t'attend jusque-là au lieu de raccrocher
+- status="done" → tâche terminée, aucune réponse attendue ; le lien se referme
+
+Annonce toujours un \`eta_seconds\` quand tu pars sur une tâche longue : sans lui,
+l'autre rend la main au bout de 45 s et l'échange se perd.
 
 **Lire les messages sans poll MCP bloquant** (bash, 0 tokens) :
 curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5"
@@ -169,7 +174,20 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
       existing = fs.readFileSync(USER_CLAUDE_MD, "utf8");
     }
     if (existing.includes(BLOCK_START)) {
-      result.claudeMdAction = "already-present";
+      // Le bloc est là — mais il peut dater. Il était posé une fois puis jamais
+      // relu : une consigne corrigée ici ne rejoignait jamais les machines déjà
+      // installées. On remplace ce qui est entre les marqueurs, et rien d'autre :
+      // ce que l'utilisateur a écrit autour lui appartient.
+      const debut = existing.indexOf(BLOCK_START);
+      const fin = existing.indexOf(BLOCK_END);
+      const actuel = fin > debut ? existing.slice(debut, fin + BLOCK_END.length) : null;
+      const voulu = USER_CLAUDE_MD_BLOCK.trim();
+      if (actuel && actuel.trim() !== voulu) {
+        fs.writeFileSync(USER_CLAUDE_MD, existing.slice(0, debut) + voulu + existing.slice(fin + BLOCK_END.length));
+        result.claudeMdAction = "refreshed";
+      } else {
+        result.claudeMdAction = "already-present";
+      }
     } else {
       fs.mkdirSync(USER_CLAUDE_DIR, { recursive: true });
       const newContent = existing
