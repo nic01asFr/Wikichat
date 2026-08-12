@@ -7,6 +7,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 
 import {
@@ -43,6 +44,37 @@ function txt(text) { return { content: [{ type: "text", text }] }; }
 
 function notify(channel, excludeId) {
   notifyWaiters(channel, excludeId);
+}
+
+/**
+ * Suggère de poser un guetteur — au moment précis où ça devient utile.
+ *
+ * Le guetteur n'a de sens que si l'agent vient de créer une attente et qu'il
+ * reste en vie pour la voir aboutir. Le poser par défaut au démarrage serait un
+ * processus posé pour rien dans le cas le plus fréquent : un headless qui exécute
+ * sa tâche et sort avant que quoi que ce soit n'arrive.
+ *
+ * Le service ne peut pas lancer ce processus lui-même — il vit dans la session de
+ * l'agent, seul l'agent peut l'ouvrir. La seule prise est donc de le lui dire, et
+ * l'endroit juste est la réponse de l'outil par lequel il vient de demander
+ * quelque chose à quelqu'un.
+ *
+ * Une fois par session : répété à chaque message, ce serait du bruit.
+ */
+const _guetteurSuggere = new Set();
+const CHEMIN_GUETTEUR = path
+  .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-attendre-courrier.mjs")
+  .split(path.sep).join("/");
+
+function hintGuetteur(sessionId) {
+  const s = state.sessions.get(sessionId);
+  if (!s?.name || s.name.startsWith("session-")) return ""; // sans identité, rien à guetter
+  if ((s.agent_type || "interactive") === "headless") return ""; // il sortira avant
+  if (_guetteurSuggere.has(sessionId)) return "";
+  _guetteurSuggere.add(sessionId);
+  return `\n👁️ Tu attends une réponse : pose un guetteur et continue ton travail — il te préviendra ` +
+    `en cours de session, sans consommer de tokens pendant l'attente.\n` +
+    `   Bash(command='node "${CHEMIN_GUETTEUR}"', run_in_background=true)`;
 }
 
 /** Render the coordination protocol of a message so the RECIPIENT can act on it.
@@ -673,7 +705,9 @@ export function registerTools(server, sessionId) {
       const entete = priority
         ? `${emoji} Diffusé à toutes les sessions (${state.sessions.size - 1} destinataire(s))`
         : isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`;
-      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.`);
+      // Le guetteur n'est proposé que si ce message crée réellement une attente.
+      const guetteur = expects_reply ? hintGuetteur(sessionId) : "";
+      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.${guetteur}`);
     }
   );
 
@@ -2321,7 +2355,8 @@ export function registerTools(server, sessionId) {
           : `Il est offline — le message l'attend dans sa maison, livré dès son retour.${wake ? "" : " (wake=true pour le réveiller maintenant.)"}`;
         return txt(
           `📬 Déposé dans la maison de ${name} → #${targetHome} (🆔 ${msg.id.slice(0, 8)}), il est @mentionné.\n${stateNote}${wakeNote}\n` +
-          `↩️ Sa réponse te reviendra dans TA maison — relève avec poll().`
+          `↩️ Sa réponse te reviendra dans TA maison — relève avec poll().` +
+          (expects_reply === false ? "" : hintGuetteur(sessionId))
         );
       }
 

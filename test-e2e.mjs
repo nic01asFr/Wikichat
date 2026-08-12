@@ -142,6 +142,40 @@ check("un channel_match ne fire pas hors motif", avant === apres, `${avant} → 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+section("Guetteur de boîte");
+
+// Le guetteur n'est pas posé par défaut : il ne sert que si l'agent vient de
+// créer une attente ET qu'il reste en vie pour la voir aboutir. La suggestion
+// est donc conditionnée, pas systématique.
+const sansAttente = await bob.call("send_message", {
+  channel: `e2e-${SUFFIX}`, content: "rien à attendre ici", expects_reply: false,
+});
+check("aucun guetteur suggéré quand rien n'est attendu", !/guetteur/i.test(sansAttente));
+
+// alice est enregistrée en headless : elle sortira avant qu'un guetteur ne serve.
+const headlessAttend = await alice.call("send_message", {
+  channel: `e2e-${SUFFIX}`, content: "j'attends une réponse", expects_reply: true,
+});
+check("aucun guetteur suggéré à un agent headless", !/guetteur/i.test(headlessAttend),
+  "un one-shot poserait un processus pour rien");
+
+const inter = await connect("interactif");
+const INTER = `__e2e_inter_${SUFFIX}`;
+await inter.call("register", { name: INTER, role: "e2e", agent_type: "interactive" });
+const premier = await inter.call("send_message", {
+  channel: `e2e-${SUFFIX}`, content: "je t'attends", expects_reply: true,
+});
+check("guetteur suggéré à une session qui attend une réponse", /run_in_background/.test(premier),
+  premier.slice(-80));
+const second = await inter.call("send_message", {
+  channel: `e2e-${SUFFIX}`, content: "toujours là ?", expects_reply: true,
+});
+check("la suggestion ne se répète pas dans la même session", !/run_in_background/.test(second),
+  "répétée à chaque message = bruit");
+await inter.close();
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 section("Réveil générique");
 
 // Un seul trigger (evt-wake-any) réveille n'importe quel agent nommé hors ligne
