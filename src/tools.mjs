@@ -253,9 +253,9 @@ function buildBriefing(sessionId, { since, mission } = {}) {
 
   // Workflow hint
   sections.push(
-    `💡 send_message → poll_messages(since_id) — boucle\n` +
-    `   remember(key, value) / recall(key) — mémoire persistante\n` +
-    `   📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
+    `💡 send_message pour parler, poll() pour relever — ton hook livre le reste\n` +
+    `   en fin de tour, tu n'as pas de boucle à tenir.\n` +
+    `   remember(clé, valeur) / recall(clé) — ce qui te survit d'une session à l'autre.`
   );
 
   return txt(sections.join("\n\n"));
@@ -461,11 +461,11 @@ export function registerTools(server, sessionId) {
       const isCurator = role && /curator|curateur|meta|méta/i.test(role);
       const workflowByType = {
         interactive: `💡 Mode interactif (turn-based): ta maison #${home || "(projet)"} te livre tout ce qui t'est adressé via ton hook, à chaque fin de tour — pas de boucle poll.\n   poll() = relever à la demande tout ce qui t'est adressé depuis ton dernier poll (curseur auto). poll(timeout_seconds=N) = rendez-vous synchrone si tu dois attendre une réponse maintenant.\n   Pour joindre quelqu'un : contact_agent(target, message) dépose dans SA maison ; sa réponse revient dans la tienne.`,
-        daemon: `💡 Mode daemon: poll_messages(since_id, timeout=120) en boucle permanente\n   Ne terminez jamais — relancez poll après chaque timeout.`,
-        headless: `💡 Mode headless: exécutez votre mission → share_artifact → exit\n   Pas de poll, pas de boucle. One-shot.`,
+        daemon: `💡 Mode daemon : poll(timeout_seconds=120) entre deux actions.\n   Une boucle de veille coûte cher — chaque tour relit tout ton historique. Si tu\n   n'as rien à faire, préfère sortir : un trigger te relancera sur événement.`,
+        headless: `💡 Mode headless : exécute ta mission → écris dans .wikichat/artifacts/ → sors.\n   Pas de poll, pas de boucle. Le service diffuse ton résultat pour toi.`,
       };
       const workflow = isCurator
-        ? `🔍 Mode Méta-Curateur: get_briefing → list_projects → read_agent_history → analyser → share_artifact\n⚠️  Pas besoin de poll_messages.`
+        ? `🔍 Mode Méta-Curateur : get_briefing → list_projects → analyser → artefact.\n   Tu lis, tu ne guettes pas : read_messages suffit.`
         : workflowByType[agent_type] || workflowByType.interactive;
 
       return txt(
@@ -699,7 +699,7 @@ export function registerTools(server, sessionId) {
       }).slice(-limit);
 
       if (filtered.length === 0) {
-        return txt(`📭 Aucun message${channel ? ` sur ${channel}` : ""} (${since_minutes}min).\n💡 Utilisez poll_messages pour attendre.`);
+        return txt(`📭 Aucun message${channel ? ` sur ${channel}` : ""} (${since_minutes}min).\n💡 Rien à guetter : ton hook te livrera ce qui arrive en fin de tour.`);
       }
 
       const lines = filtered.map(msg => {
@@ -831,7 +831,7 @@ export function registerTools(server, sessionId) {
         // seen so far and keep waiting for the remaining time.
         baselineId = state.messages.length ? state.messages[state.messages.length - 1].id : baselineId;
       }
-      return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
+      return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Inutile de relancer : rends la main, le hook te livrera la suite au prochain tour.`);
     }
   );
 
@@ -1118,7 +1118,7 @@ export function registerTools(server, sessionId) {
       session.lastSeen = new Date();
 
       const cronExpr = cronInMinutes(duration_minutes);
-      const cronPrompt = `Ton délai wikichat de ${duration_minutes}min est écoulé. Appelle poll_messages(timeout_seconds=60) pour lire les messages en attente et répondre. Si tu as terminé, appelle declare_delay(duration_minutes=0) et CronDelete avec ton job_id.`;
+      const cronPrompt = `Ton délai wikichat de ${duration_minutes}min est écoulé. Appelle poll() pour relever ce qui t'attend, et réponds. Si tu as terminé, appelle declare_delay(duration_minutes=0) et CronDelete avec ton job_id.`;
 
       sysMsg("system", `${name} répond ${timeUntil(session.eta)}${reason ? ` — ${reason}` : ""}.`);
       notify("general", sessionId);
@@ -1485,7 +1485,7 @@ export function registerTools(server, sessionId) {
         }).catch(() => {});
         sysMsg("coordination", `🏁 ${name} déclenche la clôture de "${project}" — Closer spawné (ticket ${ticketId}).`);
         notify("coordination", sessionId);
-        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Suis l'avancée via list_spawned() ou poll_ticket("${ticketId}").`);
+        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Rien à surveiller : la clôture arrive sur #library et ton hook te la livrera.`);
       }
 
       // Mode manuel : closure fournie directement.
@@ -1659,8 +1659,8 @@ export function registerTools(server, sessionId) {
           } else {
             // resume_only or fresh : both headless. resume_only passes resumeSessionId.
             const prompt = mode === "resume_only"
-              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, attends instructions via poll_messages(timeout_seconds=60).`
-              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll_messages(timeout_seconds=30) pour les messages en attente, puis sors si rien d'urgent.`;
+              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, relève avec poll() et sors s'il n'y a rien.`
+              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll() pour les messages en attente, puis sors s'il n'y a rien d'urgent.`;
             // Fire-and-forget — don't block on the headless spawn
             spawnHeadless(repoPath, prompt, {
               name: n, role: e.role || "agent",
@@ -2375,7 +2375,7 @@ export function registerTools(server, sessionId) {
       return txt(
         `🔁 ${name} est OFFLINE → ${resumed ? "reprise de SA session (--resume) " : "spawn frais "}avec ton message [ticket:${ticketId}].\n` +
         `${resumed ? "Il continue à la suite de son historique." : "⚠️ Pas de claude_session_id connu → contexte neuf (il se ré-enregistre)."}\n` +
-        `💡 poll_ticket("${ticketId}") ou poll_messages(channel="@${name}") pour sa réponse.`
+        `💡 Sa réponse reviendra dans ta maison — ton hook te la livrera en fin de tour.`
       );
     }
   );
@@ -2402,7 +2402,7 @@ export function registerTools(server, sessionId) {
       if (mode === "headless") {
         const prompt = initial_task
           ? PROMPT_TEMPLATES.task(name, initial_task, { projectPath: repo_path, role: role })
-          : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, et attendre des instructions via poll_messages.`, { projectPath: repo_path, role: role });
+          : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, relever avec poll() puis sortir.`, { projectPath: repo_path, role: role });
 
         // Create spawn ticket
         const ticketId = randomUUID().slice(0, 8);
@@ -2462,7 +2462,7 @@ export function registerTools(server, sessionId) {
 
         return txt(
           `🚀 "${name}" lancé en mode headless dans ${repoName}.\n\n` +
-          `🎫 Ticket: ${ticketId} — poll_ticket("${ticketId}") pour suivre\n` +
+          `🎫 Ticket ${ticketId} — inutile d'attendre : le résultat arrive en artefact et ton hook te l'annonce\n` +
           `📄 Résultat → .wikichat/artifacts/ (récupéré automatiquement dans 2min)\n` +
           `📡 Progression visible sur #coordination\n` +
           `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
@@ -2495,7 +2495,7 @@ export function registerTools(server, sessionId) {
           return txt(
             `🟢 "${name}" lancé en mode daemon (PID ${result.pid}) dans ${repoName}.\n\n` +
             `🎫 Ticket: ${ticketId}\n` +
-            `📡 Il va register() et boucler sur poll_messages.\n` +
+            `📡 Il va register() puis relever sa boîte.\n` +
             `💬 Envoie-lui des messages via send_message ou depuis le cockpit.\n` +
             `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
           );
@@ -2578,11 +2578,11 @@ export function registerTools(server, sessionId) {
         `1. \`register\` (name: "${name}"${role ? `, role: "${role}"` : ""})`,
         `2. \`declare_capabilities\` (current_project: "${repoName}", availability: "available")`,
         `3. Message de confirmation sur #coordination`,
-        `4. \`poll_messages(timeout_seconds=60, types=["message","direct_message","broadcast","artifact"])\` — BOUCLE INFINIE`,
+        `4. \`poll()\` pour relever ta boîte — sans argument, le curseur est tenu pour toi`,
         ``,
         `## Règle absolue`,
-        `Tu ne termines JAMAIS ta session. Tu boucles: poll → répondre → poll → ...`,
-        `Timeout = relancer poll_messages immédiatement. Jamais de question "dois-je continuer ?".`,
+        `Fais ton travail, réponds à ce qui t'est adressé, puis termine proprement.`,
+        `Ne boucle pas en attendant : un trigger te relancera quand il y aura de quoi faire.`,
       ].filter(l => l !== null).join("\n");
 
       const existing = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, "utf8") : null;
@@ -2625,8 +2625,8 @@ export function registerTools(server, sessionId) {
         `🚀 Session "${name}" lancée dans ${repoName}.\n\n` +
         `📡 Apparaîtra sur #coordination dans 1-2min.\n` +
         `📂 Contexte: ${wikichatDir}\n\n` +
-        `💡 poll_messages(channel="coordination") pour sa confirmation.\n` +
-        `📊 Suivre en temps réel: http://localhost:${process.env.PORT || 3777}/dashboard`
+        `💡 Sa confirmation arrivera sur #coordination ; ton hook te la livrera.\n` +
+        `📂 Son résultat atterrira dans .wikichat/artifacts/.`
       );
     }
   );

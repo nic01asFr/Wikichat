@@ -649,7 +649,7 @@ export function resolveResumeSession(name, projectPath, explicitId = null) {
 
 /**
  * Spawn a persistent Claude session that runs in the background.
- * Unlike spawnHeadless (one-shot), this stays alive and loops on poll_messages.
+ * Unlike spawnHeadless (one-shot), this stays alive across several relèves.
  * Uses `claude --resume` if a previous session exists, or starts fresh.
  *
  * @param {string} projectPath  - Absolute path to the project directory
@@ -710,25 +710,27 @@ export function spawnDaemon(projectPath, options = {}) {
 
   const mcpConfigPath = path.join(projectPath, ".mcp.json");
 
-  // Daemon uses claude -p with a long-running prompt that loops on poll_messages
+  // Le daemon est un claude -p au prompt long. Il relève, agit, et sort quand il
   // Timeout is set very high (2 hours) to keep the agent alive
   const prompt = [
     AGENT_PREAMBLE,
     `Tu es ${name}${role ? `, ${role}` : ""}.`,
     task ? `Ta mission: ${task}` : "",
     ``,
-    `PROTOCOLE DAEMON — BOUCLE INFINIE:`,
+    `PROTOCOLE :`,
     `1. register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID")`,
     `   → claude_session_id est OBLIGATOIRE : sans lui ton transcript devient introuvable`,
     `     et tes prochains réveils repartent de zéro au lieu de reprendre ce contexte.`,
-    `2. send_message(channel="coordination", content="🟢 ${name} en ligne, prêt.")`,
-    `3. BOUCLE INFINIE (MINIMUM 100 itérations):`,
-    `   - poll_messages(timeout_seconds=30, types=["message","direct_message","broadcast","artifact"])`,
-    `   - Si timeout: relance poll_messages IMMÉDIATEMENT sans commentaire.`,
-    `   - Si message reçu: réponds BRIÈVEMENT via send_message, puis relance poll_messages.`,
-    `4. JAMAIS terminer. Chaque timeout = relance immédiate sans texte entre les appels.`,
-    `5. INTERDIT: résumés, récapitulatifs, "dois-je continuer?", réflexions entre les polls.`,
-    `6. Sois CONCIS: réponds en 1-2 phrases max, pas de bavardage. Économise les tokens.`,
+    `2. send_message(channel="coordination", content="🟢 ${name} en ligne.")`,
+    `3. poll(timeout_seconds=120) — relève ce qui t'est adressé, sans argument de canal.`,
+    `4. S'il y a quelque chose : traite, réponds via send_message, puis re-poll.`,
+    `5. Si deux relèves consécutives ne rapportent rien : consigne ce qui doit survivre`,
+    `   (add_project_note / remember) et TERMINE proprement.`,
+    ``,
+    `Ne boucle pas indéfiniment. Chaque tour d'attente relit tout ton historique :`,
+    `attendre coûte plus cher que d'être relancé. Un trigger te réveillera quand il y`,
+    `aura de quoi faire, et tu reprendras cette session avec --resume.`,
+    `Sois concis : 1-2 phrases par réponse, pas de récapitulatif entre les relèves.`,
   ].filter(Boolean).join("\n");
 
   // Register in spawn registry
@@ -801,8 +803,8 @@ export function spawnDaemon(projectPath, options = {}) {
           const continuePrompt = [
             AGENT_PREAMBLE,
             `Tu es ${name}${role ? `, ${role}` : ""}. Redémarrage #${respawnCount}.`,
-            `register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID") puis poll_messages.`,
-            `Sois CONCIS. Boucle poll_messages(timeout_seconds=30).`,
+            `register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID") puis poll().`,
+            `Sois CONCIS. Traite ce qui t'attend, consigne, et termine — ne boucle pas.`,
           ].join("\n");
           // Re-résolu à chaud : l'agent a pu enregistrer un ID plus récent depuis
           // le spawn initial, et le transcript a pu disparaître entre-temps.
