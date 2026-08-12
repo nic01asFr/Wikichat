@@ -29,6 +29,7 @@ import chokidar from "chokidar";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { state, sysMsg } from "./state.mjs";
 import { isActive, onWake } from "./dormant.mjs";
+import { recall, knownAgentNames } from "./identity.mjs";
 
 const TRIGGERS_FILE = path.join(os.homedir(), ".wikichat", "triggers.json");
 
@@ -239,6 +240,37 @@ export function registerTrigger(spec) {
   return trigger;
 }
 
+/** Identifiant du trigger générique de réveil. */
+export const WAKE_TRIGGER_ID = "evt-wake-any";
+
+/**
+ * Garantit l'existence du trigger générique de réveil. Appelé au boot, après
+ * loadTriggers().
+ *
+ * Un trigger par agent ne passerait pas l'échelle — il en faudrait un de plus à
+ * chaque identité créée, et aucun pour les agents nés après le dernier boot.
+ * Celui-ci écoute toutes les mentions assorties d'une demande de réponse et
+ * laisse `_cibleDuReveil()` décider, message par message, s'il y a quelqu'un à
+ * réveiller. Le cooldown est nul : la protection contre les doublons est par
+ * cible (REVEIL_GARDE_MS), pas globale, sinon un réveil légitime en avalerait
+ * un autre sans rapport.
+ *
+ * Idempotent, et respecte une désactivation manuelle : si le trigger existe
+ * déjà — même désactivé — on n'y touche pas.
+ */
+export function ensureWakeTrigger() {
+  if (_triggers.has(WAKE_TRIGGER_ID)) return _triggers.get(WAKE_TRIGGER_ID);
+  return registerTrigger({
+    id: WAKE_TRIGGER_ID,
+    type: "mention",
+    config: { target_name: "*" },
+    action: { type: "spawn_session", params: { mode: "headless" } },
+    cooldown_s: 0,
+    max_per_day: 40,
+    description: "Réveille l'agent nommé mentionné dans un message attendant une réponse, s'il est hors ligne",
+  });
+}
+
 export function deleteTrigger(id) {
   const t = _triggers.get(id);
   if (!t) return false;
@@ -258,7 +290,7 @@ export function setEnabled(id, enabled) {
 }
 
 /** Manually fire a trigger (bypasses cooldown only if force=true). */
-export async function fireTrigger(id, { force = false, source = "manual" } = {}) {
+export async function fireTrigger(id, { force = false, source = "manual", message = null } = {}) {
   const t = _triggers.get(id);
   if (!t) return { ok: false, reason: "not_found" };
   if (!force && _isDisabled()) return { ok: false, reason: "engine_disabled" };
@@ -266,7 +298,7 @@ export async function fireTrigger(id, { force = false, source = "manual" } = {})
   if (!force && !_quotaOk(t)) return { ok: false, reason: "quota" };
   if (!force && _onCooldown(t)) return { ok: false, reason: "cooldown" };
 
-  const result = await _runAction(t, source);
+  const result = await _runAction(t, source, message);
   t.last_fired = new Date().toISOString();
   t.fire_count = (t.fire_count || 0) + 1;
   _saveDebounced();
@@ -351,6 +383,16 @@ function _startListener(t) {
   if (t.type === "mention") {
     const target = t.config?.target_name || t.config?.name;
     if (!target) return;
+    // target_name "*" : trigger générique de réveil. Il écoute toute mention
+    // assortie d'une demande de réponse, et laisse _runSpawnAction décider qui
+    // réveiller. Un trigger par agent ne passerait pas l'échelle : 100 identités
+    // aujourd'hui, une de plus à chaque agent créé.
+    if (target === "*") {
+      _mentionListeners.set(t.id, (msg) =>
+        !!msg.expects_reply && /@[\w.-]{2,}/.test(msg.content || "")
+      );
+      return;
+    }
     const rx = new RegExp(`@${target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
     _mentionListeners.set(t.id, (msg) => rx.test(msg.content));
     return;
@@ -388,7 +430,10 @@ export function notifyMessageForTriggers(msg) {
   for (const [id, predicate] of _mentionListeners) {
     try {
       if (predicate(msg)) {
-        fireTrigger(id, { source: `${_triggers.get(id)?.type || "match"}:${msg.id}` }).catch(() => {});
+        // Le message voyage avec le fire : un trigger générique (celui qui
+        // réveille n'importe quel agent mentionné) doit pouvoir lire qui est
+        // appelé, par qui, et ce qui lui est demandé.
+        fireTrigger(id, { source: `${_triggers.get(id)?.type || "match"}:${msg.id}`, message: msg }).catch(() => {});
       }
     } catch { /* */ }
   }
@@ -422,10 +467,10 @@ function _quotaOk(t) {
   return true;
 }
 
-async function _runAction(t, source) {
+async function _runAction(t, source, message = null) {
   const action = t.action || {};
   if (action.type === "spawn_session") {
-    return _runSpawnAction(t, action.params || {}, source);
+    return _runSpawnAction(t, action.params || {}, source, message);
   }
   if (action.type === "broadcast") {
     sysMsg(action.params?.channel || "coordination",
@@ -446,8 +491,96 @@ async function _runAction(t, source) {
   return { ok: false, reason: `unknown_action:${action.type}` };
 }
 
-async function _runSpawnAction(t, params, source) {
+/**
+ * Réveils déjà lancés, par nom d'agent → horodatage. Un agent réveillé met
+ * plusieurs secondes à démarrer et à s'enregistrer ; pendant ce temps il n'est
+ * pas « vivant », et deux messages successifs le mentionnant le spawneraient
+ * deux fois. Ce délai de garde est PAR CIBLE, contrairement au cooldown du
+ * trigger, qui est global : avec un seul trigger générique, un cooldown global
+ * ferait qu'un réveil légitime en avale un autre, sans rapport.
+ */
+const _reveilsRecents = new Map();
+/** Délai avant qu'un même agent puisse être réveillé à nouveau (démarrage en cours). */
+const REVEIL_GARDE_MS = 120000;
+/** Fenêtre pendant laquelle un agent réveillé ne peut pas en réveiller un autre. */
+const ANTI_BOUCLE_MS = 3600000;
+
+/** Un nom horodaté désigne un agent jeté après sa mission — rien à réveiller. */
+function _estJetable(nom) {
+  return /[-_]\d{9,}$|[-_]\d{4}-\d{2}-\d{2}$/.test(nom);
+}
+
+/**
+ * Résout qui réveiller pour un trigger générique (`target_name: "*"`).
+ *
+ * Renvoie { name } ou { refus } — jamais null, pour qu'un refus porte sa raison
+ * et remonte dans le résultat du fire plutôt que de disparaître en silence.
+ */
+function _cibleDuReveil(message) {
+  if (!message) return { refus: "pas_de_message" };
+
+  const auteur = (message.fromName || "").toLowerCase();
+  // Anti-boucle : un agent lui-même réveillé ne peut pas en réveiller un autre.
+  // Sans cela, A appelle B, B répond en mentionnant A, A est réveillé, répond à
+  // son tour… La liste des réveils que nous avons nous-mêmes déclenchés est la
+  // seule provenance fiable ici — un message ne porte pas son origine de spawn.
+  const reveilAuteur = [..._reveilsRecents].find(([n]) => n.toLowerCase() === auteur)?.[1];
+  if (reveilAuteur && Date.now() - reveilAuteur < ANTI_BOUCLE_MS) return { refus: "auteur_lui_meme_reveille" };
+
+  const candidats = [...(message.content || "").matchAll(/@([\w.-]{2,})/g)].map(m => m[1]);
+  for (const brut of candidats) {
+    const nom = _resolveNomConnu(brut);
+    if (!nom) continue;                                   // pas d'identité connue
+    if (nom.toLowerCase() === auteur) continue;           // auto-mention
+    if (_estJetable(nom)) continue;                       // agent horodaté, mission passée
+    if ([...state.sessions.values()].some(s => s.name === nom)) continue; // déjà en ligne : son hook suffit
+    const dernier = _reveilsRecents.get(nom);
+    if (dernier && Date.now() - dernier < REVEIL_GARDE_MS) continue;      // réveil déjà en route
+    return { name: nom };
+  }
+  return { refus: "aucune_cible_eligible" };
+}
+
+/** Un nom mentionné correspond-il à une identité mémorisée ? (casse ignorée) */
+function _resolveNomConnu(brut) {
+  const lc = brut.toLowerCase();
+  return knownAgentNames().find(n => n.toLowerCase() === lc) || null;
+}
+
+async function _runSpawnAction(t, params, source, message = null) {
   if (!_spawnFn) return { ok: false, reason: "spawn_fn_not_configured" };
+
+  // Trigger générique de réveil : la cible et son repo viennent du message.
+  if ((t.config?.target_name || t.config?.name) === "*") {
+    const cible = _cibleDuReveil(message);
+    if (cible.refus) return { ok: false, reason: cible.refus };
+    const repo = recall(cible.name, "__cwd");
+    if (!repo || !fs.existsSync(repo)) return { ok: false, reason: "repo_inconnu" };
+    const extrait = String(message.content || "").replace(/\s+/g, " ").slice(0, 300);
+    params = {
+      ...params,
+      name: cible.name,
+      repo_path: repo,
+      mode: "headless",
+      // Reprendre la session Claude Code de cet agent quand son transcript est
+      // encore là : réveillé avec son historique, il sait déjà de quoi on parle.
+      // resolveResumeSession() retombe sur un démarrage frais si le transcript
+      // manque ou dépasse la taille admise.
+      resumeSessionId: recall(cible.name, "__claude_session_id") || undefined,
+      // L'agent réveillé doit savoir POURQUOI il est là. Sans cela il découvre un
+      // message dans sa boîte sans comprendre ce qui l'a lancé — vécu : un agent
+      // réveillé par trigger a répondu « aucun wake automatique, je suis headless ».
+      prompt:
+        `${message.fromName || "Un agent"} t'appelle et attend une réponse :\n\n` +
+        `« ${extrait} »\n\n` +
+        `Tu es "${cible.name}". Tu as été réveillé pour ce message précis. ` +
+        `register(name="${cible.name}", claude_session_id="$CLAUDE_SESSION_ID"), relève avec poll(), ` +
+        `réponds via send_message(channel="@${message.fromName}", status="over"), ` +
+        `consigne ce qui doit survivre (add_project_note / remember), puis termine.`,
+    };
+    _reveilsRecents.set(cible.name, Date.now());
+    console.log(`[Triggers] Réveil de "${cible.name}" demandé par ${message.fromName} (${repo})`);
+  }
 
   // Pre-flight: budget
   if (_budgetCheckFn) {

@@ -142,6 +142,51 @@ check("un channel_match ne fire pas hors motif", avant === apres, `${avant} → 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+section("Réveil générique");
+
+// Un seul trigger (evt-wake-any) réveille n'importe quel agent nommé hors ligne
+// qu'un message mentionne en attendant une réponse. Auparavant il fallait un
+// trigger par agent — donc aucun pour les agents nés après le dernier boot.
+//
+// On vérifie le chemin de décision sans lancer de vrai processus : la cible
+// déclarée ici a un repo inexistant, donc le trigger fire, résout la cible, et
+// refuse au dernier moment (repo_inconnu). C'est tout le câblage sauf le spawn.
+const DORMEUR = `__e2e_dormeur_${SUFFIX}`;
+const dormeur = await connect("dormeur");
+await dormeur.call("register", { name: DORMEUR, role: "e2e", agent_type: "headless" });
+await dormeur.call("remember", { key: "__cwd", value: "/chemin/qui/n/existe/pas" });
+await dormeur.close(); // il est désormais connu mais hors ligne
+
+function fireCount(liste) {
+  const bloc = liste.split("\n\n").find(b => b.includes("evt-wake-any")) || "";
+  return parseInt((bloc.match(/fired (\d+)/) || [])[1] ?? "-1", 10);
+}
+const wake0 = fireCount(await alice.call("list_triggers", {}));
+check("le trigger de réveil générique existe", wake0 >= 0, "evt-wake-any absent");
+
+await alice.call("send_message", {
+  channel: `e2e-${SUFFIX}`, content: `@${DORMEUR} tu peux relire ça ?`, expects_reply: true,
+});
+await new Promise(r => setTimeout(r, 1500));
+const wake1 = fireCount(await alice.call("list_triggers", {}));
+check("une mention avec réponse attendue déclenche le réveil", wake1 > wake0, `${wake0} → ${wake1}`);
+
+// Le pendant : sans réponse attendue, on ne réveille personne. Sinon toute
+// mention en passant relancerait un agent.
+await alice.call("send_message", {
+  channel: `e2e-${SUFFIX}`, content: `@${DORMEUR} pour info, rien à faire`, expects_reply: false,
+});
+await new Promise(r => setTimeout(r, 1200));
+const wake2 = fireCount(await alice.call("list_triggers", {}));
+check("une mention sans réponse attendue ne réveille pas", wake2 === wake1, `${wake1} → ${wake2}`);
+
+// Et rien n'a réellement été lancé : le repo déclaré n'existe pas.
+const sessionsApres = await alice.call("list_sessions", {});
+check("aucun agent n'est lancé quand son repo est introuvable",
+  !sessionsApres.includes(DORMEUR), "un processus a été lancé malgré un repo absent");
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 section("Identité et audience");
 
 // Bug réel : le .mcp.json injecté ne portait aucune identité, donc toute session

@@ -301,23 +301,38 @@ export function getEtaSummary(excludeId) {
  * Cursor is the caller's concern: pass the last id you delivered as `sinceId`
  * and store the returned `lastId` as your new cursor. Resolution:
  *   - sinceId present & found → slice strictly after it
- *   - sinceId present & EVICTED → { resynced:true }, empty (never replay history)
+ *   - sinceId present & EVICTED → { resynced:true } + fenêtre récente bornée
  *   - no sinceId, sinceMinutes>0 → lookback window (first activation catch-up)
  *   - no sinceId, no window → { baseline:true }, empty (arm cursor, no replay)
+ *
+ * Sur curseur évincé, on ne rejoue pas l'histoire — mais on ne jette pas tout
+ * non plus. Vécu : un agent réveillé par mention a poll(), son curseur datait
+ * d'avant les 200 derniers messages, il a reçu une boîte vide et son curseur a
+ * sauté à maintenant — l'appel qui venait de le réveiller était perdu pour de
+ * bon. La fenêtre bornée ci-dessous rattrape ce cas sans déverser des semaines
+ * d'arriéré.
  *
  * @param {string} name canonical agent name
  * @returns {{ messages: object[], lastId: string|null, resynced?: boolean, baseline?: boolean }}
  */
+/** Fenêtre de rattrapage quand le curseur d'un agent a été évincé du tampon. */
+const RESYNC_LOOKBACK_MIN = 30;
+
 export function inboxFor(name, { sinceId = null, sinceMinutes = 0 } = {}) {
   const agentLc = String(name || "").toLowerCase();
   const newestId = state.messages.at(-1)?.id ?? null;
   if (!agentLc) return { messages: [], lastId: newestId };
 
   let candidates;
+  let resynced = false;
   if (sinceId) {
     const idx = state.messages.findIndex(m => m.id === sinceId);
     if (idx >= 0) candidates = state.messages.slice(idx + 1);
-    else return { messages: [], lastId: newestId, resynced: true };
+    else {
+      resynced = true;
+      const cutoff = Date.now() - RESYNC_LOOKBACK_MIN * 60 * 1000;
+      candidates = state.messages.filter(m => new Date(m.timestamp).getTime() >= cutoff);
+    }
   } else if (sinceMinutes > 0) {
     const cutoff = Date.now() - sinceMinutes * 60 * 1000;
     candidates = state.messages.filter(m => new Date(m.timestamp).getTime() >= cutoff);
@@ -337,5 +352,5 @@ export function inboxFor(name, { sinceId = null, sinceMinutes = 0 } = {}) {
     if (m.channel === "__broadcast__") return true;
     return mention.test(m.content || "");
   });
-  return { messages, lastId: newestId ?? sinceId };
+  return { messages, lastId: newestId ?? sinceId, ...(resynced ? { resynced: true } : {}) };
 }

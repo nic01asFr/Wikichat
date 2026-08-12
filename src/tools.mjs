@@ -895,7 +895,15 @@ export function registerTools(server, sessionId) {
       const first = !cursor;
       const res = inboxFor(myName, { sinceId: cursor, sinceMinutes: first ? 10 : 0 });
       if (res.lastId) remember(myName, "__inbox_cursor", res.lastId);
-      if (res.messages.length > 0) return formatMsgList(res.messages);
+      if (res.messages.length > 0) {
+        const out = formatMsgList(res.messages);
+        // Curseur évincé : l'agent doit savoir que ce qu'il reçoit est un
+        // rattrapage borné, pas la suite exacte de son dernier poll.
+        if (res.resynced) {
+          out.content[0].text = `↩️ Absence longue : reprise sur les 30 dernières minutes (ton curseur était trop ancien).\n\n${out.content[0].text}`;
+        }
+        return out;
+      }
 
       if (timeout <= 0) {
         return txt(`📭 Rien de neuf pour toi.\n💡 Tu peux rendre la main — le hook boîte mail te livrera ce qui arrive à ton prochain tour. Ou poll(timeout_seconds=N) pour attendre maintenant.`);

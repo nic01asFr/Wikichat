@@ -62,6 +62,14 @@ export function recall(name, key) {
   return Object.fromEntries(Object.entries(store).map(([k, v]) => [k, v.value]));
 }
 
+/**
+ * Noms d'agents ayant une identité mémorisée — la liste de ceux qu'on sait
+ * réveiller. Exclut les sessions anonymes, qui n'ont pas d'identité durable.
+ */
+export function knownAgentNames() {
+  return [..._memories.keys()].filter(n => n && !n.startsWith("session-"));
+}
+
 export function forgetKey(name, key) {
   const store = _memories.get(name);
   if (!store || !(key in store)) return false;

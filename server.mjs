@@ -31,7 +31,7 @@ import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
-import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook, startCronCatchup } from "./src/triggers.mjs";
+import { configureTriggers, loadTriggers, ensureWakeTrigger, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook, startCronCatchup } from "./src/triggers.mjs";
 import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
@@ -76,6 +76,7 @@ configureTriggers({
   // routineFn is wired below after configureRoutines (forward via lazy import)
 });
 loadTriggers();    // Restore persisted triggers
+ensureWakeTrigger(); // Réveil des agents nommés hors ligne — un seul trigger pour tous
 startCronCatchup(); // Rejoue au réveil les crons manqués pendant le sommeil
 addMessageListener(notifyMessageForTriggers); // Wire mention/channel_match triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
@@ -377,6 +378,22 @@ setInterval(async () => {
 
 const app = express();
 app.use(express.json());
+
+// Corps JSON malformé : répondre 400 avec un message lisible plutôt que de
+// laisser Express dérouler une pile sur stderr. Les appelants sont souvent des
+// agents qui construisent leur requête en shell — une variable non substituée
+// produit `{"since_id": ,}` et le client, qui ne voit qu'un 400 muet, réessaie
+// en boucle. Nommer l'erreur lui permet de la corriger.
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({
+      error: "invalid_json",
+      detail: err.message,
+      hint: "Corps JSON invalide — vérifie qu'aucune variable ne s'est substituée en vide.",
+    });
+  }
+  return next(err);
+});
 
 // Admin endpoint to override dormant gate manually
 app.post("/api/admin/dormant/override", (req, res) => {
