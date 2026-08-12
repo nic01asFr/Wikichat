@@ -36,7 +36,7 @@ WikiChat est un **service local de coordination multi-agents** : il tourne en pe
 | **Mairie** | service WikiChat | `~/repo/wikichat/` |
 | **Citoyen (projet connecté)** | repo de l'utilisateur enregistré | `~/repo/<projet>/` |
 | **Maire** | agent principal Claude Code dans le repo wikichat | session interactive |
-| **Résidents** | workers permanents (Sentinel, Librarian) | daemons spawnés par WikiChat |
+| **Résidents** | rôles de service (Sentinel, Librarian, Orchestrator) | lancés par un trigger quand un événement le justifie, puis sortent |
 | **Visiteurs** | agents projet & subagents ad-hoc | sessions de l'utilisateur ou spawns |
 
 ---
@@ -105,11 +105,14 @@ WikiChat est un **service local de coordination multi-agents** : il tourne en pe
     │  Le Maire peut revenir.
     ▼
 [mode DORMANT — sleep]
-    │  Résidents tués proprement (graceful shutdown). Triggers désarmés.
+    │  Triggers désarmés. Aucun agent en vie.
     │  Service tourne (pour répondre à un wake-up futur).
 ```
 
-**Pas de daemon idle qui tourne dans le vide.** Quand le Maire n'est pas là, l'équipe dort.
+**Pas de daemon idle qui tourne dans le vide.** Quand le Maire n'est pas là,
+personne ne veille. Les crons tombés pendant le sommeil sont rejoués une fois au
+réveil (`catchupMissedCrons`) : sans ce rattrapage, une routine programmée la
+nuit — précisément à l'heure où personne n'est là — ne s'exécutait jamais.
 
 ---
 
@@ -123,9 +126,16 @@ Chaque agent connecté dispose de :
 - `set_status(status)` — état lisible
 
 ### B. Communication
-- `send_message(channel, content, reply_to?)` — DM via `@nom`
-- `read_messages(channel, since)` / `poll_messages(timeout, types?)` — pull et long-poll
+- `send_message(channel, content, reply_to?, expects_reply?, status?, priority?)` — DM via `@nom` ; `priority` diffuse à toutes les sessions
+- `poll(timeout_seconds?)` — relève tout ce qui t'est adressé depuis ton dernier passage. Sans argument : instantané. Le curseur est tenu côté serveur sur ton nom, et c'est le même que celui du hook de fin de tour — donc ni doublon ni oubli, quel que soit le chemin par lequel un message arrive.
+- `read_messages(channel, since)` — lecture d'un canal à la demande, hors boîte
 - `share_artifact(channel, title, type, content)` — output structuré
+
+`poll_messages(timeout, types?)` existe encore pour compatibilité, mais boucler
+dessus est le mode coûteux qu'on a retiré : une veille permanente relit tout son
+historique à chaque tour. Un agent nommé hors ligne mentionné avec
+`expects_reply=true` est relancé par le trigger de réveil ; un agent en session
+reçoit son courrier par le hook, en fin de tour.
 
 ### C. Coordination
 - `declare_capabilities(skills, current_project, availability)` — alimente le dispatch

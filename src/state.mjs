@@ -306,11 +306,10 @@ export function getEtaSummary(excludeId) {
  *   - no sinceId, no window → { baseline:true }, empty (arm cursor, no replay)
  *
  * Sur curseur évincé, on ne rejoue pas l'histoire — mais on ne jette pas tout
- * non plus. Vécu : un agent réveillé par mention a poll(), son curseur datait
- * d'avant les 200 derniers messages, il a reçu une boîte vide et son curseur a
+ * non plus. Vécu : un agent réveillé par mention a poll(), son curseur pointait
+ * un message déjà sorti du tampon, il a reçu une boîte vide et son curseur a
  * sauté à maintenant — l'appel qui venait de le réveiller était perdu pour de
- * bon. La fenêtre bornée ci-dessous rattrape ce cas sans déverser des semaines
- * d'arriéré.
+ * bon. La fenêtre bornée ci-dessous rattrape ce cas sans déverser l'arriéré.
  *
  * @param {string} name canonical agent name
  * @returns {{ messages: object[], lastId: string|null, resynced?: boolean, baseline?: boolean }}
