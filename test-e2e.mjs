@@ -18,7 +18,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 const SERVER_URL = process.env.SERVER_URL || "http://localhost:3777";
-const SUFFIX = Date.now().toString(36).slice(-5); // évite les collisions entre runs
+// Espace de noms FIXE, et non horodaté. Un suffixe par exécution isolait bien les
+// runs, mais laissait derrière lui un canal et une poignée d'identités à chaque
+// fois : 15 canaux et 40 identités fantômes s'étaient accumulés dans l'état de la
+// machine. Un nom stable rend la suite réentrante — elle réécrit ses propres
+// traces au lieu d'en semer de nouvelles.
+const SUFFIX = "suite";
+/** Identités créées par la suite, purgées à la fin. */
+const _aPurger = [];
 
 let passed = 0, failed = 0;
 const failures = [];
@@ -76,7 +83,8 @@ if (!health) { console.log("\n⛔ Serveur injoignable, arrêt."); process.exit(1
 // Bug réel : le hook prenait un instantané et rendait la main, donc deux sessions
 // interactives ne pouvaient pas s'enchaîner sans relance humaine.
 const t0 = Date.now();
-const froid = await fetch(`${SERVER_URL}/api/inbox?agent=__e2e_froid_${SUFFIX}&wait_ms=4000`).then(r => r.json());
+const FROID = `__e2e_froid_${SUFFIX}`; _aPurger.push(FROID);
+const froid = await fetch(`${SERVER_URL}/api/inbox?agent=${FROID}&wait_ms=4000`).then(r => r.json());
 const dtFroid = Date.now() - t0;
 check("hors conversation, /api/inbox répond immédiatement", dtFroid < 2000 && froid.waited === false,
   `${dtFroid} ms, waited=${froid.waited}`);
@@ -88,6 +96,7 @@ section("Messagerie entre deux sessions");
 const alice = await connect("alice");
 const bob = await connect("bob");
 const ALICE = `__e2e_alice_${SUFFIX}`, BOB = `__e2e_bob_${SUFFIX}`;
+_aPurger.push(ALICE, BOB);
 
 const regA = await alice.call("register", { name: ALICE, role: "e2e", agent_type: "headless" });
 check("register retourne une confirmation", /Enregistré/i.test(regA), regA.slice(0, 60));
@@ -160,7 +169,7 @@ check("aucun guetteur suggéré à un agent headless", !/guetteur/i.test(headles
   "un one-shot poserait un processus pour rien");
 
 const inter = await connect("interactif");
-const INTER = `__e2e_inter_${SUFFIX}`;
+const INTER = `__e2e_inter_${SUFFIX}`; _aPurger.push(INTER);
 await inter.call("register", { name: INTER, role: "e2e", agent_type: "interactive" });
 const premier = await inter.call("send_message", {
   channel: `e2e-${SUFFIX}`, content: "je t'attends", expects_reply: true,
@@ -185,7 +194,7 @@ section("Réveil générique");
 // On vérifie le chemin de décision sans lancer de vrai processus : la cible
 // déclarée ici a un repo inexistant, donc le trigger fire, résout la cible, et
 // refuse au dernier moment (repo_inconnu). C'est tout le câblage sauf le spawn.
-const DORMEUR = `__e2e_dormeur_${SUFFIX}`;
+const DORMEUR = `__e2e_dormeur_${SUFFIX}`; _aPurger.push(DORMEUR);
 const dormeur = await connect("dormeur");
 await dormeur.call("register", { name: DORMEUR, role: "e2e", agent_type: "headless" });
 await dormeur.call("remember", { key: "__cwd", value: "/chemin/qui/n/existe/pas" });
@@ -226,7 +235,7 @@ section("Identité et audience");
 // Bug réel : le .mcp.json injecté ne portait aucune identité, donc toute session
 // spawnée restait anonyme jusqu'à son register — et le redevenait en se
 // reconnectant. 15 sessions connectées, 0 nommée.
-const IDENT = `__e2e_ident_${SUFFIX}`;
+const IDENT = `__e2e_ident_${SUFFIX}`; _aPurger.push(IDENT);
 const identifie = await connect("ident-url");
 await identifie.close();
 const viaUrl = new SSEClientTransport(new URL(`${SERVER_URL}/sse?agent=${encodeURIComponent(IDENT)}`));
@@ -260,8 +269,31 @@ check("list_projects retourne le registre", /projet/i.test(projets), projets.sli
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Purge : une suite de tests ne doit pas laisser d'identités fantômes dans la
+// mémoire de la machine. `forget` est scopé au nom de l'appelant, donc on se
+// reconnecte sous chaque nom utilisé pour effacer ce qu'il a écrit.
+section("Purge");
 await alice.call("delete_trigger", { id: TRIG }).catch(() => {});
 await alice.close(); await bob.close();
+
+async function purgerIdentite(nom) {
+  const c = await connect("purge");
+  try {
+    await c.call("register", { name: nom, role: "e2e", agent_type: "headless" });
+    for (const cle of ["__cwd", "__inbox_cursor", "__claude_session_id", "__home_channel"]) {
+      await c.call("forget", { key: cle }).catch(() => {});
+    }
+  } finally { await c.close(); }
+}
+for (const nom of _aPurger) await purgerIdentite(nom).catch(() => {});
+
+// Contrôle : sous l'un des noms utilisés, il ne doit plus rien rester.
+const temoin = await connect("temoin");
+await temoin.call("register", { name: DORMEUR, role: "e2e", agent_type: "headless" });
+const reste = await temoin.call("recall", {});
+await temoin.close();
+check("la suite ne laisse pas de mémoire derrière elle",
+  /aucune|vide|rien|0 /i.test(reste) || !/__cwd/.test(reste), reste.slice(0, 80));
 
 console.log(`\n${"─".repeat(52)}`);
 console.log(`${passed} réussis, ${failed} échoués`);
