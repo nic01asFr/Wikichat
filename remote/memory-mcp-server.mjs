@@ -24,6 +24,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -36,10 +38,33 @@ import { z } from "zod";
 const SNAPSHOT_DIR = path.resolve(
   process.env.WIKICHAT_MEMORY_SNAPSHOT || "wikichat-memory-staging"
 );
-const TOKEN = (process.env.WIKICHAT_MEMORY_TOKEN || "").trim();
+// Token : soit en clair via WIKICHAT_MEMORY_TOKEN, soit lu depuis le fichier
+// pointé par WIKICHAT_MEMORY_TOKEN_FILE (permet un lancement persistant sans
+// écrire le secret dans le script de démarrage — le launcher ne référence qu'un
+// chemin).
+function resolveToken() {
+  const direct = (process.env.WIKICHAT_MEMORY_TOKEN || "").trim();
+  if (direct) return direct;
+  const file = process.env.WIKICHAT_MEMORY_TOKEN_FILE;
+  if (file) {
+    try {
+      return fs.readFileSync(file, "utf8").trim();
+    } catch {
+      console.error(`[memory-mcp] Fichier-token illisible: ${file}`);
+    }
+  }
+  return "";
+}
+const TOKEN = resolveToken();
 const ALLOW_ANON = process.env.WIKICHAT_MEMORY_ALLOW_ANON === "1";
 const PORT = Number(process.env.WIKICHAT_MEMORY_PORT || 3778);
 const RELOAD_MS = Number(process.env.WIKICHAT_MEMORY_RELOAD_MS || 60000);
+
+// Capture entrante (write path). Désactivé par défaut : un déploiement de pure
+// consultation reste read-only. Quand activé, l'outil add_idea écrit UNIQUEMENT
+// dans inbox/ du repo (jamais le snapshot) puis commit + push.
+const ALLOW_WRITE = process.env.WIKICHAT_MEMORY_ALLOW_WRITE === "1";
+const INBOX_DIR = path.join(SNAPSHOT_DIR, "inbox");
 
 if (!TOKEN && !ALLOW_ANON) {
   console.error(
@@ -135,7 +160,50 @@ function searchKnowledge(query, scope, limit) {
 }
 
 // --------------------------------------------------------------------------
-// MCP server factory (read-only tools)
+// Capture entrante : écriture d'une idée dans inbox/ + push.
+// --------------------------------------------------------------------------
+
+function git(args) {
+  return execFileSync("git", ["-C", SNAPSHOT_DIR, ...args], { encoding: "utf8" }).trim();
+}
+
+/**
+ * Dépose une idée brute dans inbox/ et la pousse sur le repo. L'idée n'est PAS
+ * intégrée ici : elle est en status "pending", l'ingesteur local la traitera.
+ * Retourne le nom du fichier inbox créé.
+ */
+function captureIdea({ title, body, project, axes }) {
+  fs.mkdirSync(INBOX_DIR, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const rand = crypto.randomBytes(3).toString("hex");
+  const name = `${ts}-${rand}.json`;
+  const entry = {
+    title: String(title).trim(),
+    body: String(body || ""),
+    related_projects: project ? [String(project)] : [],
+    axes: Array.isArray(axes) ? axes.map(String) : [],
+    status: "pending",
+    source: "mcp-capture",
+    captured_at: new Date().toISOString(),
+  };
+  fs.writeFileSync(path.join(INBOX_DIR, name), JSON.stringify(entry, null, 2));
+
+  // Commit + push, cantonnés à inbox/. Rebase léger d'abord pour limiter les
+  // collisions avec le refresh du snapshot.
+  git(["add", "--", `inbox/${name}`]);
+  git(["commit", "-m", `inbox: idea ${name}`]);
+  try {
+    git(["pull", "--rebase", "--quiet"]);
+  } catch {
+    /* premier commit ou pas de remote tracking */
+  }
+  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+  git(["push", "origin", branch]);
+  return name;
+}
+
+// --------------------------------------------------------------------------
+// MCP server factory (read tools + capture optionnelle)
 // --------------------------------------------------------------------------
 
 const txt = (s) => ({ content: [{ type: "text", text: s }] });
@@ -214,6 +282,33 @@ function buildMcpServer() {
       return txt(JSON.stringify(i, null, 2));
     }
   );
+
+  // Capture entrante — seul outil d'écriture, activé via WIKICHAT_MEMORY_ALLOW_WRITE.
+  if (ALLOW_WRITE) {
+    server.tool(
+      "add_idea",
+      "Note une idée dans la mémoire WikiChat partagée. Elle est déposée en inbox " +
+        "(status pending) et poussée sur le repo ; le WikiChat local l'intégrera ensuite.",
+      {
+        title: z.string().describe("titre court de l'idée"),
+        body: z.string().default("").describe("description / contenu"),
+        project: z.string().optional().describe("slug ou nom du projet lié (optionnel)"),
+        axes: z.array(z.string()).optional().describe("axes/thèmes (optionnel)"),
+      },
+      async ({ title, body, project, axes }) => {
+        if (!title || !title.trim()) return txt("titre requis.");
+        try {
+          const name = captureIdea({ title, body, project, axes });
+          return txt(
+            `Idée capturée et poussée (inbox/${name}). ` +
+              `Elle sera intégrée au prochain passage de l'ingesteur local.`
+          );
+        } catch (e) {
+          return txt(`Échec de la capture: ${e.message}`);
+        }
+      }
+    );
+  }
 
   return server;
 }

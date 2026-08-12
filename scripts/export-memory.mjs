@@ -226,7 +226,20 @@ function collectKnowledge(registry, destDir) {
     fs.mkdirSync(kdir, { recursive: true });
     for (const f of files) fs.writeFileSync(path.join(kdir, f.name), f.content);
   }
-  return files.map((f) => ({ source: f.source, name: f.name, bytes: f.content.length }));
+  // Index enrichi : titre (1er H1) + extrait, pour une "recherche" mobile fiable
+  // (le client scanne l'index, puis lit le fichier voulu en entier). Indépendant
+  // de l'indexation code-search GitHub, qui est peu fiable sur repo privé récent.
+  return files.map((f) => {
+    const titleMatch = f.content.match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1].trim() : f.name.replace(/\.md$/, "");
+    const excerpt = f.content
+      .replace(/^---[\s\S]*?---/, "") // front-matter éventuel
+      .replace(/^#.*$/gm, "") // titres
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240);
+    return { source: f.source, name: f.name, title, excerpt, bytes: f.content.length };
+  });
 }
 
 function collectIdeas() {
@@ -354,6 +367,44 @@ function main() {
       JSON.stringify({ files: knowledgeIndex }, null, 2)
     );
     fs.writeFileSync(path.join(OUT_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+    // Index légers + fichiers granulaires : une composition GitHub ne sait que
+    // lire un fichier ENTIER (pas filtrer du JSON). On pré-découpe donc pour une
+    // lecture mobile ciblée et légère.
+    const projectsIndex = projects.map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      status: p.status,
+      stack: p.stack,
+      description: p.description,
+    }));
+    fs.writeFileSync(
+      path.join(OUT_DIR, "projects-index.json"),
+      JSON.stringify({ projects: projectsIndex }, null, 2)
+    );
+    const projDir = path.join(OUT_DIR, "projects");
+    fs.mkdirSync(projDir, { recursive: true });
+    for (const p of projects) {
+      if (!p.slug) continue;
+      fs.writeFileSync(path.join(projDir, `${p.slug}.json`), JSON.stringify(p, null, 2));
+    }
+
+    const ideasIndex = ideas.map((i) => ({
+      id: i.id,
+      title: i.title,
+      status: i.status,
+      related_projects: i.related_projects,
+    }));
+    fs.writeFileSync(
+      path.join(OUT_DIR, "ideas-index.json"),
+      JSON.stringify({ ideas: ideasIndex }, null, 2)
+    );
+    const ideaDir = path.join(OUT_DIR, "ideas");
+    fs.mkdirSync(ideaDir, { recursive: true });
+    for (const i of ideas) {
+      if (!i.id) continue;
+      fs.writeFileSync(path.join(ideaDir, `${i.id}.json`), JSON.stringify(i, null, 2));
+    }
   }
 
   // --- Rapport ---
