@@ -71,6 +71,22 @@ check("resolveResumeSession refuse un identifiant inconnu",
 check("resolveResumeSession refuse un identifiant sans transcript",
   resolveResumeSession(null, process.cwd(), "00000000-0000-0000-0000-000000000000") === null);
 
+// Bug réel, invisible sur une machine rodée : la porte dormante exigeait à la
+// fois un agent nommé ET au moins un projet au registre. Sur une installation
+// neuve le registre est vide par construction — la porte ne s'ouvrait donc
+// jamais, aucun trigger ne tirait, et le service se déclarait « healthy ».
+const dormant = await import("./src/dormant.mjs");
+const etatSessions = new Map([["s1", { sessionId: "s1", name: "UnAgentNomme" }]]);
+const { state: etat } = await import("./src/state.mjs");
+const sessionsAvant = etat.sessions, projetsAvant = etat.projects;
+etat.sessions = etatSessions; etat.projects = new Map();
+check("un agent nommé suffit à réveiller un registre vide", dormant.isActive() === true,
+  "installation neuve condamnée : triggers inertes sans que rien ne le dise");
+etat.sessions = new Map(); etat.projects = new Map();
+check("sans agent nommé ni projet, le service reste dormant", dormant.isActive() === false,
+  "la porte ne se referme plus — 0 % CPU au repos n'est plus tenu");
+etat.sessions = sessionsAvant; etat.projects = projetsAvant;
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section("Serveur HTTP");
