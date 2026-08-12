@@ -80,6 +80,59 @@ ${BLOCK_END}
 
 // ── USER-LEVEL : skill + commands + ~/.claude/CLAUDE.md ─────────────────────
 
+/**
+ * Installe le Stop hook « boîte mail » dans ~/.claude/settings.json.
+ *
+ * C'est la pièce qui fait qu'un agent en session reçoit ce qu'on lui adresse
+ * sans avoir à poller : à la fin de chaque tour, le hook demande au service s'il
+ * a du courrier et, le cas échéant, empêche l'arrêt le temps qu'il réponde.
+ *
+ * Elle n'était installée nulle part — elle avait été branchée à la main sur la
+ * machine de développement, si bien que toute la coordination reposait sur un
+ * réglage qu'une installation neuve n'aurait jamais eu.
+ *
+ * Idempotent, et non destructif : les autres hooks Stop déjà présents sont
+ * conservés, et une entrée WikiChat existante est mise à jour plutôt que
+ * dupliquée (le chemin du dépôt peut avoir changé).
+ */
+function ensureMailboxHook(log = console.log) {
+  const settingsPath = path.join(USER_CLAUDE_DIR, "settings.json");
+  const hookPath = path.resolve(__dirname, "..", "scripts", "wikichat-mailbox-hook.mjs");
+  if (!fs.existsSync(hookPath)) return "no-hook-script";
+  const command = `node "${hookPath.replace(/\\/g, "/")}"`;
+
+  try {
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf8") || "{}");
+    }
+    settings.hooks = settings.hooks || {};
+    const stops = Array.isArray(settings.hooks.Stop) ? settings.hooks.Stop : [];
+
+    const estLeNotre = h => typeof h?.command === "string" && h.command.includes("wikichat-mailbox-hook");
+    for (const groupe of stops) {
+      const entree = (groupe.hooks || []).find(estLeNotre);
+      if (entree) {
+        if (entree.command === command) return "already-present";
+        entree.command = command; // dépôt déplacé : on recale le chemin
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+        log("[overlay] Stop hook boîte mail : chemin mis à jour");
+        return "updated";
+      }
+    }
+
+    stops.push({ matcher: "", hooks: [{ type: "command", command }] });
+    settings.hooks.Stop = stops;
+    fs.mkdirSync(USER_CLAUDE_DIR, { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    log("[overlay] Stop hook boîte mail installé — les agents reçoivent leur courrier en fin de tour");
+    return "installed";
+  } catch (err) {
+    log(`[overlay] Stop hook non installé : ${err.message}`);
+    return "failed";
+  }
+}
+
 export function ensureUserOverlay({ force = false, log = console.log } = {}) {
   if (process.env.WIKICHAT_NO_OVERLAY_INSTALL === "1") return { skipped: "disabled" };
   if (!fs.existsSync(TEMPLATE_DIR)) return { skipped: "no-templates" };
@@ -129,7 +182,10 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
     log(`[overlay] CLAUDE.md update failed: ${err.message}`);
   }
 
-  // 3. Marker file
+  // 3. Stop hook "boîte mail" dans ~/.claude/settings.json
+  result.hookAction = ensureMailboxHook(log);
+
+  // 4. Marker file
   try { fs.writeFileSync(MARKER_FILE, new Date().toISOString()); } catch { /* */ }
 
   if (result.filesAdded > 0 || result.claudeMdAction === "created" || result.claudeMdAction === "appended") {

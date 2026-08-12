@@ -66,12 +66,45 @@ function detectAgentName(input) {
   return found;
 }
 
+/**
+ * Combien de relances consécutives ce hook s'autorise, sans qu'un humain ne
+ * reprenne la main entre-temps.
+ *
+ * `stop_hook_active` passe à true dès qu'un tour est la conséquence d'un blocage
+ * du hook. Sortir aussitôt, comme on le faisait, plafonnait tout échange
+ * autonome à UN aller-retour : mesuré sur 135 transcrits, la plus longue chaîne
+ * sans intervention humaine valait 1. Deux agents en cours ne pouvaient donc pas
+ * mener une discussion — le premier répondait, puis s'arrêtait pour de bon.
+ *
+ * On garde le garde-fou (un Stop hook qui bloque toujours produit un agent qui ne
+ * s'arrête jamais), mais on le borne par un compteur au lieu de couper à un.
+ * Le compteur est remis à zéro dès qu'un vrai tour humain se termine.
+ */
+const MAX_RELANCES = parseInt(process.env.WIKICHAT_HOOK_MAX_RELAYS || "3");
+
+function fichierCompteur(sid) {
+  return sid ? path.join(HOOK_DIR, `sid-${String(sid).replace(/[^\w.-]/g, "_")}.relays`) : null;
+}
+function lireCompteur(sid) {
+  const f = fichierCompteur(sid);
+  if (!f) return 0;
+  try { return parseInt(fs.readFileSync(f, "utf8").trim()) || 0; } catch { return 0; }
+}
+function ecrireCompteur(sid, n) {
+  const f = fichierCompteur(sid);
+  if (!f) return;
+  try { fs.mkdirSync(HOOK_DIR, { recursive: true }); fs.writeFileSync(f, String(n)); } catch { /* */ }
+}
+
 async function main() {
   let input = {};
   try { input = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch { /* no stdin */ }
 
-  // Already continuing because of a previous block → let it stop now.
-  if (input.stop_hook_active) return done();
+  // Ce tour découle-t-il d'un blocage précédent, ou d'une main humaine ?
+  const enChaine = !!input.stop_hook_active;
+  const relances = enChaine ? lireCompteur(input.session_id) : 0;
+  if (!enChaine) ecrireCompteur(input.session_id, 0); // l'humain a repris la main
+  if (enChaine && relances >= MAX_RELANCES) return done();
 
   const agent = detectAgentName(input);
   if (!agent) return done(); // identity unknown: nothing to relieve
@@ -136,11 +169,16 @@ async function main() {
     return `  • [${where}] ${m.from}: ${m.content}${flags ? ` (${flags})` : ""}`;
   }).join("\n");
 
+  const restantes = MAX_RELANCES - relances - 1;
   const reason =
     `📬 ${data.messages.length} message(s) WikiChat t'attend(ent) (${agent}) :\n${lines}\n\n` +
     `On cherche à te contacter. Lis-les, et si une réponse est attendue, réponds via ` +
-    `mcp__wikichat__send_message(channel="@<expéditeur>", ...). Si rien ne requiert ta réponse, tu peux t'arrêter.`;
+    `mcp__wikichat__send_message(channel="@<expéditeur>", ...). Si rien ne requiert ta réponse, tu peux t'arrêter.` +
+    (restantes <= 0
+      ? `\n\n⚠️ Dernier échange automatique de ce tour : après ta réponse, la discussion s'arrête jusqu'à la prochaine sollicitation. Si le sujet n'est pas clos, dis-le explicitement dans ta réponse.`
+      : `\n\n(${restantes} relance(s) automatique(s) encore possible(s) sans intervention humaine.)`);
 
+  ecrireCompteur(input.session_id, relances + 1);
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
   done();
 }
