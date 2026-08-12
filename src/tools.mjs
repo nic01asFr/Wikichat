@@ -2706,7 +2706,10 @@ export function registerTools(server, sessionId) {
     "Suivre un spawn ticket. Attend que l'agent spawnée change de status (completed/failed). Retourne immédiatement si déjà terminé.",
     {
       ticket_id: z.string().describe("ID du ticket retourné par spawn_session"),
-      timeout_seconds: z.number().default(30).describe("Timeout en secondes (max: 120)"),
+      // 30 s était le défaut : sur 51 spawns headless mesurés, la médiane est de
+      // 61 s et 6 seulement finissaient sous 30 s — le défaut échouait 88 % du
+      // temps et provoquait une relance systématique.
+      timeout_seconds: z.number().default(90).describe("Timeout en secondes (max: 120). Un headless dure ~60s en médiane."),
     },
     async ({ ticket_id, timeout_seconds }) => {
       const ticket = state.spawnTickets.get(ticket_id);
@@ -2732,9 +2735,20 @@ export function registerTools(server, sessionId) {
         );
       }
 
-      // Wait for completion via long-poll on __tickets__ channel
+      // Attente via long-poll sur le canal __tickets__. Ce canal est commun à
+      // tous les tickets : la fin de n'importe quel spawn réveille tous les
+      // guetteurs. Sans la boucle, un agent attendant le ticket A sortait dès
+      // qu'un ticket B se terminait — avec un message « Timeout Ns » mensonger
+      // après trois secondes d'attente, et une relance inutile à la clé.
+      // On ré-attend le temps restant tant que NOTRE ticket n'a pas bougé.
       const timeout = Math.min(timeout_seconds, 120) * 1000;
-      await registerWaiter(sessionId, "__tickets__", timeout);
+      const startedAt = Date.now();
+      const deadline = startedAt + timeout;
+      while (Date.now() < deadline) {
+        await registerWaiter(sessionId, "__tickets__", deadline - Date.now());
+        if (ticket.status === "completed" || ticket.status === "failed") break;
+      }
+      const waitedS = Math.round((Date.now() - startedAt) / 1000);
 
       // Re-check after wakeup
       if (ticket.status === "completed" || ticket.status === "failed") {
@@ -2750,9 +2764,13 @@ export function registerTools(server, sessionId) {
       }
 
       return txt(
-        `⏰ Timeout ${timeout_seconds}s — ticket ${ticket_id} toujours ${ticket.status}\n` +
+        `⏰ ${waitedS}s d'attente — ticket ${ticket_id} toujours ${ticket.status}\n` +
         `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
-        `  Relancez poll_ticket("${ticket_id}") pour continuer à attendre.`
+        `  Un audit de code ou une revue prend souvent plusieurs minutes. Plutôt que\n` +
+        `  d'enchaîner les relances — chacune te coûte un tour — relance avec un\n` +
+        `  timeout large : poll_ticket("${ticket_id}", timeout_seconds=120).\n` +
+        `  Ou laisse tomber : le résultat arrive dans .wikichat/artifacts/ et le\n` +
+        `  service l'annonce sur #insights, ton hook te le livrera.`
       );
     }
   );
