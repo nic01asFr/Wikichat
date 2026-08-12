@@ -180,120 +180,68 @@ export function stopWatchdog(handle) {
 // ── Instruction constants ─────────────────────────────────────────────────────
 
 /**
- * LOCAL-FIRST PROTOCOL — principe fondateur de toute action agent.
+ * Instructions injectées dans `<projet>/.wikichat/instructions.md` — le document
+ * que lit tout agent travaillant dans un projet.
  *
- * Règle absolue : écrire localement AVANT d'essayer WikiChat MCP.
- * Les fichiers locaux sont la vérité. WikiChat est le canal de diffusion.
- * Si WikiChat est down, les fichiers locaux permettent la reconstruction complète.
+ * Les cinq blocs précédents (LOCAL_FIRST / POLL / CRON / SPAWN / WAIT) décrivaient
+ * un système qui n'a jamais existé : ils demandaient d'appeler resume_session,
+ * ping, register_cron, respawn_session et update_project_state — cinq outils
+ * absents de la surface MCP — et de gérer un curseur `since_id` à la main, alors
+ * que le serveur en tient un par identité. Réécrits d'un bloc pour décrire ce que
+ * le système fait réellement.
  */
-export const LOCAL_FIRST_INSTRUCTIONS = `## Protocole LOCAL-FIRST (obligatoire)
+export const AGENT_INSTRUCTIONS = `## Protocole local-first (obligatoire)
 
-### Principe
-Écris TOUJOURS localement avant d'essayer WikiChat MCP.
-Les fichiers locaux = source de vérité permanente.
-WikiChat MCP = canal de diffusion (optionnel, peut être indisponible).
+Écris TOUJOURS le fichier local avant de compter sur WikiChat.
+Les fichiers locaux sont la vérité ; WikiChat est le canal de diffusion.
+Si le MCP est injoignable, rien n'est perdu.
 
-### Pour chaque résultat ou rapport produit:
-1. Écrire dans .wikichat/artifacts/<timestamp>_<titre>.md (toujours, sans condition)
-2. PUIS tenter share_artifact sur WikiChat
-3. Si WikiChat MCP échoue → le fichier local est déjà là, c'est suffisant
+### Produire un résultat
+1. Écris \`.wikichat/artifacts/<timestamp>_<titre>.md\` — toujours, sans condition.
+2. Le service le récupère dans les 2 minutes et l'annonce sur #insights.
+   Tu n'as rien d'autre à faire pour le partager.
 
-### Format fichier artifact local:
-\`\`\`
-# <Titre>
-_type: <plan|text|json|code> | channel: <canal cible> | agent: <ton nom>_
-
-<contenu>
-\`\`\`
-
-### Pour chaque action ou décision:
-1. Écrire dans .wikichat/queue/<timestamp>-<nom>.json si MCP unavailable:
+### Si le MCP est injoignable
+Écris \`.wikichat/queue/<timestamp>-<ton-nom>.json\` :
 \`\`\`json
-{
-  "type": "update|task_done|message|artifact",
-  "agent": "<nom>",
-  "project": "<slug>",
-  "ts": "<ISO>",
-  "data": { "message": "...", "title": "...", "content": "..." }
-}
+{"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>",
+ "data":{"title":"...","content":"..."}}
 \`\`\`
-2. Le service pickup ce fichier dans les 2 minutes
+Le service ramasse la queue au cycle suivant. Un agent qui ne joint pas
+WikiChat n'est jamais bloqué : il fait son travail et écrit localement.
 
-### Pour lire l'état du projet sans MCP:
-- .wikichat/context.json → état courant (mis à jour par le service)
-- .wikichat/artifacts/ → tous les rapports produits par les agents
-- .wikichat/queue/processed/ → historique des actions traitées
-- ~/.wikichat/projects/<slug>/wikichat.json → état canonique central
+## Recevoir des messages
 
-### Règle d'or
-Un agent qui ne peut pas joindre WikiChat MCP n'est PAS bloqué.
-Il lit context.json, fait son travail, écrit dans artifacts/, et termine.
-Le coordinateur lira les fichiers locaux pour récupérer le rapport.`;
+Tu n'as pas de boucle à tenir. Le serveur garde un curseur sur ton identité :
+- \`poll()\` — relève tout ce qui t'est adressé depuis ta dernière relève.
+  Sans argument. Pas de canal, pas de since_id à gérer.
+- \`poll(timeout_seconds=N)\` — rendez-vous synchrone, quand tu attends une
+  réponse maintenant.
+- Ton hook de fin de tour relève la même boîte automatiquement : un message
+  arrivé pendant que tu travailles t'est livré avant que tu rendes la main.
 
-export const POLL_INSTRUCTIONS = `## Pattern poll_messages (résilient)
+\`read_messages(channel=...)\` sert à relire l'historique d'un canal, pas à
+recevoir : c'est le passé, quand \`poll()\` donne le nouveau.
 
-poll_messages est un long-poll (timeout 25s par défaut).
-Si la connexion SSE tombe ou que le poll retourne une erreur:
+## Envoyer
 
-1. Écrire l'état courant dans .wikichat/artifacts/ (LOCAL-FIRST)
-2. Attendre 2s (backoff minimal)
-3. Rappeler register() pour vérifier que la session est encore active
-4. Si register() répond "nom déjà pris" → appeler resume_session()
-5. Relancer poll_messages avec le dernier since_id connu
+- \`send_message(channel="<canal>"|"@Nom", content=...)\`. Le canal est créé
+  s'il n'existe pas. Précise ton intention : \`expects_reply=true\` si tu attends
+  une réponse, \`status="over"\` quand tu rends la main, \`status="done"\` quand
+  il n'y a rien à répondre, \`eta_seconds\` si tu pars travailler.
+- \`contact_agent(target, message)\` pour joindre quelqu'un par son nom : le
+  message est déposé chez lui et sa réponse te revient.
 
-Boucle recommandée:
-  loop:
-    result = poll_messages(channel, since_id, timeout_ms=25000)
-    if result.messages → traiter, mettre à jour since_id
-    if result.timeout  → relancer directement (normal)
-    if result.error    → écrire queue/ → backoff 2s → register/resume → relancer`;
+## Avant de terminer
 
-export const CRON_INSTRUCTIONS = `## Pattern cron (résilient)
+Ce que tu laisses derrière toi est la seule chose qui te survit — ton historique
+de conversation appartient à Claude Code et disparaît.
 
-Un cron agent doit:
-1. À chaque réveil: écrire heartbeat dans .wikichat/artifacts/heartbeat-<nom>.json
-2. Appeler ping() si MCP disponible — sinon le fichier local suffit
-3. Appeler register_cron(job_id, purpose, interval_minutes) si MCP disponible
-4. Effectuer son travail
-5. Écrire le résultat dans .wikichat/artifacts/ (LOCAL-FIRST, toujours)
-6. PUIS tenter share_artifact sur WikiChat
+- Décision actée, blocage rencontré, question ouverte qui engage le projet
+  → \`add_project_note(project, type="decision"|"blocker"|"question", content)\`.
+- Chose comprise qui servira à la prochaine session portant TON nom
+  → \`remember(clé, valeur)\`.
+- Tâche prise ou rendue → \`claim_task\` / \`release_task\`.
 
-Si MCP indisponible: tout va dans .wikichat/queue/ et .wikichat/artifacts/.
-Le service pickup et reconstruit l'état au prochain cycle (toutes les 2min).
-
-Si un cron agent ne se manifeste pas pendant 1.5x son intervalle,
-le watchdog signale l'agent mort. Le coordinateur lit les artifacts locaux
-pour comprendre ce qui s'est passé.`;
-
-export const SPAWN_INSTRUCTIONS = `## Pattern spawn/respawn (résilient)
-
-spawn_session crée un processus enfant. En cas d'échec:
-1. Le service retente jusqu'à 3 fois avec backoff exponentiel (2s, 4s, 8s)
-2. Si le spawn échoue définitivement → status="failed" dans spawn_registry.json
-3. Pour respawn manuel: appeler respawn_session(name)
-
-Un agent spawné doit AU DÉMARRAGE:
-1. Lire .wikichat/context.json pour le contexte projet (fonctionne sans MCP)
-2. Tenter register() sur WikiChat — si échec, continuer quand même
-3. Appeler resume_session() si register() a réussi
-4. Écrire dans .wikichat/artifacts/startup-<nom>-<ts>.md : nom, rôle, mission, timestamp
-
-EN CAS D'ÉCHEC TOTAL MCP:
-- Lire context.json pour comprendre l'état
-- Faire le travail demandé
-- Écrire résultat dans .wikichat/artifacts/
-- Écrire dans .wikichat/queue/ pour signaler l'action
-- Terminer proprement (exit code 0)
-Le coordinateur lira les fichiers locaux pour récupérer le résultat.`;
-
-export const WAIT_INSTRUCTIONS = `## Pattern wait (attente structurée)
-
-Pour attendre un événement spécifique:
-1. poll_messages(channel="coordination", timeout_ms=30000) — attend une notif
-2. Si timeout sans message pertinent → vérifier via read_messages(since_minutes=1)
-3. Maximum 5 polls consécutifs sans traitement → appeler get_briefing() pour réévaluer
-4. Si attente > 5min sans activité → déclarer via declare_delay(eta, reason)
-5. Toujours écrire l'état d'attente dans .wikichat/artifacts/wait-status-<nom>.md
-
-Ne jamais bloquer indéfiniment. Toujours avoir une action de sortie de boucle.
-Si MCP down pendant l'attente → écrire dans queue/ et terminer proprement.`;
+N'y mets rien d'autre : pas de compte rendu, pas de recopie de l'artefact.
+`;
