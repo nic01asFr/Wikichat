@@ -225,7 +225,13 @@ function ensureMcpJson(projectPath, port = 3777) {
         mcpServers: {
           wikichat: {
             type: "sse",
-            url: `http://localhost:${port}/sse`,
+            // L'identité voyage avec la connexion, pas seulement via register().
+            // Le fichier est partagé par tous les agents d'un projet, donc le nom
+            // ne peut pas y être écrit en dur : il vient de WIKICHAT_AGENT, que
+            // le spawn pose dans l'environnement du process. Sans cela une session
+            // reste anonyme tant qu'elle n'a pas appelé register — et le redevient
+            // à chaque reconnexion.
+            url: `http://localhost:${port}/sse?agent=\${WIKICHAT_AGENT:-}`,
           },
         },
       });
@@ -529,7 +535,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
       windowsHide: true,
       shell: false,
     });
@@ -770,7 +776,7 @@ export function spawnDaemon(projectPath, options = {}) {
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
       windowsHide: true,
       detached: !isWindows,
       shell: false,
@@ -817,7 +823,7 @@ export function spawnDaemon(projectPath, options = {}) {
           const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
             cwd: projectPath,
             stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+            env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
             windowsHide: true, detached: !isWindows, shell: false,
           });
           newChild.stdout.on("data", () => {});

@@ -642,7 +642,24 @@ export function registerTools(server, sessionId) {
         ? `\n⏰ Rappel cron actif → CronDelete("${sender.cron_job_id}") pour l'annuler.` : "";
       if (sender) { sender.eta = null; sender.etaReason = null; }
 
-      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.`);
+      // Un message posté sur un canal que seules des sessions anonymes occupent
+      // n'atteint personne de durable : un identifiant "session-xxxx" change à
+      // chaque reconnexion, et rien ne le rattache à une identité. Le dire, plutôt
+      // que de laisser l'agent croire qu'il a parlé à quelqu'un.
+      let audienceHint = "";
+      if (!isDM) {
+        const nommes = [...state.sessions.values()].filter(
+          s => s.name && !s.name.startsWith("session-") && s.sessionId !== sessionId
+        ).length;
+        if (nommes === 0) {
+          const anonymes = state.sessions.size - 1;
+          audienceHint = anonymes > 0
+            ? `\n⚠️ Aucun agent nommé n'est connecté (${anonymes} session(s) anonyme(s)). Ton message attend dans le canal ; il sera relevé par le premier agent qui s'enregistre sous un nom.`
+            : `\n⚠️ Personne d'autre n'est connecté. Ton message attend dans le canal.`;
+        }
+      }
+
+      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.`);
     }
   );
 

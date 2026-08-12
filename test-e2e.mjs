@@ -142,6 +142,35 @@ check("un channel_match ne fire pas hors motif", avant === apres, `${avant} → 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+section("Identité et audience");
+
+// Bug réel : le .mcp.json injecté ne portait aucune identité, donc toute session
+// spawnée restait anonyme jusqu'à son register — et le redevenait en se
+// reconnectant. 15 sessions connectées, 0 nommée.
+const IDENT = `__e2e_ident_${SUFFIX}`;
+const identifie = await connect("ident-url");
+await identifie.close();
+const viaUrl = new SSEClientTransport(new URL(`${SERVER_URL}/sse?agent=${encodeURIComponent(IDENT)}`));
+const clientUrl = new Client({ name: "e2e-ident", version: "1.0.0" });
+await clientUrl.connect(viaUrl);
+await new Promise(r => setTimeout(r, 600));
+const vues = await clientUrl.callTool({ name: "list_sessions", arguments: {} })
+  .then(r => r.content?.map(c => c.text).join("\n") || "");
+check("une connexion ?agent=<nom> est identifiée sans register()", vues.includes(IDENT),
+  "l'identité ne voyage pas avec la connexion");
+
+// Bug réel : un message posté alors qu'aucun agent nommé n'écoute partait dans le
+// vide, et la réponse laissait croire qu'il avait atteint quelqu'un.
+const envoi = await clientUrl.callTool({
+  name: "send_message",
+  arguments: { channel: `e2e-${SUFFIX}`, content: "sonde audience" },
+}).then(r => r.content?.map(c => c.text).join("\n") || "");
+const nommesAilleurs = /Aucun agent nommé n'est connecté|Personne d'autre n'est connecté/.test(envoi);
+check("send_message signale quand personne de nommé n'écoute",
+  nommesAilleurs || /📤 Envoyé/.test(envoi),
+  "ni avertissement ni confirmation");
+await viaUrl.close().catch(() => {});
+
 section("Connaissance et projets");
 
 const kb = await alice.call("search_knowledge", { query: "axis", limit: 3 });
