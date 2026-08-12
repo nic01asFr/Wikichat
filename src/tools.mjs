@@ -7,12 +7,13 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 
 import {
   state, pushMessage, sysMsg, getSessionByName, getSessionName,
   dmChannelKey, isAgentInDMChannel, resolveAgentName, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
-  getChannelCount, inboxFor,
+  getChannelCount, inboxFor, normalizeChannel, channelLabel,
 } from "./state.mjs";
 import { scanForProjects } from "./scanner.mjs";
 import { loadRegistry, loadConfig, saveRegistry, mergeProjects } from "./registry.mjs";
@@ -23,14 +24,12 @@ import {
   upsertSpawnRegistry, getAgentStoragePath, writeAgentFile,
   SESSION_STORE, saveIdentityBinding, getIdentityBinding,
 } from "./persistence.mjs";
-import { pushDashboardUpdate } from "./dashboard.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
 import { triggerMemoryPublish } from "./memory-publish-hook.mjs";
-import { dispatch as dispatchIntent, readDispatchLog, recordOutcome } from "./dispatch.mjs";
 import { runCartography } from "./jobs/cartography.mjs";
 import { runClustering } from "./jobs/clustering.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, searchIdeas, ideaStats, deleteIdea } from "./ideas.mjs";
@@ -45,7 +44,37 @@ function txt(text) { return { content: [{ type: "text", text }] }; }
 
 function notify(channel, excludeId) {
   notifyWaiters(channel, excludeId);
-  pushDashboardUpdate();
+}
+
+/**
+ * Suggère de poser un guetteur — au moment précis où ça devient utile.
+ *
+ * Le guetteur n'a de sens que si l'agent vient de créer une attente et qu'il
+ * reste en vie pour la voir aboutir. Le poser par défaut au démarrage serait un
+ * processus posé pour rien dans le cas le plus fréquent : un headless qui exécute
+ * sa tâche et sort avant que quoi que ce soit n'arrive.
+ *
+ * Le service ne peut pas lancer ce processus lui-même — il vit dans la session de
+ * l'agent, seul l'agent peut l'ouvrir. La seule prise est donc de le lui dire, et
+ * l'endroit juste est la réponse de l'outil par lequel il vient de demander
+ * quelque chose à quelqu'un.
+ *
+ * Une fois par session : répété à chaque message, ce serait du bruit.
+ */
+const _guetteurSuggere = new Set();
+const CHEMIN_GUETTEUR = path
+  .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-attendre-courrier.mjs")
+  .split(path.sep).join("/");
+
+function hintGuetteur(sessionId) {
+  const s = state.sessions.get(sessionId);
+  if (!s?.name || s.name.startsWith("session-")) return ""; // sans identité, rien à guetter
+  if ((s.agent_type || "interactive") === "headless") return ""; // il sortira avant
+  if (_guetteurSuggere.has(sessionId)) return "";
+  _guetteurSuggere.add(sessionId);
+  return `\n👁️ Tu attends une réponse : pose un guetteur et continue ton travail — il te préviendra ` +
+    `en cours de session, sans consommer de tokens pendant l'attente.\n` +
+    `   Bash(command='node "${CHEMIN_GUETTEUR}"', run_in_background=true)`;
 }
 
 /** Render the coordination protocol of a message so the RECIPIENT can act on it.
@@ -64,7 +93,7 @@ function coordMarkers(msg) {
 function formatMsgList(msgs) {
   const lines = msgs.map(msg => {
     const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
-    const ch = msg.isDM ? "📩DM" : `#${msg.channel}`;
+    const ch = channelLabel(msg);
     const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
     const readers = state.reads.get(msg.id);
     const ack = readers?.size > 0 ? ` ✓${[...readers].join(",")}` : "";
@@ -209,7 +238,7 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   // Format helpers
   const fmtMsg = m => {
     const t = new Date(m.timestamp).toLocaleTimeString("fr-FR");
-    const ch = m.isDM ? "📩DM" : `#${m.channel}`;
+    const ch = channelLabel(m);
     return `  [${t}] [${ch}] ${m.fromName}: ${m.content.slice(0, 200)}${m.content.length > 200 ? "…" : ""}`;
   };
 
@@ -256,9 +285,9 @@ function buildBriefing(sessionId, { since, mission } = {}) {
 
   // Workflow hint
   sections.push(
-    `💡 send_message → poll_messages(since_id) — boucle\n` +
-    `   remember(key, value) / recall(key) — mémoire persistante\n` +
-    `   📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
+    `💡 send_message pour parler, poll() pour relever — ton hook livre le reste\n` +
+    `   en fin de tour, tu n'as pas de boucle à tenir.\n` +
+    `   remember(clé, valeur) / recall(clé) — ce qui te survit d'une session à l'autre.`
   );
 
   return txt(sections.join("\n\n"));
@@ -464,11 +493,11 @@ export function registerTools(server, sessionId) {
       const isCurator = role && /curator|curateur|meta|méta/i.test(role);
       const workflowByType = {
         interactive: `💡 Mode interactif (turn-based): ta maison #${home || "(projet)"} te livre tout ce qui t'est adressé via ton hook, à chaque fin de tour — pas de boucle poll.\n   poll() = relever à la demande tout ce qui t'est adressé depuis ton dernier poll (curseur auto). poll(timeout_seconds=N) = rendez-vous synchrone si tu dois attendre une réponse maintenant.\n   Pour joindre quelqu'un : contact_agent(target, message) dépose dans SA maison ; sa réponse revient dans la tienne.`,
-        daemon: `💡 Mode daemon: poll_messages(since_id, timeout=120) en boucle permanente\n   Ne terminez jamais — relancez poll après chaque timeout.`,
-        headless: `💡 Mode headless: exécutez votre mission → share_artifact → exit\n   Pas de poll, pas de boucle. One-shot.`,
+        daemon: `💡 Mode daemon : poll(timeout_seconds=120) entre deux actions.\n   Une boucle de veille coûte cher — chaque tour relit tout ton historique. Si tu\n   n'as rien à faire, préfère sortir : un trigger te relancera sur événement.`,
+        headless: `💡 Mode headless : exécute ta mission → écris dans .wikichat/artifacts/ → sors.\n   Pas de poll, pas de boucle. Le service diffuse ton résultat pour toi.`,
       };
       const workflow = isCurator
-        ? `🔍 Mode Méta-Curateur: get_briefing → list_projects → read_agent_history → analyser → share_artifact\n⚠️  Pas besoin de poll_messages.`
+        ? `🔍 Mode Méta-Curateur : get_briefing → list_projects → analyser → artefact.\n   Tu lis, tu ne guettes pas : read_messages suffit.`
         : workflowByType[agent_type] || workflowByType.interactive;
 
       return txt(
@@ -550,20 +579,12 @@ export function registerTools(server, sessionId) {
     }
   );
 
-  // ── get_context (legacy — delegates to buildBriefing) ───────────────────────
-
-  server.tool(
-    "get_context",
-    "Résumé complet de l'état du réseau. Idéal en début de session. Préférez get_briefing() pour un contexte filtré.",
-    {},
-    async () => buildBriefing(sessionId, {})
-  );
 
   // ── get_briefing ───────────────────────────────────────────────────────────
 
   server.tool(
     "get_briefing",
-    "Briefing intelligent filtré. Détecte vos @mentions, filtre par date/mission, sépare messages prioritaires du flux. Remplace get_context().",
+    "Briefing intelligent filtré. Détecte vos @mentions, filtre par date/mission, sépare messages prioritaires du flux. Résumé filtré de l'état du réseau, à appeler en début de session.",
     {
       since: z.string().optional().describe("ISO timestamp ou ID message. Défaut: votre lastSeen"),
       mission: z.string().optional().describe("Votre mission pour filtrer le contexte (ex: 'review sampler.mjs')"),
@@ -586,12 +607,19 @@ export function registerTools(server, sessionId) {
       expects_reply: z.boolean().optional().describe("Si true : tu attends une réponse. Les autres agents peuvent attendre ton next message avant de re-poll."),
       eta_seconds: z.number().optional().describe("Temps estimé en secondes avant ton prochain message (ex: 300 = 5 min de travail). Réduit les polls inutiles côté destinataire."),
       status: z.enum(["over", "standby", "done"]).optional().describe("over = j'ai terminé, c'est à toi | standby = je travaille, n'attends pas de réponse immédiate | done = tâche complètement terminée"),
+      priority: z.enum(["info", "warning", "urgent"]).optional().describe("Diffuse à TOUTES les sessions au lieu d'un canal. Avec parcimonie : remplace l'ancien outil broadcast."),
     },
-    async ({ content, channel, reply_to, expects_reply, eta_seconds, status }) => {
+    async ({ content, channel: rawChannel, reply_to, expects_reply, eta_seconds, status, priority }) => {
+      // priority transforme l'envoi en diffusion générale : c'est l'ancien outil
+      // broadcast, absorbé ici. Un outil de moins, même canal __broadcast__, et
+      // les champs de coordination (status, expects_reply) deviennent disponibles
+      // sur une diffusion — ils ne l'étaient pas.
+      const channel = priority ? "__broadcast__" : normalizeChannel(rawChannel);
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
       let dmHint = "";
+      let autoCreated = false;
 
       if (channel.startsWith("@")) {
         const res = resolveDMChannel(sessionId, channel.slice(1));
@@ -610,13 +638,30 @@ export function registerTools(server, sessionId) {
         if (!res.matched) {
           dmHint += `\n⚠️ Aucune session nommée "${res.typedTarget}". Le DM reste en attente, visible uniquement quand un agent s'enregistre EXACTEMENT sous ce nom. Vérifie list_sessions.`;
         }
-      } else if (!state.channels.has(channel)) {
-        return txt(`❌ Canal "#${channel}" inexistant. Disponibles: ${[...state.channels.keys()].filter(c => !c.startsWith("dm:")).map(c => `#${c}`).join(", ")}.`);
+      } else if (!priority && !state.channels.has(channel)) {
+        // __broadcast__ est un canal virtuel : on ne le matérialise jamais.
+        // Pour les autres : même raison que dans share_artifact — refuser un canal
+        // inexistant rend les triggers channel_match inutilisables sur un sujet
+        // neuf, personne ne pouvant écrire là où le trigger écoute tant que le
+        // canal n'existe pas. On crée, et on le signale pour qu'une faute de
+        // frappe reste visible.
+        state.channels.set(channel, {
+          name: channel,
+          description: `Canal auto-créé par send_message (${senderName})`,
+          createdBy: senderName,
+          createdAt: new Date(),
+        });
+        try { const { saveChannels } = await import("./persistence.mjs"); saveChannels(); } catch { /* */ }
+        autoCreated = true;
       }
 
+      const emoji = priority ? { info: "ℹ️", warning: "⚠️", urgent: "🚨" }[priority] : null;
       const msg = pushMessage({
-        id: randomUUID(), from: sessionId, fromName: senderName,
-        channel: targetChannel, content, timestamp: new Date(),
+        id: randomUUID(), from: sessionId,
+        fromName: emoji ? `${emoji} ${senderName}` : senderName,
+        channel: targetChannel,
+        content: priority ? `[${priority.toUpperCase()}] ${content}` : content,
+        timestamp: new Date(),
         replyTo: reply_to ?? null, isDM,
         // Coordination metadata
         expects_reply: expects_reply ?? null,
@@ -640,7 +685,29 @@ export function registerTools(server, sessionId) {
         ? `\n⏰ Rappel cron actif → CronDelete("${sender.cron_job_id}") pour l'annuler.` : "";
       if (sender) { sender.eta = null; sender.etaReason = null; }
 
-      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}\n\n⚡ Lance poll_messages pour attendre la réponse.`);
+      // Un message posté sur un canal que seules des sessions anonymes occupent
+      // n'atteint personne de durable : un identifiant "session-xxxx" change à
+      // chaque reconnexion, et rien ne le rattache à une identité. Le dire, plutôt
+      // que de laisser l'agent croire qu'il a parlé à quelqu'un.
+      let audienceHint = "";
+      if (!isDM && !priority) {
+        const nommes = [...state.sessions.values()].filter(
+          s => s.name && !s.name.startsWith("session-") && s.sessionId !== sessionId
+        ).length;
+        if (nommes === 0) {
+          const anonymes = state.sessions.size - 1;
+          audienceHint = anonymes > 0
+            ? `\n⚠️ Aucun agent nommé n'est connecté (${anonymes} session(s) anonyme(s)). Ton message attend dans le canal ; il sera relevé par le premier agent qui s'enregistre sous un nom.`
+            : `\n⚠️ Personne d'autre n'est connecté. Ton message attend dans le canal.`;
+        }
+      }
+
+      const entete = priority
+        ? `${emoji} Diffusé à toutes les sessions (${state.sessions.size - 1} destinataire(s))`
+        : isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`;
+      // Le guetteur n'est proposé que si ce message crée réellement une attente.
+      const guetteur = expects_reply ? hintGuetteur(sessionId) : "";
+      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.${guetteur}`);
     }
   );
 
@@ -656,7 +723,8 @@ export function registerTools(server, sessionId) {
       limit: z.number().default(50).describe("Nombre max"),
       since_id: z.string().optional().describe("Messages après cet ID"),
     },
-    async ({ channel, from_session, since_minutes, limit, since_id }) => {
+    async ({ channel: rawChannel, from_session, since_minutes, limit, since_id }) => {
+      const channel = normalizeChannel(rawChannel);
       // Resolve "@Name" → DM channel key. "@me" / self-reference → DMs only.
       // Same name resolution as send_message so both sides agree on the key.
       let dmOnly = false;
@@ -696,12 +764,12 @@ export function registerTools(server, sessionId) {
       }).slice(-limit);
 
       if (filtered.length === 0) {
-        return txt(`📭 Aucun message${channel ? ` sur ${channel}` : ""} (${since_minutes}min).\n💡 Utilisez poll_messages pour attendre.`);
+        return txt(`📭 Aucun message${channel ? ` sur ${channel}` : ""} (${since_minutes}min).\n💡 Rien à guetter : ton hook te livrera ce qui arrive en fin de tour.`);
       }
 
       const lines = filtered.map(msg => {
         const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
-        const ch = msg.isDM ? "📩DM" : `#${msg.channel}`;
+        const ch = channelLabel(msg);
         const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
         return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${coordMarkers(msg)}`;
       });
@@ -828,7 +896,7 @@ export function registerTools(server, sessionId) {
         // seen so far and keep waiting for the remaining time.
         baselineId = state.messages.length ? state.messages[state.messages.length - 1].id : baselineId;
       }
-      return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Relancez poll_messages.`);
+      return txt(`⏰ Timeout ${timeout / 1000}s — aucun message.\n💡 Inutile de relancer : rends la main, le hook te livrera la suite au prochain tour.`);
     }
   );
 
@@ -861,7 +929,15 @@ export function registerTools(server, sessionId) {
       const first = !cursor;
       const res = inboxFor(myName, { sinceId: cursor, sinceMinutes: first ? 10 : 0 });
       if (res.lastId) remember(myName, "__inbox_cursor", res.lastId);
-      if (res.messages.length > 0) return formatMsgList(res.messages);
+      if (res.messages.length > 0) {
+        const out = formatMsgList(res.messages);
+        // Curseur évincé : l'agent doit savoir que ce qu'il reçoit est un
+        // rattrapage borné, pas la suite exacte de son dernier poll.
+        if (res.resynced) {
+          out.content[0].text = `↩️ Absence longue : reprise sur les 30 dernières minutes (ton curseur était trop ancien).\n\n${out.content[0].text}`;
+        }
+        return out;
+      }
 
       if (timeout <= 0) {
         return txt(`📭 Rien de neuf pour toi.\n💡 Tu peux rendre la main — le hook boîte mail te livrera ce qui arrive à ton prochain tour. Ou poll(timeout_seconds=N) pour attendre maintenant.`);
@@ -884,28 +960,6 @@ export function registerTools(server, sessionId) {
     }
   );
 
-  // ── broadcast ───────────────────────────────────────────────────────────────
-
-  server.tool(
-    "broadcast",
-    "Diffuser un message à TOUTES les sessions. À utiliser avec parcimonie.",
-    {
-      content: z.string().describe("Message à diffuser"),
-      priority: z.enum(["info", "warning", "urgent"]).default("info"),
-    },
-    async ({ content, priority }) => {
-      const emoji = { info: "ℹ️", warning: "⚠️", urgent: "🚨" }[priority];
-      const msg = pushMessage({
-        id: randomUUID(), from: sessionId, fromName: `${emoji} ${getSessionName(sessionId)}`,
-        channel: "__broadcast__",
-        content: `[BROADCAST ${priority.toUpperCase()}] ${content}`,
-        timestamp: new Date(),
-      });
-      notify("__broadcast__", sessionId);
-      return txt(`${emoji} Broadcast envoyé à ${state.sessions.size - 1} session(s). 🆔 ${msg.id.slice(0, 8)}`);
-    }
-  );
-
   // ── share_artifact ──────────────────────────────────────────────────────────
 
   server.tool(
@@ -918,7 +972,8 @@ export function registerTools(server, sessionId) {
       channel: z.string().default("general").describe("Canal ou '@Nom' pour DM"),
       language: z.string().optional().describe("Langage (pour le code)"),
     },
-    async ({ title, artifact_type, content: body, channel, language }) => {
+    async ({ title, artifact_type, content: body, channel: rawChannel, language }) => {
+      const channel = normalizeChannel(rawChannel);
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
@@ -1046,7 +1101,7 @@ export function registerTools(server, sessionId) {
       description: z.string().optional().describe("Description"),
     },
     async ({ name, description }) => {
-      const clean = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+      const clean = normalizeChannel(name).toLowerCase().replace(/[^a-z0-9-]/g, "-");
       if (state.channels.has(clean)) return txt(`❌ "#${clean}" existe déjà.`);
       state.channels.set(clean, {
         name: clean, description: description ?? `Canal ${clean}`,
@@ -1114,7 +1169,7 @@ export function registerTools(server, sessionId) {
       session.lastSeen = new Date();
 
       const cronExpr = cronInMinutes(duration_minutes);
-      const cronPrompt = `Ton délai wikichat de ${duration_minutes}min est écoulé. Appelle poll_messages(timeout_seconds=60) pour lire les messages en attente et répondre. Si tu as terminé, appelle declare_delay(duration_minutes=0) et CronDelete avec ton job_id.`;
+      const cronPrompt = `Ton délai wikichat de ${duration_minutes}min est écoulé. Appelle poll() pour relever ce qui t'attend, et réponds. Si tu as terminé, appelle declare_delay(duration_minutes=0) et CronDelete avec ton job_id.`;
 
       sysMsg("system", `${name} répond ${timeUntil(session.eta)}${reason ? ` — ${reason}` : ""}.`);
       notify("general", sessionId);
@@ -1481,7 +1536,7 @@ export function registerTools(server, sessionId) {
         }).catch(() => {});
         sysMsg("coordination", `🏁 ${name} déclenche la clôture de "${project}" — Closer spawné (ticket ${ticketId}).`);
         notify("coordination", sessionId);
-        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Suis l'avancée via list_spawned() ou poll_ticket("${ticketId}").`);
+        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Rien à surveiller : la clôture arrive sur #library et ton hook te la livrera.`);
       }
 
       // Mode manuel : closure fournie directement.
@@ -1655,8 +1710,8 @@ export function registerTools(server, sessionId) {
           } else {
             // resume_only or fresh : both headless. resume_only passes resumeSessionId.
             const prompt = mode === "resume_only"
-              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, attends instructions via poll_messages(timeout_seconds=60).`
-              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll_messages(timeout_seconds=30) pour les messages en attente, puis sors si rien d'urgent.`;
+              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, relève avec poll() et sors s'il n'y a rien.`
+              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll() pour les messages en attente, puis sors s'il n'y a rien d'urgent.`;
             // Fire-and-forget — don't block on the headless spawn
             spawnHeadless(repoPath, prompt, {
               name: n, role: e.role || "agent",
@@ -2300,7 +2355,8 @@ export function registerTools(server, sessionId) {
           : `Il est offline — le message l'attend dans sa maison, livré dès son retour.${wake ? "" : " (wake=true pour le réveiller maintenant.)"}`;
         return txt(
           `📬 Déposé dans la maison de ${name} → #${targetHome} (🆔 ${msg.id.slice(0, 8)}), il est @mentionné.\n${stateNote}${wakeNote}\n` +
-          `↩️ Sa réponse te reviendra dans TA maison — relève avec poll().`
+          `↩️ Sa réponse te reviendra dans TA maison — relève avec poll().` +
+          (expects_reply === false ? "" : hintGuetteur(sessionId))
         );
       }
 
@@ -2362,7 +2418,6 @@ export function registerTools(server, sessionId) {
         const t = state.spawnTickets.get(ticketId);
         if (t) { t.status = result.success ? "completed" : "failed"; t.completedAt = new Date(); t.result = { success: result.success, exitCode: result.exitCode }; }
         notifyWaiters("__tickets__", null);
-        pushDashboardUpdate();
       }).catch(() => {
         const t = state.spawnTickets.get(ticketId);
         if (t) { t.status = "failed"; t.completedAt = new Date(); }
@@ -2372,7 +2427,7 @@ export function registerTools(server, sessionId) {
       return txt(
         `🔁 ${name} est OFFLINE → ${resumed ? "reprise de SA session (--resume) " : "spawn frais "}avec ton message [ticket:${ticketId}].\n` +
         `${resumed ? "Il continue à la suite de son historique." : "⚠️ Pas de claude_session_id connu → contexte neuf (il se ré-enregistre)."}\n` +
-        `💡 poll_ticket("${ticketId}") ou poll_messages(channel="@${name}") pour sa réponse.`
+        `💡 Sa réponse reviendra dans ta maison — ton hook te la livrera en fin de tour.`
       );
     }
   );
@@ -2399,7 +2454,7 @@ export function registerTools(server, sessionId) {
       if (mode === "headless") {
         const prompt = initial_task
           ? PROMPT_TEMPLATES.task(name, initial_task, { projectPath: repo_path, role: role })
-          : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, et attendre des instructions via poll_messages.`, { projectPath: repo_path, role: role });
+          : PROMPT_TEMPLATES.task(name, `Rejoindre le réseau wikichat, te présenter sur #coordination, relever avec poll() puis sortir.`, { projectPath: repo_path, role: role });
 
         // Create spawn ticket
         const ticketId = randomUUID().slice(0, 8);
@@ -2450,7 +2505,6 @@ export function registerTools(server, sessionId) {
             if (spawnerSession) notify(dmKey, null);
           }
           notifyWaiters("__tickets__", null);
-          pushDashboardUpdate();
         }).catch(() => {
           ticket.status = "failed";
           ticket.completedAt = new Date();
@@ -2460,7 +2514,7 @@ export function registerTools(server, sessionId) {
 
         return txt(
           `🚀 "${name}" lancé en mode headless dans ${repoName}.\n\n` +
-          `🎫 Ticket: ${ticketId} — poll_ticket("${ticketId}") pour suivre\n` +
+          `🎫 Ticket ${ticketId} — inutile d'attendre : le résultat arrive en artefact et ton hook te l'annonce\n` +
           `📄 Résultat → .wikichat/artifacts/ (récupéré automatiquement dans 2min)\n` +
           `📡 Progression visible sur #coordination\n` +
           `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
@@ -2493,7 +2547,7 @@ export function registerTools(server, sessionId) {
           return txt(
             `🟢 "${name}" lancé en mode daemon (PID ${result.pid}) dans ${repoName}.\n\n` +
             `🎫 Ticket: ${ticketId}\n` +
-            `📡 Il va register() et boucler sur poll_messages.\n` +
+            `📡 Il va register() puis relever sa boîte.\n` +
             `💬 Envoie-lui des messages via send_message ou depuis le cockpit.\n` +
             `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
           );
@@ -2576,11 +2630,11 @@ export function registerTools(server, sessionId) {
         `1. \`register\` (name: "${name}"${role ? `, role: "${role}"` : ""})`,
         `2. \`declare_capabilities\` (current_project: "${repoName}", availability: "available")`,
         `3. Message de confirmation sur #coordination`,
-        `4. \`poll_messages(timeout_seconds=60, types=["message","direct_message","broadcast","artifact"])\` — BOUCLE INFINIE`,
+        `4. \`poll()\` pour relever ta boîte — sans argument, le curseur est tenu pour toi`,
         ``,
         `## Règle absolue`,
-        `Tu ne termines JAMAIS ta session. Tu boucles: poll → répondre → poll → ...`,
-        `Timeout = relancer poll_messages immédiatement. Jamais de question "dois-je continuer ?".`,
+        `Fais ton travail, réponds à ce qui t'est adressé, puis termine proprement.`,
+        `Ne boucle pas en attendant : un trigger te relancera quand il y aura de quoi faire.`,
       ].filter(l => l !== null).join("\n");
 
       const existing = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, "utf8") : null;
@@ -2623,8 +2677,8 @@ export function registerTools(server, sessionId) {
         `🚀 Session "${name}" lancée dans ${repoName}.\n\n` +
         `📡 Apparaîtra sur #coordination dans 1-2min.\n` +
         `📂 Contexte: ${wikichatDir}\n\n` +
-        `💡 poll_messages(channel="coordination") pour sa confirmation.\n` +
-        `📊 Suivre en temps réel: http://localhost:${process.env.PORT || 3777}/dashboard`
+        `💡 Sa confirmation arrivera sur #coordination ; ton hook te la livrera.\n` +
+        `📂 Son résultat atterrira dans .wikichat/artifacts/.`
       );
     }
   );
@@ -2704,7 +2758,10 @@ export function registerTools(server, sessionId) {
     "Suivre un spawn ticket. Attend que l'agent spawnée change de status (completed/failed). Retourne immédiatement si déjà terminé.",
     {
       ticket_id: z.string().describe("ID du ticket retourné par spawn_session"),
-      timeout_seconds: z.number().default(30).describe("Timeout en secondes (max: 120)"),
+      // 30 s était le défaut : sur 51 spawns headless mesurés, la médiane est de
+      // 61 s et 6 seulement finissaient sous 30 s — le défaut échouait 88 % du
+      // temps et provoquait une relance systématique.
+      timeout_seconds: z.number().default(90).describe("Timeout en secondes (max: 120). Un headless dure ~60s en médiane."),
     },
     async ({ ticket_id, timeout_seconds }) => {
       const ticket = state.spawnTickets.get(ticket_id);
@@ -2730,9 +2787,20 @@ export function registerTools(server, sessionId) {
         );
       }
 
-      // Wait for completion via long-poll on __tickets__ channel
+      // Attente via long-poll sur le canal __tickets__. Ce canal est commun à
+      // tous les tickets : la fin de n'importe quel spawn réveille tous les
+      // guetteurs. Sans la boucle, un agent attendant le ticket A sortait dès
+      // qu'un ticket B se terminait — avec un message « Timeout Ns » mensonger
+      // après trois secondes d'attente, et une relance inutile à la clé.
+      // On ré-attend le temps restant tant que NOTRE ticket n'a pas bougé.
       const timeout = Math.min(timeout_seconds, 120) * 1000;
-      await registerWaiter(sessionId, "__tickets__", timeout);
+      const startedAt = Date.now();
+      const deadline = startedAt + timeout;
+      while (Date.now() < deadline) {
+        await registerWaiter(sessionId, "__tickets__", deadline - Date.now());
+        if (ticket.status === "completed" || ticket.status === "failed") break;
+      }
+      const waitedS = Math.round((Date.now() - startedAt) / 1000);
 
       // Re-check after wakeup
       if (ticket.status === "completed" || ticket.status === "failed") {
@@ -2748,62 +2816,14 @@ export function registerTools(server, sessionId) {
       }
 
       return txt(
-        `⏰ Timeout ${timeout_seconds}s — ticket ${ticket_id} toujours ${ticket.status}\n` +
+        `⏰ ${waitedS}s d'attente — ticket ${ticket_id} toujours ${ticket.status}\n` +
         `  Agent: ${ticket.name} (${ticket.mode}) dans ${ticket.repo}\n` +
-        `  Relancez poll_ticket("${ticket_id}") pour continuer à attendre.`
+        `  Un audit de code ou une revue prend souvent plusieurs minutes. Plutôt que\n` +
+        `  d'enchaîner les relances — chacune te coûte un tour — relance avec un\n` +
+        `  timeout large : poll_ticket("${ticket_id}", timeout_seconds=120).\n` +
+        `  Ou laisse tomber : le résultat arrive dans .wikichat/artifacts/ et le\n` +
+        `  service l'annonce sur #insights, ton hook te le livrera.`
       );
-    }
-  );
-
-  // ══ DISPATCH (Phase 6) ══════════════════════════════════════════════════════
-
-  server.tool(
-    "dispatch",
-    "Routage par intent : trouve le meilleur agent live pour exécuter la mission, ou spawn ad-hoc. Renvoie {strategy, dispatched_to, ticket_id?, score, ranked}.",
-    {
-      intent: z.string().describe("Description en langage naturel de la mission"),
-      context: z.any().optional().describe("Contexte structuré (repo, commit, file, …)"),
-      prefer: z.string().optional().describe("Nom d'agent préféré (boost +0.2 si présent)"),
-    },
-    async ({ intent, context, prefer }) => {
-      const callerName = getSessionName(sessionId);
-      const result = await dispatchIntent({ intent, context, prefer, spawnedBy: callerName });
-      const lines = [
-        `🎯 Dispatch ${result.dispatch_id}: ${result.strategy}`,
-        result.dispatched_to ? `→ ${result.dispatched_to}` : "→ (no executor)",
-        result.score !== undefined ? `score: ${result.score.toFixed(3)} (cap=${result.breakdown.capability.toFixed(2)} × track=${result.breakdown.trackRecord.toFixed(2)} × avail=${result.breakdown.availability.toFixed(2)})` : "",
-        result.ticket_id ? `ticket: ${result.ticket_id}` : "",
-        result.ranked && result.ranked.length > 0 ? `\nClassement:\n${result.ranked.map(r => `  - ${r.name}: ${r.score.toFixed(3)}`).join("\n")}` : "",
-      ].filter(Boolean);
-      return txt(lines.join("\n"));
-    }
-  );
-
-  server.tool(
-    "explain_dispatch",
-    "Lire les N derniers dispatchs (audit + apprentissage).",
-    { limit: z.number().optional() },
-    async ({ limit }) => {
-      const log = readDispatchLog(limit ?? 10);
-      if (log.length === 0) return txt("(aucun dispatch enregistré)");
-      const lines = log.map(d =>
-        `[${d.startedAt}] ${d.dispatch_id} → ${d.strategy} (${d.dispatched_to || "—"})\n  intent: "${d.intent.slice(0, 80)}"`
-      );
-      return txt(`📊 ${log.length} dispatch(s) récents:\n\n${lines.join("\n\n")}`);
-    }
-  );
-
-  server.tool(
-    "report_dispatch_outcome",
-    "Reporter le succès/échec d'une mission dispatchée pour alimenter le track record. À appeler par l'agent qui a exécuté la mission.",
-    {
-      capabilities: z.array(z.string()).describe("Liste des capabilities exercées (ex: ['review','typescript'])"),
-      success: z.boolean(),
-    },
-    async ({ capabilities, success }) => {
-      const callerName = getSessionName(sessionId);
-      recordOutcome({ agentName: callerName, capabilities, success });
-      return txt(`📈 Track record mis à jour pour "${callerName}" (${capabilities.length} capabilities, ${success ? "✅" : "❌"})`);
     }
   );
 

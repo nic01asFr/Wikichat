@@ -2,19 +2,22 @@
 
 ## Project Overview
 
-**WikiChat** is a local multi-agent coordination MCP server. It enables multiple independent Claude Code instances to communicate, coordinate, and work together on projects through channels, DMs, and task management. Runs on the user's subscription — no API keys needed.
+**WikiChat** is a local service that gives a development machine a memory across projects, lets independently-opened Claude Code sessions talk to each other, and keeps working in the background. Deterministic detectors watch for events; agents are spawned only when one occurs. Runs on the user's subscription — no API keys.
 
 ## Commands
 
 ```bash
-npm start                    # Start server (localhost:3777, dormant team)
-npm run start:team           # Start server + autonomous team (Sentinel/Librarian/Orchestrator daemons)
+npm start                    # Start server (localhost:3777, dormant)
 npm run dev                  # Start with auto-reload
 node test-e2e.mjs            # E2E tests (server must be running)
 PORT=3777 HOST=127.0.0.1 npm start  # Override defaults
 ```
 
-Dashboard: `http://localhost:3777/dashboard`
+Pilote (agents planifiés + file d'approbation) : `http://localhost:3777/pilote`
+
+Les autres interfaces (dashboard, cockpit, console, régie) ont été supprimées :
+aucune n'était utilisée, et l'état du service se lit via `GET /api/health`,
+`GET /status`, ou depuis une session Claude Code via les outils MCP.
 
 ## Background service (recommandé)
 
@@ -24,15 +27,21 @@ Code. Le boot est géré par l'OS (logon Windows / launchd macOS / systemd-user
 Linux).
 
 ```bash
-node scripts/install-service.mjs --with-team   # auto-start au logon, team activée
-node scripts/uninstall-service.mjs             # désinstaller
+node scripts/install-service.mjs    # auto-start au logon
+node scripts/uninstall-service.mjs  # désinstaller
 ```
 
 Cycle de vie automatique :
 1. **Allumage machine** → service démarré, dormant (0% CPU, triggers cron schedulés mais ne firent pas)
-2. **Tu ouvres Claude Code** → register de toi-même → `dormant_gate` s'ouvre → résidents spawn → background work démarre
-3. **Tu fermes Claude Code** → 5min grace period → résidents tués → idle gate kicks in → 0% CPU
-4. **22h sans agent ouvert** → digest skip (dormant). Avec agent ouvert → Librarian fait son boulot.
+2. **Tu ouvres Claude Code** → register de toi-même → `dormant_gate` s'ouvre → les triggers deviennent armés
+3. **Un événement survient** (commit, artefact, mention) → un agent headless est spawné, agit, et sort
+4. **Tu fermes Claude Code** → 5min grace period → idle gate kicks in → 0% CPU
+
+Les daemons résidents (Sentinel/Librarian/Orchestrator) ont été retirés : ils
+consommaient 28,4 M tokens d'entrée en 506 tours de poll pour 3 actes utiles en
+trois mois. Leur fonction est reprise par la détection déterministe + triggers.
+`npm run start:team` et `--with-team` existent encore mais ne provisionnent que
+des triggers ; les trois triggers lifecycle correspondants sont désactivés.
 
 ### Variables d'environnement utiles
 
@@ -42,7 +51,9 @@ Cycle de vie automatique :
   - `strict` : seul `WIKICHAT_PRINCIPAL_AGENT` (défaut "Claude-Code") compte
   - `0` : pas de gate principal (registry seul décide)
 - `WIKICHAT_DORMANT_DISABLED=1` : toujours actif (legacy, déconseillé)
-- `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant kill des résidents (défaut 5min)
+- `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant mise en sommeil (défaut 5min)
+- `WIKICHAT_MAX_RESUME_MB=5` : plafond de transcript repris via `--resume`
+- `WIKICHAT_MAX_SESSIONS=30` : budget de spawn concurrent
 
 ## Distribution principle
 
@@ -60,7 +71,7 @@ Côté wikichat (mairie, légitimement central) :
 - `~/.wikichat/triggers.json` — config triggers
 - `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
 - `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse), markdown plain
-- `wikichat-repo/.wikichat/messages.json` — last 200 messages (fabric coordination, transitoire)
+- `wikichat-repo/.wikichat/messages.json` — derniers messages (cap MAX_MESSAGES, défaut 2000)
 - `wikichat-repo/projects/` — fallback pour projets déclarés sans repo réel
 
 ### Sources externes (GitHub, APIs) — DÉLÉGATION aux agents
@@ -73,44 +84,74 @@ Bénéfice : `git add .wikichat/` dans chaque projet sauvegarde naturellement la
 
 ## Architecture
 
-Modular — 12 files in `src/`, entry point `server.mjs`.
+Modular — 25 files in `src/`, entry point `server.mjs`. ~11 000 lines total.
 
 ```
 server.mjs          — Express routes, SSE transport, boot sequence
 src/state.mjs       — In-memory state (sessions, channels, messages, projects)
-src/tools.mjs       — 41 MCP tool definitions (identity, messaging, coordination, spawning, projects)
+src/tools.mjs       — 51 MCP tool definitions
 src/persistence.mjs — Atomic file I/O (sessions, projects, spawn registry, channels, messages)
-src/notifier.mjs    — Long-poll waiter system for poll_messages
-src/dashboard.mjs   — Live cockpit dashboard (3-column, SSE deltas)
-src/sampler.mjs     — Agent spawning (headless, daemon, interactive) + auto-respawn
+src/events.mjs      — Event bus: deterministic detectors → #insights → triggers
+src/triggers.mjs    — Trigger engine (cron, mention, channel_match, file_watch, webhook, lifecycle)
+src/routines.mjs    — Named multi-step workflows, idempotent by run_key
+src/notifier.mjs    — Long-poll waiters, shared by poll, poll_messages and /api/inbox
+src/sampler.mjs     — Agent spawning (headless, daemon, interactive) + --resume resolution
 src/resilience.mjs  — Watchdog (60s), cron persistence, heartbeat, stale detection
+src/snapshot.mjs    — Per-project change detection (git, CLAUDE.md, deps, files)
 src/scanner.mjs     — Filesystem project discovery (CLAUDE.md/.claude/.mcp.json markers)
 src/registry.mjs    — Central project registry (~/.wikichat/registry.json)
+src/identity.mjs    — Per-agent persistent memories (remember/recall)
+src/dormant.mjs     — Wake/sleep gate
+src/pilote.mjs      — Scheduled agents, proposer contract, approval queue (UI /pilote)
 src/injector.mjs    — Safe .wikichat/ overlay injection into projects
-src/map-generator.mjs — Thematic island map generation from registry
+src/jobs/           — Cartography, clustering
 ```
 
-**State** is in-memory with persistence: channels, last 200 messages, spawn registry, and session snapshots survive restarts. Projects and tasks are persisted per-project.
+**Event model** — the core mechanism: a JavaScript detector costs nothing while
+it finds nothing; when it does, it publishes `[event:type project:x] summary` on
+`#insights`, and a `channel_match` trigger spawns the right agent. Types emitted:
+`commits`, `branch`, `uncommitted`, `git-init`, `claude-md`, `deps`, `version`,
+`files`, `new-project`, `artifact`, `queue`, `stale`, `task-expired`.
+
+**Wake model** — a single generic trigger (`evt-wake-any`, `target_name: "*"`)
+relaunches any *named* agent that is mentioned in a message expecting a reply
+while it is offline. One trigger covers every identity, present and future — a
+per-agent trigger left every agent born after the last boot unreachable. Guards:
+reply must be expected, target must be offline, throwaway (timestamped) names are
+skipped, a 120 s per-target hold prevents double spawns while an agent boots, and
+an agent that was itself woken cannot wake another (loop breaker).
+
+**State** is in-memory with persistence: channels, last 2000 messages, spawn registry, and session snapshots survive restarts. Projects and tasks are persisted per-project.
+
+An agent's inbox cursor is server-side, keyed on its name, and shared by `poll`
+and the Stop hook. When that cursor points at a message already evicted from the
+buffer, the agent gets what was addressed to it over the last 30 minutes rather
+than an empty inbox — otherwise a long absence silently swallows the very call
+that woke it.
 
 **Transport:** Express 5 + SSE (`/sse`) using `@modelcontextprotocol/sdk`. Agents connect via SSE, send JSON-RPC to `/messages`.
 
 ## Agent Spawning Modes
 
 - **headless** (default): `claude -p` one-shot with `--mcp-config` + `--permission-mode bypassPermissions`. Executes task, writes to `.wikichat/artifacts/`, exits.
-- **daemon**: Persistent agent using `claude -p` with poll_messages loop prompt. Auto-respawn with exponential backoff (max 5 attempts, 3 concurrent). Uses Haiku by default for speed.
+- **daemon**: Persistent agent looping on poll_messages. Expensive — a poll loop re-reads its whole history each turn, so cost grows quadratically. Prefer a trigger. Auto-respawn capped at 5.
 - **interactive**: Opens a terminal window with `claude` in interactive mode.
 
-## MCP Tools (42 total)
+Named agents resume their previous session (`--resume`) when the transcript still
+exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 
-**Identity:** register, set_status, get_context, get_briefing, remember, recall, forget
-**Messaging:** send_message, read_messages, poll_messages, broadcast, share_artifact
+## MCP Tools (51 total)
+
+**Identity:** register, set_status, get_briefing, remember, recall, forget
+**Messaging:** send_message, read_messages, poll, poll_messages, share_artifact
+  (`broadcast` a été absorbé : `send_message(priority=…)` diffuse à toutes les sessions)
 **Channels:** list_sessions, list_channels, create_channel
-**Coordination:** declare_capabilities, declare_delay
-**Tasks:** claim_task, release_task
-**Projects:** declare_project, list_projects, close_project, purge_registry, scan_projects
+**Coordination:** declare_capabilities, declare_delay, claim_task, release_task
+**Projects:** declare_project, list_projects, set_project_meta, add_project_note, close_project, scan_projects, purge_registry, audit_project, audit_all_projects
+**Project agents:** list_project_agents, respawn_project_agents
 **Knowledge:** search_knowledge
+**Ideas:** add_idea, get_idea, list_ideas, update_idea, harmonize_ideas
 **Spawning:** spawn_session, contact_agent, list_spawned, kill_spawn, poll_ticket
-**Dispatch:** dispatch, explain_dispatch, report_dispatch_outcome
 **Routines:** register_routine, list_routines, run_routine, delete_routine
 **Triggers:** register_trigger, list_triggers, fire_trigger, set_trigger_enabled, delete_trigger
 **Background jobs:** run_cartography, run_clustering
@@ -122,12 +163,13 @@ src/map-generator.mjs — Thematic island map generation from registry
 **Sample:** POST /api/sample (direct prompt to live agent)
 **Projects:** GET /api/projects, GET /api/projects/:slug, GET /api/projects/scan
 **Health:** GET /, GET /status, GET /api/health (memory, sessions, metrics)
-**Dashboard:** GET /dashboard, GET /dashboard/events (SSE)
 **Artifacts:** GET /api/projects/:slug/wikichat/artifacts, GET /api/knowledge
+**Webhook:** POST /api/triggers/webhook/:id (fire a webhook trigger from anywhere)
+**Pilote:** GET /pilote + /pilote/api/* (scheduled agents, approval queue)
 
 ## Automatic Behaviors
 
-- **Watchdog** (60s): stale detection >15min, daemon auto-respawn
+- **Watchdog** (60s): stale detection >15min, emits a `stale` event (no auto-respawn — the loop existed but never fired once in 54 registry entries)
 - **Queue pickup** (2min): recovers offline agent actions from .wikichat/queue/
 - **Artifact recovery** (2min): recovers local artifacts from .wikichat/artifacts/
 - **Cleanup** (5min): expired task TTLs, DM channel GC, snapshot rotation >7d
@@ -135,8 +177,9 @@ src/map-generator.mjs — Thematic island map generation from registry
 
 ## Key Patterns
 
+- **Event-first**: les détecteurs JS publient sur #insights, les triggers spawnent à la demande — aucun agent ne veille
+- **Un mécanisme, pas un par cas**: un seul trigger de réveil pour toutes les identités, un seul curseur de boîte partagé par le hook et `poll`. Chaque fois qu'un mécanisme a été dupliqué par agent, les nouveaux agents n'en ont pas hérité.
 - **MCP-first preamble**: headless agents register() immediately, use MCP tools for all communication, local artifacts as backup
 - **Channel count cache**: O(1) via Map, updated in pushMessage/eviction
-- **SSE debounce**: dashboard updates throttled to 200ms
 - **Spawn registry**: cached in-memory with 2s debounced disk writes
 - **Atomic writes**: tmp file + rename pattern everywhere

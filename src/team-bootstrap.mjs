@@ -32,7 +32,7 @@ const RESIDENTS = [
     name: "Orchestrator",
     role: "daemon-orchestrator",
     model: "sonnet",
-    task: "Tu es Orchestrator, l'agent superviseur de l'équipe WikiChat. Tu es le seul à parler directement à Nicolas. Lis docs/roles/orchestrator.md pour ton protocole exact. Écoute #directives, dispatche le travail (utilise dispatch() ou spawn_session), suis-les via poll_ticket, agrège les résultats, rapporte sur #general.",
+    task: "Tu es Orchestrator, agent superviseur de WikiChat et interlocuteur par défaut de l'utilisateur. Lis docs/roles/orchestrator.md pour ton protocole exact. Écoute #directives, délègue via spawn_session, suis les tâches via poll_ticket, agrège les résultats, rapporte sur #general.",
   },
   {
     name: "Sentinel",

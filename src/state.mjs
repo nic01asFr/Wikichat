@@ -48,6 +48,37 @@ for (const [name, description] of [
 /** Channel message count cache — O(1) lookup instead of filtering */
 const _channelCounts = new Map();
 export function getChannelCount(channel) { return _channelCounts.get(channel) || 0; }
+
+/**
+ * Étiquette lisible d'un message pour l'affichage.
+ *
+ * `__broadcast__` est un canal interne : l'exposer tel quel donne des lignes
+ * comme « [#__broadcast__] … » dans les boîtes et les hooks, où le lecteur
+ * n'a aucune idée de ce qu'il regarde.
+ */
+export function channelLabel(msg) {
+  if (msg?.isDM) return "📩DM";
+  if (msg?.channel === "__broadcast__") return "📢 diffusion";
+  return `#${msg?.channel ?? "?"}`;
+}
+
+/**
+ * Normalise un nom de canal saisi par un agent.
+ *
+ * L'affichage préfixe les canaux d'un `#` décoratif (`[#insights] …`). Un agent
+ * qui recopie ce qu'il lit envoie alors sur "#insights", et le serveur crée un
+ * canal distinct de "insights" — deux salons pour un même sujet, dont un que
+ * les triggers `channel_match` ne voient pas. On enlève les dièses de tête à
+ * l'entrée : le nom canonique n'en porte jamais.
+ *
+ * Les DM (`dm:…`) et les canaux internes (`__broadcast__`) passent inchangés.
+ */
+export function normalizeChannel(name) {
+  if (typeof name !== "string") return name;
+  const trimmed = name.trim();
+  if (trimmed.startsWith("@") || trimmed.startsWith("dm:") || trimmed.startsWith("__")) return trimmed;
+  return trimmed.replace(/^#+/, "");
+}
 /** Rebuild channel counts from current messages (call after loading persisted messages) */
 export function rebuildChannelCounts() {
   _channelCounts.clear();
@@ -270,23 +301,37 @@ export function getEtaSummary(excludeId) {
  * Cursor is the caller's concern: pass the last id you delivered as `sinceId`
  * and store the returned `lastId` as your new cursor. Resolution:
  *   - sinceId present & found → slice strictly after it
- *   - sinceId present & EVICTED → { resynced:true }, empty (never replay history)
+ *   - sinceId present & EVICTED → { resynced:true } + fenêtre récente bornée
  *   - no sinceId, sinceMinutes>0 → lookback window (first activation catch-up)
  *   - no sinceId, no window → { baseline:true }, empty (arm cursor, no replay)
+ *
+ * Sur curseur évincé, on ne rejoue pas l'histoire — mais on ne jette pas tout
+ * non plus. Vécu : un agent réveillé par mention a poll(), son curseur pointait
+ * un message déjà sorti du tampon, il a reçu une boîte vide et son curseur a
+ * sauté à maintenant — l'appel qui venait de le réveiller était perdu pour de
+ * bon. La fenêtre bornée ci-dessous rattrape ce cas sans déverser l'arriéré.
  *
  * @param {string} name canonical agent name
  * @returns {{ messages: object[], lastId: string|null, resynced?: boolean, baseline?: boolean }}
  */
+/** Fenêtre de rattrapage quand le curseur d'un agent a été évincé du tampon. */
+const RESYNC_LOOKBACK_MIN = 30;
+
 export function inboxFor(name, { sinceId = null, sinceMinutes = 0 } = {}) {
   const agentLc = String(name || "").toLowerCase();
   const newestId = state.messages.at(-1)?.id ?? null;
   if (!agentLc) return { messages: [], lastId: newestId };
 
   let candidates;
+  let resynced = false;
   if (sinceId) {
     const idx = state.messages.findIndex(m => m.id === sinceId);
     if (idx >= 0) candidates = state.messages.slice(idx + 1);
-    else return { messages: [], lastId: newestId, resynced: true };
+    else {
+      resynced = true;
+      const cutoff = Date.now() - RESYNC_LOOKBACK_MIN * 60 * 1000;
+      candidates = state.messages.filter(m => new Date(m.timestamp).getTime() >= cutoff);
+    }
   } else if (sinceMinutes > 0) {
     const cutoff = Date.now() - sinceMinutes * 60 * 1000;
     candidates = state.messages.filter(m => new Date(m.timestamp).getTime() >= cutoff);
@@ -306,5 +351,5 @@ export function inboxFor(name, { sinceId = null, sinceMinutes = 0 } = {}) {
     if (m.channel === "__broadcast__") return true;
     return mention.test(m.content || "");
   });
-  return { messages, lastId: newestId ?? sinceId };
+  return { messages, lastId: newestId ?? sinceId, ...(resynced ? { resynced: true } : {}) };
 }

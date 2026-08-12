@@ -7,7 +7,7 @@
  *   src/persistence.mjs  — atomic file I/O (sessions, projects, spawn registry)
  *   src/notifier.mjs     — long-poll waiter/notification system
  *   src/tools.mjs        — all MCP tool definitions
- *   src/dashboard.mjs    — live web dashboard (GET /dashboard)
+ *   src/events.mjs       — bus d'événements système (détecteurs → triggers)
  */
 
 import express from "express";
@@ -23,25 +23,21 @@ import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMess
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE, getIdentityBinding, saveIdentityBinding, touchIdentityBinding } from "./src/persistence.mjs";
 import { loadMemories, flushMemories, restoreIdentity, remember, recall } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
-import { clearWaiters, notifyWaiters } from "./src/notifier.mjs";
+import { clearWaiters, notifyWaiters, registerWaiter } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
-import { handleDashboardPage, handleDashboardEvents, pushDashboardUpdate } from "./src/dashboard.mjs";
-import { handleCockpitPage, handleCockpitData, handleCockpitEvents, pushCockpitUpdate, handleAgentInspector, handleRoutineInspector, handleProjectView, handleDecisionsLog } from "./src/cockpit.mjs";
 import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
-// [DISABLED] import { handleGamePage } from "./src/game.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
-import { configureTriggers, loadTriggers, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook } from "./src/triggers.mjs";
+import { configureTriggers, loadTriggers, ensureWakeTrigger, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook, startCronCatchup } from "./src/triggers.mjs";
 import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
-import { configureDispatch, loadDispatchRecord, dispatch as dispatchIntent } from "./src/dispatch.mjs";
 import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
-import { generateMap } from "./src/map-generator.mjs";
 import { scanForChanges } from "./src/snapshot.mjs";
+import { emitEvent } from "./src/events.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
 import { auditProject, auditMany } from "./src/repo-audit.mjs";
@@ -80,6 +76,8 @@ configureTriggers({
   // routineFn is wired below after configureRoutines (forward via lazy import)
 });
 loadTriggers();    // Restore persisted triggers
+ensureWakeTrigger(); // Réveil des agents nommés hors ligne — un seul trigger pour tous
+startCronCatchup(); // Rejoue au réveil les crons manqués pendant le sommeil
 addMessageListener(notifyMessageForTriggers); // Wire mention/channel_match triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
 
@@ -153,45 +151,6 @@ configureTriggers({
   routineFn: (id, params, opts) => runRoutine(id, params, opts),
 });
 
-// Configure dispatch — reuse the spawn callback from routines, plus DM helper
-configureDispatch({
-  spawn: async (params) => {
-    const repo = params.repo_path || process.cwd();
-    const ticketId = randomUUID().slice(0, 8);
-    state.spawnTickets.set(ticketId, {
-      id: ticketId, name: params.name, mode: "headless", repo,
-      spawnedBy: params.spawnedBy, spawnerId: null,
-      status: "running", createdAt: new Date(),
-      completedAt: null, result: null,
-    });
-    spawnHeadless(repo, params.task || "register puis exécute la mission.", params).then(res => {
-      const t = state.spawnTickets.get(ticketId);
-      if (t) {
-        t.status = res.success ? "completed" : "failed";
-        t.completedAt = new Date();
-        t.result = { success: res.success, exitCode: res.exitCode };
-      }
-      notifyWaiters("__tickets__", null);
-    }).catch(() => {});
-    return { success: true, ticketId };
-  },
-  sendDM: ({ to, content }) => {
-    // DM via dedicated channel (dm:wikichat-dispatch ↔ to)
-    const target = getSessionByName(to);
-    if (!target) return null;
-    const m = pushMessage({
-      id: randomUUID(),
-      from: "wikichat-dispatch", fromName: "🎯 Dispatch",
-      channel: `dm:dispatch-${target.id.slice(0, 8)}`,
-      content, isDM: true,
-      timestamp: new Date(),
-    });
-    notifyWaiters(`dm:dispatch-${target.id.slice(0, 8)}`, null);
-    return m;
-  },
-});
-loadDispatchRecord();
-
 // Phase 6 PR6 — start dormant gate watcher + wire wake/sleep callbacks.
 // On wake: re-fire lifecycle triggers (covers the case where principal arrives
 // after server boot). On sleep: log and let watchdog/quota mechanisms do the
@@ -209,29 +168,6 @@ onSleep(() => {
 startPiloteCatchup();
 startDormantWatch();
 
-// Channel #dispatch : every user message becomes a dispatch automatically.
-// Low-latency hook: when a non-system message lands on #dispatch, fire dispatch.
-const _origPushMessage = state.__origPushMessage || null;
-import("./src/state.mjs").then(({ pushMessage: pm }) => {
-  // We can't easily monkey-patch the named export. Instead we observe via
-  // notifier: a setInterval scans #dispatch for unprocessed messages.
-});
-let _dispatchSeenIds = new Set();
-setInterval(() => {
-  if (!recentlyActive(5 * 60 * 1000)) return; // idle-gate
-  const msgs = state.messages.filter(m => m.channel === "dispatch" && m.from !== "wikichat-dispatch");
-  for (const m of msgs.slice(-20)) {
-    if (_dispatchSeenIds.has(m.id)) continue;
-    _dispatchSeenIds.add(m.id);
-    if (m.fromName?.includes("Système")) continue; // skip system events
-    dispatchIntent({ intent: m.content, spawnedBy: m.fromName || "channel-dispatch" }).catch(() => {});
-  }
-  // Bound the seen set
-  if (_dispatchSeenIds.size > 500) {
-    const arr = [..._dispatchSeenIds].slice(-200);
-    _dispatchSeenIds = new Set(arr);
-  }
-}, 5000);
 const teamResult = bootstrapAutonomousTeam();
 if (teamResult.provisioned > 0) {
   console.log(`[WikiChat] Autonomous team: ${teamResult.provisioned}/${teamResult.total} triggers provisioned`);
@@ -243,24 +179,8 @@ if (persistedCrons.length > 0) {
   console.log(`[WikiChat] ${persistedCrons.length} cron(s) persistés chargés`);
 }
 
-// Start watchdog (runs every 60s: stale detection, auto-respawn, cron health)
-const watchdogHandle = startWatchdog(
-  state,
-  loadSpawnRegistry,
-  async (entry) => {
-    if (entry.mode === "daemon" && entry.repo_path) {
-      console.log(`[Watchdog] Auto-respawning daemon: ${entry.name}`);
-      spawnDaemon(entry.repo_path, {
-        name: entry.name, role: entry.role, task: entry.task,
-        port: PORT, spawnedBy: "watchdog-respawn",
-      });
-      sysMsg("coordination", `🔄 Watchdog relance "${entry.name}" (daemon auto-respawn)`);
-    } else {
-      console.log(`[Watchdog] Would respawn: ${entry.name}`);
-    }
-  },
-  pushDashboardUpdate
-);
+// Watchdog (60s) : détection des sessions inactives + alerte crons en retard
+const watchdogHandle = startWatchdog(state);
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 function gracefulShutdown(signal) {
   console.log(`[WikiChat] ${signal} received — shutting down gracefully...`);
@@ -332,6 +252,7 @@ setInterval(async () => {
         console.log(`[WikiChat] Picked up ${items.length} queue item(s) from ${p.slug}`);
         for (const item of items) {
           sysMsg("coordination", `📥 [${p.slug}] ${item.agent}: ${item.type}${item.data?.message ? " — " + item.data.message : ""}`);
+          emitEvent("queue", `${p.slug} — ${item.agent} a déposé "${item.type}" hors ligne`, { project: p.slug, agent: item.agent });
         }
       }
 
@@ -341,10 +262,10 @@ setInterval(async () => {
         console.log(`[WikiChat] Recovered ${artifacts.length} local artifact(s) from ${p.slug}`);
         for (const art of artifacts) {
           sysMsg("coordination", `📄 [${p.slug}] ${art.agent} → "${art.title}" (récupéré localement)`);
+          emitEvent("artifact", `${p.slug} — ${art.agent} a produit "${art.title}"`, { project: p.slug, agent: art.agent });
         }
       }
 
-      if (items.length > 0 || artifacts.length > 0) pushDashboardUpdate();
     }
   } catch (e) {
     console.error("[WikiChat] Queue/artifact pickup error:", e.message);
@@ -372,6 +293,7 @@ setInterval(async () => {
         task.outcome = "TTL expiré — libéré automatiquement";
         task.completedAt = now;
         proj.blockers.push(`${id}: claim expiré (${task.claimedBy} injoignable ?)`);
+        emitEvent("task-expired", `${proj.name} — tâche ${id} libérée (${task.claimedBy} injoignable)`, { project: proj.name, agent: task.claimedBy });
         changed = true;
         sysMsg("coordination", `⏰ Tâche "${id}" libérée automatiquement (TTL expiré — ${task.claimedBy} injoignable)`);
       }
@@ -431,16 +353,17 @@ setInterval(async () => {
     const projects = (registry.projects || []).filter(p => p.status !== "missing" && p.path);
     const changed = await scanForChanges(projects);
     if (changed.length > 0) {
-      // Auto-create #insights channel if needed
-      if (!state.channels.has("insights")) {
-        state.channels.set("insights", { name: "insights", description: "Changements et insights détectés automatiquement", createdBy: "system", createdAt: new Date() });
-        saveChannels();
-      }
+      // Un événement par changement, pas un message par projet : les triggers
+      // matchent sur un type précis (`[event:commits`), pas sur un résumé
+      // multi-lignes où plusieurs types se mélangeraient.
       for (const { project, changes } of changed) {
-        const details = changes.changes
-          ? changes.changes.map(c => `  • ${c.detail}`).join("\n")
-          : changes.reason || "changement détecté";
-        sysMsg("insights", `📊 ${project.name}: ${changes.type === "new" ? "premier scan" : "changements détectés"}\n${details}`);
+        if (changes.type === "new") {
+          emitEvent("new-project", `${project.name} — premier snapshot`, { project: project.name });
+          continue;
+        }
+        for (const c of (changes.changes || [])) {
+          emitEvent(c.type, `${project.name} — ${c.detail}`, { project: project.name });
+        }
       }
       console.log(`[WikiChat] Change detection: ${changed.length} project(s) changed`);
     }
@@ -448,7 +371,6 @@ setInterval(async () => {
     console.error("[WikiChat] Change detection error:", e.message);
   }
 
-  pushDashboardUpdate();
   } finally { _cleanupInProgress = false; }
 }, 5 * 60 * 1000);
 
@@ -456,6 +378,22 @@ setInterval(async () => {
 
 const app = express();
 app.use(express.json());
+
+// Corps JSON malformé : répondre 400 avec un message lisible plutôt que de
+// laisser Express dérouler une pile sur stderr. Les appelants sont souvent des
+// agents qui construisent leur requête en shell — une variable non substituée
+// produit `{"since_id": ,}` et le client, qui ne voit qu'un 400 muet, réessaie
+// en boucle. Nommer l'erreur lui permet de la corriger.
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({
+      error: "invalid_json",
+      detail: err.message,
+      hint: "Corps JSON invalide — vérifie qu'aucune variable ne s'est substituée en vide.",
+    });
+  }
+  return next(err);
+});
 
 // Admin endpoint to override dormant gate manually
 app.post("/api/admin/dormant/override", (req, res) => {
@@ -466,40 +404,16 @@ app.get("/api/admin/dormant", (_req, res) => res.json(dormantStatus()));
 
 const transports = new Map(); // sessionId → { transport, server }
 
-// Dashboard & Game
-app.get("/dashboard", handleDashboardPage);
-app.get("/dashboard/events", handleDashboardEvents);
-
-// Phase 6 PR7 — Cockpit (5-panneaux)
-app.get("/cockpit", handleCockpitPage);
-app.get("/cockpit/data", handleCockpitData);
-app.get("/cockpit/events", handleCockpitEvents);
-app.get("/cockpit/agent/:name", handleAgentInspector);
-app.get("/cockpit/routine/:id", handleRoutineInspector);
-app.get("/cockpit/project/:slug", handleProjectView);
-app.get("/cockpit/decisions", handleDecisionsLog);
 app.post("/api/routines/run", express.json(), async (req, res) => {
   try {
     const { id, params } = req.body || {};
-    const result = await runRoutine(id, params || {}, { spawnedBy: "cockpit-ui" });
+    const result = await runRoutine(id, params || {}, { spawnedBy: "rest-api" });
     res.json(result);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-app.post("/api/dispatch", express.json(), async (req, res) => {
-  try {
-    const { intent, context, prefer } = req.body || {};
-    if (!intent) return res.status(400).json({ error: "intent required" });
-    const result = await dispatchIntent({ intent, context, prefer, spawnedBy: "cockpit-ui" });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-// [DISABLED] app.get("/game", handleGamePage);
-app.get("/style-guide.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "style-guide.html"))); });
-app.get("/concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "concepts.html"))); });
-app.get("/hybrid-concepts.html", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "hybrid-concepts.html"))); });
-app.get("/console", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(readFileSync(join(process.cwd(), "public", "console.html"))); });
+// Les maquettes de design (concepts, hybrid-concepts, style-guide, game) vivent
+// désormais dans docs/design/ : ce sont des documents de travail, pas des pages
+// servies en production.
 app.get("/pilote", handlePilotePage);
 app.get("/pilote/api/data", handlePiloteData);
 app.get("/pilote/api/tools", handlePiloteTools);
@@ -513,7 +427,6 @@ app.post("/pilote/api/agent/:id/continue", handlePiloteContinue);
 app.post("/pilote/api/agent/:id/decide", handlePiloteDecide);
 app.post("/pilote/api/agent/:id/apply", handlePiloteApply);
 app.delete("/pilote/api/agent/:id", handlePiloteDelete);
-app.get("/regie", (_req, res) => res.redirect("/console"));
 
 // MCP SSE endpoint
 app.get("/sse", async (req, res) => {
@@ -572,7 +485,6 @@ app.get("/sse", async (req, res) => {
     }
   }
   console.log(`[WikiChat] +session ${sid.slice(0, 8)}${session.name.startsWith("session-") ? "" : ` (${session.name})`} (total: ${state.sessions.size})`);
-  pushDashboardUpdate();
 
   res.on("close", () => {
     const session = state.sessions.get(sid);
@@ -584,7 +496,6 @@ app.get("/sse", async (req, res) => {
     clearWaiters(sid);
     if (wasRegistered) {
       sysMsg("system", `${name} s'est déconnecté.`);
-      pushDashboardUpdate();
     }
     console.log(`[WikiChat] -session ${name} (total: ${state.sessions.size})`);
   });
@@ -621,16 +532,6 @@ app.get("/api/projects", (_req, res) => {
   }
 });
 
-app.get("/api/map/generate", (_req, res) => {
-  try {
-    const registry = loadRegistry();
-    const map = generateMap(registry.projects || []);
-    res.json(map);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 app.get("/api/projects/scan", async (_req, res) => {
   res.json({ status: "scanning", message: "Scan started" });
   try {
@@ -644,7 +545,6 @@ app.get("/api/projects/scan", async (_req, res) => {
     for (const p of updated) {
       await injectProject(p).catch(() => {});
     }
-    pushDashboardUpdate();
     console.log(`[WikiChat] /api/projects/scan done — ${scanned.length} project(s) found.`);
   } catch (e) {
     console.error("[Scan] error:", e);
@@ -761,7 +661,6 @@ app.post("/api/action", async (req, res) => {
     spawnedBy: "wikichat-ui",
   }).then(result => {
     if (!result.success) console.warn(`[Action] ${jobName} failed (exit ${result.exitCode})`);
-    pushDashboardUpdate();
   }).catch(() => {});
 
   res.json({
@@ -770,7 +669,7 @@ app.post("/api/action", async (req, res) => {
     projectSlug,
     status: "running",
     artifactsIn: `${project.path}/.wikichat/artifacts/`,
-    note: "Résultat disponible dans 1-3min via artifacts ou dashboard",
+    note: "Résultat disponible dans 1-3min via artifacts",
   });
 });
 
@@ -813,7 +712,6 @@ app.post("/api/chat", (req, res) => {
 
   notifyWaiters(targetChannel);
   notifyWaiters("__all__");
-  pushDashboardUpdate();
 
   res.json({ ok: true, id: msg.id, channel: targetChannel });
 });
@@ -850,10 +748,34 @@ app.get("/api/messages", (req, res) => {
 // new lastId to store. Without since_id, pass since_minutes=N to catch recent
 // unread on first activation (so already-pending messages aren't missed); with
 // neither, an empty baseline + current lastId is returned (arm without replay).
-app.get("/api/inbox", (req, res) => {
+/**
+ * Une conversation est "chaude" quand cet agent a émis ou reçu un message dans
+ * la fenêtre récente. C'est le signal qui autorise le hook à guetter au lieu de
+ * rendre la main immédiatement : deux sessions qui s'organisent enchaînent
+ * alors leurs tours toutes seules, sans que l'humain relance l'une des deux.
+ * Hors conversation, la réponse reste instantanée — aucune latence ajoutée.
+ */
+const CONVERSATION_WINDOW_MS = 4 * 60 * 1000;
+function conversationIsHot(agent) {
+  const lc = agent.toLowerCase();
+  const cutoff = Date.now() - CONVERSATION_WINDOW_MS;
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const m = state.messages[i];
+    if (new Date(m.timestamp).getTime() < cutoff) break; // messages triés : inutile de remonter plus loin
+    if (m.from === "system") continue;
+    const mine = (m.fromName || "").toLowerCase() === lc;
+    const forMe = (m.content || "").toLowerCase().includes(`@${lc}`)
+      || (m.isDM && isAgentInDMChannel(agent, m.channel));
+    if (mine || forMe) return true;
+  }
+  return false;
+}
+
+app.get("/api/inbox", async (req, res) => {
   const agent = (req.query.agent || "").toString().trim();
   if (!agent) { res.status(400).json({ error: "agent required" }); return; }
   const sinceMin = parseFloat(req.query.since_minutes) || 0;
+  const waitMs = Math.min(Math.max(parseInt(req.query.wait_ms) || 0, 0), 60000);
 
   // Unified cursor : the server owns ONE cursor per identity, in the same
   // persistent identity memory used by the `poll` MCP tool. So push (this hook
@@ -865,7 +787,19 @@ app.get("/api/inbox", (req, res) => {
   const serverCursor = recall(agent, "__inbox_cursor");
   const sinceId = explicitSince || serverCursor || null;
 
-  const result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+  let result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+
+  // Boîte vide + conversation en cours → on guette au lieu de rendre la main.
+  // C'est ce qui permet à deux sessions interactives de s'enchaîner : sans
+  // cette attente, chacune ne reçoit qu'à la fin de ses propres tours, donc il
+  // faut relancer l'une des deux à la main pour que l'échange progresse.
+  let waited = false;
+  if (result.messages.length === 0 && waitMs > 0 && conversationIsHot(agent)) {
+    waited = true;
+    await registerWaiter(`hook:${agent}`, "__all__", waitMs);
+    clearWaiters(`hook:${agent}`);
+    result = inboxFor(agent, { sinceId, sinceMinutes: sinceMin });
+  }
 
   // Advance the shared cursor to the newest id we just accounted for (covers
   // resync/baseline too — arm at the head without replaying history).
@@ -880,6 +814,7 @@ app.get("/api/inbox", (req, res) => {
   res.json({
     agent, count: messages.length, messages,
     lastId: result.lastId ?? sinceId,
+    waited,
     ...(result.resynced ? { resynced: true } : {}),
     ...(result.baseline ? { baseline: true } : {}),
   });
@@ -910,11 +845,10 @@ app.post("/api/spawn/daemon", (req, res) => {
   const result = spawnDaemon(projectPath, {
     name, role, task, model,
     port: PORT,
-    spawnedBy: "cockpit",
+    spawnedBy: "rest-api",
   });
   if (result.success) {
     sysMsg("coordination", `🟢 Cockpit lance "${name}" en mode daemon dans ${projectPath.split(/[/\\]/).pop()}`);
-    pushDashboardUpdate();
   }
   res.json(result);
 });
@@ -968,7 +902,7 @@ app.post("/api/projects/:slug/inject", async (req, res) => {
 });
 
 // ── .wikichat/ folder API ──────────────────────────────────────────────────────
-// These routes let the dashboard/game read .wikichat/ content directly.
+// Ces routes exposent le contenu de .wikichat/ aux agents et aux clients REST.
 // Each project has its own .wikichat/ overlay; global knowledge lives in ~/.wikichat/
 
 const GLOBAL_WIKICHAT = join(homedir(), ".wikichat");
@@ -1082,220 +1016,6 @@ app.get("/api/knowledge/:topic/:file", async (req, res) => {
   }
 });
 
-// ── REGIE / IDEATION REST API ──────────────────────────────────────────────────
-// Drives the /console UI : ideas + project meta + audit + harmonize, all
-// without going through the MCP layer. Read-mostly + a few targeted POSTs.
-
-// Projects with régie meta (lifecycle, axes, purpose, publish, health) and live agents
-app.get("/api/regie/projects", (_req, res) => {
-  const out = [];
-  for (const p of state.projects.values()) {
-    const liveAgents = [...state.sessions.values()]
-      .filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase())
-      .map(s => ({ id: s.sessionId, name: s.name, role: s.role }));
-    const trackedAgents = p.agents ? Object.keys(p.agents).length : 0;
-    out.push({
-      name: p.name,
-      description: p.description,
-      purpose: p.purpose || null,
-      axes: p.axes || [],
-      lifecycle: p.lifecycle || null,
-      publish: p.publish || null,
-      relations: p.relations || [],
-      health: p.health || null,
-      tasks_active: [...(p.tasks?.values() || [])].filter(t => t.status === "active").length,
-      blockers: (p.blockers || []).length,
-      decisions: (p.decisions || []).length,
-      open_questions: (p.open_questions || []).length,
-      closed: !!p.closure,
-      tracked_agents: trackedAgents,
-      live_agents: liveAgents,
-      updatedAt: p.updatedAt,
-      repo: p.repo || null,
-    });
-  }
-  out.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-  res.json({ projects: out });
-});
-
-// PATCH a single project's meta — backs the "edit lifecycle / purpose / axes" UI inline edits
-app.patch("/api/regie/projects/:name", express.json(), (req, res) => {
-  const proj = state.projects.get(req.params.name);
-  if (!proj) return res.status(404).json({ error: "project not found" });
-  const { purpose, axes, lifecycle, publish, relations } = req.body || {};
-  if (purpose !== undefined) proj.purpose = purpose;
-  if (axes !== undefined) proj.axes = Array.isArray(axes) ? axes : [];
-  if (lifecycle !== undefined) {
-    const valid = ["ideation", "mvp", "active", "maintenance", "archived", "closed"];
-    if (!valid.includes(lifecycle)) return res.status(400).json({ error: "invalid lifecycle" });
-    proj.lifecycle = lifecycle;
-  }
-  if (publish !== undefined) {
-    proj.publish = proj.publish || {};
-    for (const k of Object.keys(publish)) {
-      if (publish[k] === null) { delete proj.publish[k]; continue; }
-      if (typeof publish[k] === "object" && !Array.isArray(publish[k])) {
-        proj.publish[k] = { ...(proj.publish[k] || {}), ...publish[k] };
-      } else {
-        proj.publish[k] = publish[k];
-      }
-    }
-  }
-  if (relations !== undefined) proj.relations = relations;
-  proj.updatedAt = new Date();
-  proj.updatedBy = "console";
-  saveProject(proj);
-  res.json({ ok: true, project: proj.name });
-});
-
-// Ideas — list with filters
-app.get("/api/regie/ideas", (req, res) => {
-  const { status, axis, project, since_days, limit, query } = req.query;
-  let out;
-  if (query) {
-    out = searchIdeas(String(query), { limit: parseInt(limit) || 20 });
-  } else {
-    out = listIdeas({
-      status: status || undefined,
-      axis: axis || undefined,
-      project: project || undefined,
-      since_days: since_days ? parseInt(since_days) : undefined,
-      limit: limit ? parseInt(limit) : 50,
-    });
-  }
-  res.json({ ideas: out, stats: ideaStats() });
-});
-
-// Ideas — create
-app.post("/api/regie/ideas", express.json(), (req, res) => {
-  const { title, body, axes, related_projects, source, created_by } = req.body || {};
-  if (!title) return res.status(400).json({ error: "title required" });
-  try {
-    const idea = createIdea({ title, body, axes, related_projects, source, created_by: created_by || "console" });
-    res.status(201).json({ idea });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Ideas — partial update
-app.patch("/api/regie/ideas/:id", express.json(), (req, res) => {
-  try {
-    const updated = updateIdea(req.params.id, req.body || {});
-    if (!updated) return res.status(404).json({ error: "idea not found" });
-    res.json({ idea: updated });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Ideas — hard delete
-app.delete("/api/regie/ideas/:id", (req, res) => {
-  const ok = deleteIdea(req.params.id);
-  if (!ok) return res.status(404).json({ error: "idea not found" });
-  res.json({ ok: true });
-});
-
-// Audit a single project (uses project.repo > registry path)
-app.post("/api/regie/audit", express.json(), async (req, res) => {
-  const { project, persist = true } = req.body || {};
-  if (!project) return res.status(400).json({ error: "project required" });
-  const proj = state.projects.get(project);
-  if (!proj) return res.status(404).json({ error: "project not found" });
-
-  // Resolve repo path : project.repo > registry path
-  let repoPath = proj.repo;
-  if (!repoPath) {
-    try {
-      const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
-      const lower = project.toLowerCase();
-      const slug = lower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-      const match = reg.projects?.find(p => (p.name && p.name.toLowerCase() === lower) || (p.slug && p.slug.toLowerCase() === slug));
-      if (match?.path) repoPath = match.path;
-    } catch { /* */ }
-  }
-  if (!repoPath) return res.status(400).json({ error: "no repo_path known for this project" });
-
-  const audit = await auditProject(repoPath);
-  if (persist && audit.exists) {
-    proj.health = audit;
-    proj.updatedAt = new Date();
-    saveProject(proj);
-  }
-  res.json({ audit });
-});
-
-// Audit all projects in registry (batch, concurrency-capped)
-app.post("/api/regie/audit-all", express.json(), async (req, res) => {
-  const { persist = false, concurrency = 4 } = req.body || {};
-  try {
-    const reg = JSON.parse(readFileSync(join(GLOBAL_WIKICHAT, "registry.json"), "utf8"));
-    const projects = (reg.projects || []).filter(p => p.path && p.name).map(p => ({ name: p.name, path: p.path }));
-    const startedAt = Date.now();
-    const audits = await auditMany(projects, concurrency);
-    if (persist) {
-      for (const [name, audit] of audits) {
-        const proj = state.projects.get(name);
-        if (proj && audit.exists) {
-          proj.health = audit;
-          proj.updatedAt = new Date();
-          saveProject(proj);
-        }
-      }
-    }
-    const out = [...audits.entries()].map(([name, audit]) => ({ name, ...audit }));
-    res.json({ audits: out, count: out.length, elapsed_ms: Date.now() - startedAt });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Run a Harmonizer pass — clusters ideas, optionally posts a summary on #ideation
-app.post("/api/regie/harmonize", express.json(), async (req, res) => {
-  const { threshold, min_cluster_size, post_to_channel = true } = req.body || {};
-  const report = await runHarmonizer({ threshold, min_cluster_size });
-  const summary = formatHarmonizerSummary(report);
-  if (post_to_channel && state.channels.has("ideation") && report.clusters.length > 0) {
-    pushMessage({
-      id: randomUUID(), from: "system", fromName: "Harmonizer (console)",
-      channel: "ideation",
-      content: summary,
-      timestamp: new Date(),
-    });
-    notifyWaiters("ideation", null);
-  }
-  res.json({ report, summary });
-});
-
-// Live sessions snapshot — used by the console left rail
-app.get("/api/regie/sessions", (_req, res) => {
-  const out = [];
-  for (const s of state.sessions.values()) {
-    out.push({
-      id: s.sessionId,
-      name: s.name,
-      role: s.role,
-      agent_type: s.agent_type,
-      availability: s.availability,
-      current_project: s.current_project,
-      lastSeen: s.lastSeen,
-      anonymous: !s.name || s.name.startsWith("session-"),
-    });
-  }
-  out.sort((a, b) => Number(a.anonymous) - Number(b.anonymous) || a.name.localeCompare(b.name));
-  res.json({ sessions: out });
-});
-
-// Channels snapshot for the rail
-app.get("/api/regie/channels", (_req, res) => {
-  const out = [...state.channels.values()].map(c => ({
-    name: c.name,
-    description: c.description,
-    isSystem: !!c.isSystem,
-    isDM: c.name.startsWith("dm:"),
-  }));
-  res.json({ channels: out });
-});
 
 // Global artifacts (wikichat project itself)
 app.get("/api/wikichat/artifacts", async (_req, res) => {
@@ -1337,7 +1057,7 @@ app.get("/", (req, res) => {
     channels: [...state.channels.keys()].filter(c => !c.startsWith("dm:")),
     totalMessages: state.messages.length,
     uptime: Math.floor(process.uptime()),
-    dashboard: `http://localhost:${PORT}/dashboard`,
+    pilote: `http://localhost:${PORT}/pilote`,
   });
 });
 
@@ -1408,7 +1128,7 @@ app.listen(PORT, HOST, () => {
 ║                                                  ║
 ║  🌐 http://localhost:${PORT}                       ║
 ║  📡 SSE:  http://localhost:${PORT}/sse               ║
-║  📊 Dashboard: http://localhost:${PORT}/dashboard    ║
+║  🛠️  Pilote: http://localhost:${PORT}/pilote          ║
 ║                                                  ║
 ╚══════════════════════════════════════════════════╝
   `);

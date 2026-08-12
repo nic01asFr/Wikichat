@@ -2,13 +2,13 @@
 
 > Document unique. Remplace les documents morcelés `cadrage-systeme.md`, `governance.md`, `teams/autonomous-team.md`. Mis à jour au fur et à mesure des décisions.
 >
-> Référence : Claude Anthropic (subagents, hooks, MCP), Claude Cowork (orchestrator + dispatch + routines), patterns service (systemd / launchd / Task Scheduler).
+> Référence : Claude Anthropic (subagents, hooks, MCP), Claude Cowork (orchestrator + routines), patterns service (systemd / launchd / Task Scheduler).
 
 ---
 
 ## 1. Une phrase
 
-WikiChat est un **service local de coordination multi-agents** : il tourne en permanence sur la machine, indexe les projets de l'utilisateur, héberge un cockpit visible, et permet à des agents Claude Code de communiquer, déléguer, mémoriser et exécuter des routines partagées.
+WikiChat est un **service local de coordination multi-agents** : il tourne en permanence sur la machine, indexe les projets de l'utilisateur, et permet à des agents Claude Code de communiquer, déléguer, mémoriser et exécuter des routines partagées.
 
 ---
 
@@ -36,36 +36,29 @@ WikiChat est un **service local de coordination multi-agents** : il tourne en pe
 | **Mairie** | service WikiChat | `~/repo/wikichat/` |
 | **Citoyen (projet connecté)** | repo de l'utilisateur enregistré | `~/repo/<projet>/` |
 | **Maire** | agent principal Claude Code dans le repo wikichat | session interactive |
-| **Résidents** | workers permanents (Sentinel, Librarian) | daemons spawnés par WikiChat |
+| **Résidents** | rôles de service (Sentinel, Librarian, Orchestrator) | lancés par un trigger quand un événement le justifie, puis sortent |
 | **Visiteurs** | agents projet & subagents ad-hoc | sessions de l'utilisateur ou spawns |
 
 ---
 
-## 3. Stack runtime — 4 couches composables
+## 3. Stack runtime — 3 couches composables
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ 4. ROUTINE      workflow nommé, paramétrable, idempotent │
+│ 3. ROUTINE      workflow nommé, paramétrable, idempotent │
 │                  multi-étape (séquentiel ou parallèle)   │
 └──────────────────────────────────────────────────────────┘
-              ▲                            ▲
-              │ appelée par                │ appelle
-┌─────────────┴──────────┐    ┌────────────┴─────────────┐
-│ 3a. TRIGGER            │    │ 3b. DISPATCH             │
-│ (cron, lifecycle,      │    │ (intent → choisir le      │
-│  file_watch, mention,  │    │  meilleur agent live ou   │
-│  threshold, webhook)   │    │  spawner ad-hoc)         │
-└────────────────────────┘    └───────────────────────────┘
-                                       ▲
-                          appelle si pas de match
-                                       │
-┌─────────────────────────────────────┬─┴────────────────┐
-│ 2. CAPABILITIES                     │                   │
-│   declare_capabilities + track      │                   │
-│   record persisté (ratio succès)    │                   │
-└─────────────────────────────────────┘                   │
-                                                          │
-┌──────────────────────────────────────────────────────────┐
+                            ▲
+                            │ appelée par
+┌───────────────────────────┴──────────────────────────────┐
+│ 2. TRIGGER                                               │
+│   cron, lifecycle, file_watch, mention, channel_match,   │
+│   webhook — un prédicat JS, aucun modèle appelé tant     │
+│   qu'il ne matche pas                                    │
+└──────────────────────────────────────────────────────────┘
+                            ▲
+                            │ appelle
+┌───────────────────────────┴──────────────────────────────┐
 │ 1. SPAWN — primitive de plus bas niveau                  │
 │   spawn_session(name, mode={headless,daemon,interactive}) │
 │   ticket retourné, claude_session_id mémorisé pour       │
@@ -73,7 +66,15 @@ WikiChat est un **service local de coordination multi-agents** : il tourne en pe
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Conséquence design** : Plus aucune action n'a d'logique métier inline. Trigger appelle une routine ; routine compose dispatch + spawn ; dispatch utilise capabilities + track record. Un seul endroit où la séquence est définie.
+**Conséquence design** : plus aucune action n'a de logique métier inline. Un trigger appelle une routine ; la routine compose des spawns. Un seul endroit où la séquence est définie.
+
+> **Une couche retirée.** Il existait un étage `DISPATCH` — router une intention
+> vers le « meilleur » agent selon des capacités déclarées et un historique de
+> succès. Utilisé une fois en quatre mois. La sélection par score supposait une
+> population d'agents stable et comparable ; en pratique l'appelant sait toujours
+> qui il veut, ou bien il spawne. Retiré avec `declare_capabilities` comme
+> alimentation de scoring — l'outil subsiste, mais comme simple déclaration
+> lisible par les humains.
 
 ---
 
@@ -97,7 +98,7 @@ WikiChat est un **service local de coordination multi-agents** : il tourne en pe
     │  • Lifecycle triggers fire (Sentinel + Librarian si projet enregistré ≥1)
     │  • Maire reçoit son briefing initial via wikichat://briefing
     │
-    │  ◀── activité normale (chat, dispatch, routines, spawns)
+    │  ◀── activité normale (chat, routines, spawns)
     │
     │  ◀── Maire se déconnecte (ferme VS Code)
     ▼
@@ -105,11 +106,14 @@ WikiChat est un **service local de coordination multi-agents** : il tourne en pe
     │  Le Maire peut revenir.
     ▼
 [mode DORMANT — sleep]
-    │  Résidents tués proprement (graceful shutdown). Triggers désarmés.
+    │  Triggers désarmés. Aucun agent en vie.
     │  Service tourne (pour répondre à un wake-up futur).
 ```
 
-**Pas de daemon idle qui tourne dans le vide.** Quand le Maire n'est pas là, l'équipe dort.
+**Pas de daemon idle qui tourne dans le vide.** Quand le Maire n'est pas là,
+personne ne veille. Les crons tombés pendant le sommeil sont rejoués une fois au
+réveil (`catchupMissedCrons`) : sans ce rattrapage, une routine programmée la
+nuit — précisément à l'heure où personne n'est là — ne s'exécutait jamais.
 
 ---
 
@@ -123,12 +127,19 @@ Chaque agent connecté dispose de :
 - `set_status(status)` — état lisible
 
 ### B. Communication
-- `send_message(channel, content, reply_to?)` — DM via `@nom`
-- `read_messages(channel, since)` / `poll_messages(timeout, types?)` — pull et long-poll
+- `send_message(channel, content, reply_to?, expects_reply?, status?, priority?)` — DM via `@nom` ; `priority` diffuse à toutes les sessions
+- `poll(timeout_seconds?)` — relève tout ce qui t'est adressé depuis ton dernier passage. Sans argument : instantané. Le curseur est tenu côté serveur sur ton nom, et c'est le même que celui du hook de fin de tour — donc ni doublon ni oubli, quel que soit le chemin par lequel un message arrive.
+- `read_messages(channel, since)` — lecture d'un canal à la demande, hors boîte
 - `share_artifact(channel, title, type, content)` — output structuré
 
+`poll_messages(timeout, types?)` existe encore pour compatibilité, mais boucler
+dessus est le mode coûteux qu'on a retiré : une veille permanente relit tout son
+historique à chaque tour. Un agent nommé hors ligne mentionné avec
+`expects_reply=true` est relancé par le trigger de réveil ; un agent en session
+reçoit son courrier par le hook, en fin de tour.
+
 ### C. Coordination
-- `declare_capabilities(skills, current_project, availability)` — alimente le dispatch
+- `declare_capabilities(skills, current_project, availability)` — déclaration lisible de ce qu'on sait faire
 - `claim_task(project, task)` / `release_task` — éviter les doublons
 
 ### D. Spawn (primitive bas niveau)
@@ -141,15 +152,12 @@ Chaque agent connecté dispose de :
 - `register_routine(id, params_schema, steps, description?)`
 - `list_routines()` / `run_routine(id, params)` / `delete_routine(id)`
 
-### F. Dispatch (routage par intent)
-- `dispatch(intent, context?, prefer?)` — renvoie `{dispatched_to, ticket_id, strategy}`
-- `explain_dispatch(ticket_id)` — score breakdown des candidats
-
-### G. Trigger (événement → routine)
-- `register_trigger(id, type, config, routine_id, params, cooldown_s?, max_per_day?)`
+### F. Trigger (événement → routine ou spawn)
+- `register_trigger(id, type, config, action_type, action_params, cooldown_s?, max_per_day?)`
 - `list_triggers()` / `fire_trigger(id, force?)` / `set_trigger_enabled(id, enabled)` / `delete_trigger(id)`
 
-**Total : 23 tools MCP**, structurés en 7 groupes lisibles.
+**Total : 51 tools MCP.** La liste complète, par catégorie, est dans le README —
+c'est elle qui fait foi, ce document décrit les primitives structurantes.
 
 ---
 
@@ -166,7 +174,6 @@ Chaque agent connecté dispose de :
 | `wikichat://routine/{id}` | définition + statistiques d'une routine | inspecter une workflow |
 | `wikichat://role/{name}` | role.md (sentinel, librarian, …) | bootstrap de prompt |
 | `wikichat://triggers` | triggers actifs + prochain fire | observabilité |
-| `wikichat://dispatch/log` | derniers 100 routages avec scoring | apprentissage / audit |
 
 VS Code + Claude Code lisent automatiquement ces resources → l'agent humain a tout le contexte sans appeler de tool.
 
@@ -176,8 +183,8 @@ VS Code + Claude Code lisent automatiquement ces resources → l'agent humain a 
 
 ### Hiérarchie
 1. **Maire** (env `WIKICHAT_PRINCIPAL_AGENT`, défaut `Claude-Code`) — peut tout
-2. **Résidents WikiChat** (workers spawnés par triggers du système) — peuvent dispatcher, spawner d'autres résidents et headless
-3. **Agents projet** (sessions interactive de l'utilisateur sur ses repos) — peuvent spawner headless, dispatcher
+2. **Résidents WikiChat** (rôles lancés par les triggers du système) — peuvent spawner d'autres agents headless
+3. **Agents projet** (sessions interactives de l'utilisateur sur ses repos) — peuvent spawner headless
 4. **Subagents headless** — exécutent leur mission, share_artifact, exit. Ne peuvent pas spawner.
 
 ### Règles
@@ -191,7 +198,7 @@ VS Code + Claude Code lisent automatiquement ces resources → l'agent humain a 
 - **Mode** : seul un résident peut spawner un daemon enfant. Tous les autres = headless uniquement.
 
 ### Audit
-Chaque action sensible (spawn, kill, register_trigger, dispatch, run_routine) loggée dans `~/.wikichat/audit.jsonl` (append-only, JSON par ligne, rotation hebdo).
+Chaque spawn est tracé dans le registre de spawn (`spawn_registry.json`) : qui l'a lancé, quand, avec quel prompt, et comment il s'est terminé.
 
 ---
 
@@ -227,7 +234,7 @@ Drill-down accessible via clic :
 
 ### Tray icon (optionnel, v4)
 - 🟢 healthy, 🟠 mention en attente, 🔴 budget critique
-- Click = ouvre cockpit
+- Click = ouvre /pilote
 - Notif OS sur escalation urgent
 
 ---
@@ -260,7 +267,6 @@ Et symétriquement `npm run uninstall-service`. Doc fallback `docs/setup/autosta
 ├── clusters/                        relations inter-projets par jour
 ├── knowledge/                       KB Compiled Truth (Librarian)
 │   └── <topic>.md
-├── dispatch/                        log routages
 └── projects/<slug>/                 cache par projet
 
 <repo wikichat>/                     (le service lui-même)
@@ -273,7 +279,6 @@ Et symétriquement `npm run uninstall-service`. Doc fallback `docs/setup/autosta
 │   ├── identity.mjs                 register + memories
 │   ├── triggers.mjs                 moteur d'événements
 │   ├── routines.mjs                 moteur de workflows
-│   ├── dispatch.mjs                 routeur par intent
 │   ├── sampler.mjs                  spawn (headless/daemon)
 │   ├── daemon-lifecycle.mjs         reconcile + shutdown
 │   ├── team-bootstrap.mjs           opt-in default team
@@ -283,7 +288,7 @@ Et symétriquement `npm run uninstall-service`. Doc fallback `docs/setup/autosta
 │   ├── setup/{INSTALL.md, autostart.md, global-claude-md.template.md}
 │   ├── roles/{sentinel,librarian,orchestrator,reviewer,subagent}.md
 │   └── teams/autonomous-team.md
-└── public/                          dashboard SSE 5-panneaux
+└── public/                          pilote.html (agents planifiés + approbations)
 
 <projet connecté>/                   (citoyen — non modifié sauf .wikichat/)
 └── .wikichat/                       overlay injectée
@@ -305,33 +310,30 @@ Et symétriquement `npm run uninstall-service`. Doc fallback `docs/setup/autosta
 
 ---
 
-## 12. Plan d'implémentation Phase 6 — final
+## 12. Ce qui a été construit puis retiré
 
-| # | PR | Effort | Dépendances |
-|---|---|---|---|
-| 1 | install-service multi-OS | 3h | — |
-| 2 | quotas par owner + spawn_depth + restriction daemon récursif | 2h | — |
-| 3 | **Routine** primitive (`src/routines.mjs` + 4 tools) | 4h | — |
-| 4 | **Dispatch** primitive + capability tracking (`src/dispatch.mjs` + 2 tools) | 3h | (3) |
-| 5 | Refactor team-bootstrap → triggers appelant routines | 1h | (3) |
-| 6 | Mode dormant (gate principal + registry non vide) | 2h | (5) |
-| 7 | Cockpit refonte 5-panneaux + Routines/Dispatch/Triggers panels | 5h | (3,4) |
-| 8 | Decisions log + Agent inspector + Project view | 4h | — |
-| 9 | Triggers étendus (file_watch + git_hook + mention + webhook) | 4h | — |
-| 10 | Background routines (Librarian Compiled Truth, project-health-pulse) | 5h | (3) |
-| 11 | Audit log + permissions par agent_type | 2h | — |
-| 12 | Tray icon + OS notifications (optionnel v4) | 3h | (7) |
+Ce projet a produit plusieurs sous-systèmes qui fonctionnaient et n'ont pas
+survécu à la mesure de leur usage. Les garder ici évite de les réinventer.
 
-**Total Phase 6 ≈ 38h en 12 PR.** Chaque PR shippable indépendamment, branche dédiée, merge fast-forward dans main.
+| Retiré | Ce que ça faisait | Pourquoi |
+|---|---|---|
+| **Dispatch** | routait une intention vers le « meilleur » agent, par capacités déclarées et historique de succès | 1 usage en 4 mois. L'appelant sait toujours qui il veut, ou il spawne |
+| **Daemons résidents** | Sentinel, Librarian, Orchestrator en boucle de poll permanente | 28,4 M tokens d'entrée en 506 tours pour 3 actes utiles en 3 mois. Une veille relit tout son historique à chaque tour |
+| **Six interfaces web** | dashboard, cockpit, console, régie… | zéro ouverture. L'état se lit par `GET /api/health` ou depuis une session |
+| **Auto-respawn du watchdog** | relançait un agent détecté mort | jamais déclenché en 54 entrées de registre |
 
-Ordre dicté par les dépendances : Routine → Dispatch → tout le reste s'appuie dessus.
+Le fil commun : un mécanisme écrit, jamais confronté à son usage réel. C'est
+aussi ce qu'a révélé la campagne de tests — la porte dormante condamnait toute
+installation neuve, le hook de boîte n'était installé par rien, et un trigger
+qui « remontait » n'atteignait aucune boîte. Trois défauts invisibles sur la
+machine de développement.
 
 ---
 
 ## 13. Hors scope (différé)
 
 - Multi-utilisateur, auth tokens, network exposure
-- UI mobile / web hostée (cockpit reste local seulement)
+- UI mobile / web hostée (/pilote reste local seulement)
 - Sync inter-machines (chaque machine a son WikiChat indépendant)
 - Webhooks externes (Slack, email) — possibles via routine custom mais pas built-in
 - Modèles autres qu'Anthropic (Claude only)

@@ -15,6 +15,13 @@ const EXCLUDE_DIRS = new Set([
   "target", ".cache", "coverage", ".next", ".nuxt", "out", "tmp", ".tmp",
   "AppData", "Windows", "Program Files", "Program Files (x86)", "$Recycle.Bin",
   "System Volume Information",
+  // Équivalents macOS / Linux : mêmes arbres immenses et sans projets.
+  "Library", "Applications", "snap", "go/pkg",
+  // Le répertoire de configuration de Claude Code n'est pas un espace de
+  // projets : ses plugins officiels embarquent des CLAUDE.md et des .mcp.json,
+  // que le scanner prenait pour des repos. 30 des 174 entrées du registry
+  // venaient de là — plus un overlay .wikichat/ écrit dans les transcripts.
+  ".claude",
 ]);
 
 const MARKERS = ["CLAUDE.md", "claude.md", ".claude", "claude.json", ".mcp.json"];

@@ -31,10 +31,28 @@ import path from "path";
 import os from "os";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { WIKICHAT_HOME } from "./registry.mjs";
-import { LOCAL_FIRST_INSTRUCTIONS, POLL_INSTRUCTIONS, CRON_INSTRUCTIONS, SPAWN_INSTRUCTIONS, WAIT_INSTRUCTIONS } from "./resilience.mjs";
+import { AGENT_INSTRUCTIONS } from "./resilience.mjs";
 
 // Files WikiChat is ALLOWED to write in <project>/.wikichat/
 const WIKICHAT_OWNED_FILES = new Set(["context.json", "instructions.md"]);
+
+// Version des instructions générées. La règle « écrit une fois, jamais écrasé »
+// protégeait le fichier de toute correction : 40 projets se sont retrouvés avec
+// des instructions citant six outils inexistants (resume_session, ping,
+// register_cron, respawn_session, update_project_state, declare_storage_path).
+// On garde la protection pour ce que l'utilisateur a écrit, et on rafraîchit ce
+// que WikiChat a généré : un fichier portant notre en-tête mais une version
+// antérieure est régénéré ; un fichier sans en-tête n'est jamais touché.
+const INSTRUCTIONS_VERSION = 2;
+const INSTRUCTIONS_VERSION_TAG = `<!-- wikichat-instructions v${INSTRUCTIONS_VERSION} — régénéré automatiquement, ne pas éditer -->`;
+
+/** true si le fichier est une version obsolète générée par WikiChat. */
+function instructionsNeedRefresh(filePath) {
+  let content;
+  try { content = fs.readFileSync(filePath, "utf8"); } catch { return false; }
+  if (content.includes(INSTRUCTIONS_VERSION_TAG)) return false;          // déjà à jour
+  return /^(<!-- wikichat-instructions|# WikiChat — Instructions)/.test(content.trimStart());
+}
 
 /**
  * Safety guard: verify a target path is strictly inside an allowed base directory.
@@ -109,10 +127,12 @@ export async function injectProject(project, serverUrl = "http://localhost:3777"
 
   // instructions.md — written ONCE, never overwritten
   const instructionsPath = path.join(projectWikichatDir, "instructions.md");
-  if (!fs.existsSync(instructionsPath)) {
+  const absent = !fs.existsSync(instructionsPath);
+  if (absent || instructionsNeedRefresh(instructionsPath)) {
     try {
       assertSafeWrite(instructionsPath, projectWikichatDir);
       fs.writeFileSync(instructionsPath, generateInstructions(project, serverUrl), "utf8");
+      if (!absent) console.log(`[Injector] instructions.md régénéré (v${INSTRUCTIONS_VERSION}) : ${project.slug}`);
     } catch (err) {
       console.warn(`[Injector] Cannot write instructions.md in ${project.path}:`, err.message);
     }
@@ -162,11 +182,13 @@ export async function injectProject(project, serverUrl = "http://localhost:3777"
  */
 function generateInstructions(project, serverUrl) {
   const centralPath = path.join(WIKICHAT_HOME, "projects", project.slug);
-  return `# WikiChat — Instructions pour ${project.name}
+  return `${INSTRUCTIONS_VERSION_TAG}
+# WikiChat — Instructions pour ${project.name}
 
 ## Rôle du service WikiChat
-WikiChat est l'infrastructure de coordination multi-agents pour tes projets Claude.
-Le service gère la découverte de projets, la coordination des agents, et l'interface de visualisation.
+WikiChat donne une mémoire à cette machine : il relie les sessions Claude Code
+ouvertes séparément, capitalise ce que les projets apprennent, et déclenche des
+agents quand un événement le justifie.
 
 ## Mode connecté (MCP disponible)
 Serveur MCP: ${serverUrl}/sse
@@ -175,7 +197,8 @@ Pour participer:
 1. Utilise \`register\` avec ton nom et rôle
 2. Utilise \`declare_project\` pour mettre à jour l'état de ce projet
 3. Utilise \`claim_task\` / \`release_task\` pour gérer les tâches
-4. Utilise \`declare_storage_path\` avec le chemin: ${centralPath}
+4. Ton état de projet est en \`.wikichat/project-state.json\` ; le store central
+   du projet est en ${centralPath}
 
 ## Mode offline (MCP non disponible)
 Écris dans \`.wikichat/queue/<timestamp>-<ton-nom>.json\`:
@@ -197,11 +220,11 @@ Le service pickup les fichiers queue au prochain cycle (toutes les 2 minutes).
 
 ## Ce que le service attend de toi
 - Décris tes tâches en cours avec \`claim_task\`
-- Partage les livrables avec \`share_artifact\`
-- Déclare tes blockers avec \`update_project_state\`
+- Dépose tes livrables dans \`.wikichat/artifacts/\` — le service les diffuse
+- Consigne décisions et blocages avec \`add_project_note\`
 - Maintiens ton statut avec \`set_status\`
 
-` + LOCAL_FIRST_INSTRUCTIONS + "\n\n" + POLL_INSTRUCTIONS + "\n\n" + CRON_INSTRUCTIONS + "\n\n" + SPAWN_INSTRUCTIONS + "\n\n" + WAIT_INSTRUCTIONS + "\n";
+` + AGENT_INSTRUCTIONS + "\n";
 }
 
 /**

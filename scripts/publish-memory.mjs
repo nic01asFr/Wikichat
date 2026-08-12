@@ -51,6 +51,11 @@ const MANAGED = [
   "knowledge-index.json",
   "manifest.json",
   "knowledge",
+  // Index légers + granulaires (lecture mobile ciblée via compositions GitHub).
+  "projects-index.json",
+  "ideas-index.json",
+  "projects",
+  "ideas",
 ];
 
 // --------------------------------------------------------------------------

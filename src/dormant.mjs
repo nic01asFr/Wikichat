@@ -68,9 +68,18 @@ export function isActive() {
   if (DORMANT_DISABLED) return true;
   if (_manualOverride !== null) return _manualOverride;
   const principalGated = PRINCIPAL_GATE_MODE !== "off";
+  const principalLive = principalIsLive();
   const inGrace = !!_principalLastSeen && (Date.now() - _principalLastSeen) < GRACE_PERIOD_MS;
-  const principalOk = !principalGated || principalIsLive() || inGrace;
-  const registryOk = !REGISTRY_GATE || registryHasProjects();
+  const principalOk = !principalGated || principalLive || inGrace;
+  // Le registre sert à répondre « y a-t-il de quoi travailler ? ». Un agent
+  // nommé connecté y répond à lui seul.
+  //
+  // Exiger EN PLUS une entrée de registre condamnait toute installation neuve :
+  // le registre y est vide par construction, la porte ne s'ouvrait donc jamais,
+  // aucun trigger ne tirait — et rien ne le signalait. Le service se déclarait
+  // « healthy », les triggers « actifs », et il ne se passait rien. Constaté sur
+  // une installation propre, jamais sur une machine déjà rodée.
+  const registryOk = !REGISTRY_GATE || registryHasProjects() || principalLive;
   return Boolean(principalOk && registryOk);
 }
 

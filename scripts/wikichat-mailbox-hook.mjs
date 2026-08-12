@@ -66,12 +66,69 @@ function detectAgentName(input) {
   return found;
 }
 
+/**
+ * État du lien en cours, par session Claude Code.
+ *
+ * Le protocole talkie-walkie est déjà porté par chaque message — `expects_reply`
+ * dit si une réponse est attendue, `status` (over / standby / done) dit où en est
+ * l'émetteur, `eta_seconds` annonce combien de temps il part travailler. Ces
+ * champs étaient stockés et affichés, mais aucune décision de relance ne les
+ * lisait : le hook rendait la main sur un délai fixe, quoi qu'annonce l'autre.
+ *
+ * Ce sont eux qui pilotent maintenant le lien :
+ *   - une réponse attendue le maintient ouvert
+ *   - `done` le referme, sans consommer de relance
+ *   - un `standby` avec ETA fait patienter jusqu'à l'échéance annoncée, au lieu
+ *     de raccrocher au bout de 45 s pendant que l'autre travaille encore
+ *
+ * Le compteur reste, mais comme filet : un Stop hook qui bloque toujours produit
+ * un agent qui ne s'arrête jamais. Il est remis à zéro dès qu'un tour humain se
+ * termine.
+ */
+const MAX_RELANCES = parseInt(process.env.WIKICHAT_HOOK_MAX_RELAYS || "12");
+/** Plafond absolu d'attente sur un ETA annoncé, quelle que soit l'annonce. */
+const MAX_ATTENTE_MS = parseInt(process.env.WIKICHAT_HOOK_MAX_WAIT_MS || "300000");
+
+function fichierLien(sid) {
+  return sid ? path.join(HOOK_DIR, `sid-${String(sid).replace(/[^\w.-]/g, "_")}.link`) : null;
+}
+function lireLien(sid) {
+  const f = fichierLien(sid);
+  if (!f) return { relais: 0, attendreJusqua: 0 };
+  try { return { relais: 0, attendreJusqua: 0, ...JSON.parse(fs.readFileSync(f, "utf8")) }; }
+  catch { return { relais: 0, attendreJusqua: 0 }; }
+}
+function ecrireLien(sid, etat) {
+  const f = fichierLien(sid);
+  if (!f) return;
+  try { fs.mkdirSync(HOOK_DIR, { recursive: true }); fs.writeFileSync(f, JSON.stringify(etat)); } catch { /* */ }
+}
+
+/** Ce lot de messages referme-t-il l'échange ? (tout est done, rien n'attend) */
+function echangeClos(messages) {
+  return messages.every(m => m.status === "done" && !m.expects_reply);
+}
+
+/** Échéance annoncée par un interlocuteur qui part travailler, en ms absolus. */
+function echeanceAnnoncee(messages) {
+  let max = 0;
+  for (const m of messages) {
+    if (!m.eta_seconds) continue;
+    if (m.status && m.status !== "standby") continue; // un ETA sur "over" n'engage pas d'attente
+    max = Math.max(max, Date.now() + Math.min(m.eta_seconds * 1000, MAX_ATTENTE_MS));
+  }
+  return max;
+}
+
 async function main() {
   let input = {};
   try { input = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch { /* no stdin */ }
 
-  // Already continuing because of a previous block → let it stop now.
-  if (input.stop_hook_active) return done();
+  // Ce tour découle-t-il d'un blocage précédent, ou d'une main humaine ?
+  const enChaine = !!input.stop_hook_active;
+  const lien = enChaine ? lireLien(input.session_id) : { relais: 0, attendreJusqua: 0 };
+  if (!enChaine) ecrireLien(input.session_id, lien); // l'humain a repris la main : on repart de zéro
+  if (enChaine && lien.relais >= MAX_RELANCES) return done();
 
   const agent = detectAgentName(input);
   if (!agent) return done(); // identity unknown: nothing to relieve
@@ -104,23 +161,58 @@ async function main() {
   // cursor — it just asks "anything new for me?" and the server dedupes via the
   // shared cursor. since_minutes=10 only matters on first activation (when the
   // server has no cursor yet) to catch already-waiting mail.
-  const q = `agent=${encodeURIComponent(agent)}&since_minutes=10`;
-  const url = `${base}/api/inbox?${q}`;
+  // wait_ms : le serveur ne guette QUE si cet agent est déjà dans un échange
+  // récent — sinon il répond immédiatement. Sans cette fenêtre, une session ne
+  // reçoit qu'à la fin de ses propres tours : deux sessions interactives qui
+  // s'organisent doivent alors être relancées à la main pour avancer d'un tour.
+  // Avec elle, celle qui vient de parler attend la réponse et enchaîne seule.
+  const WAIT_MS = parseInt(process.env.WIKICHAT_HOOK_WAIT_MS || "45000");
 
-  let data;
-  try {
+  async function releverUneFois(waitMs) {
+    const q = `agent=${encodeURIComponent(agent)}&since_minutes=10&wait_ms=${waitMs}`;
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 3000); // never hang the turn on a down server
-    const resp = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!resp.ok) return done();
-    data = await resp.json();
-  } catch { return done(); } // server down / unreachable → stay silent
+    // Marge au-delà de l'attente serveur : on ne coupe jamais une écoute en cours,
+    // mais on ne pend jamais non plus si le serveur est tombé.
+    const t = setTimeout(() => ctrl.abort(), waitMs + 5000);
+    try {
+      const resp = await fetch(`${base}/api/inbox?${q}`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch { clearTimeout(t); return null; }
+  }
 
-  if (!data.messages || data.messages.length === 0) return done();
+  let data = await releverUneFois(WAIT_MS);
+  if (!data) return done(); // serveur injoignable → on se tait
+
+  // Un interlocuteur a annoncé qu'il partait travailler : on tient le lien
+  // jusqu'à l'échéance qu'il a donnée, par tranches, au lieu de raccrocher au
+  // bout de 45 s. C'est ce qui casse un dialogue en pratique — l'autre met deux
+  // minutes à répondre, et il n'y a plus personne au bout du fil.
+  while ((!data.messages || data.messages.length === 0) && lien.attendreJusqua > Date.now()) {
+    const tranche = Math.max(Math.min(lien.attendreJusqua - Date.now(), WAIT_MS), 1000);
+    const debut = Date.now();
+    const suite = await releverUneFois(tranche);
+    if (!suite) break;
+    data = suite;
+    // Le serveur ne guette que si la conversation est encore chaude de son point
+    // de vue ; sinon il répond aussitôt. Sans ce plancher, on le martèlerait en
+    // boucle serrée pendant toute la durée de l'ETA.
+    const ecoule = Date.now() - debut;
+    if ((!data.messages || data.messages.length === 0) && ecoule < tranche) {
+      await new Promise(r => setTimeout(r, Math.min(tranche - ecoule, lien.attendreJusqua - Date.now())));
+    }
+  }
+
+  if (!data.messages || data.messages.length === 0) {
+    // Plus rien à attendre : on referme l'état du lien pour ne pas faire patienter
+    // le prochain tour sur une échéance périmée.
+    if (lien.attendreJusqua) ecrireLien(input.session_id, { ...lien, attendreJusqua: 0 });
+    return done();
+  }
 
   const lines = data.messages.map(m => {
-    const where = m.isDM ? "DM" : `#${m.channel}`;
+    const where = m.isDM ? "DM" : (m.channel === "__broadcast__" ? "📢 diffusion" : `#${m.channel}`);
     const flags = [
       m.expects_reply ? "réponse attendue" : null,
       m.status ? m.status : null,
@@ -128,10 +220,28 @@ async function main() {
     return `  • [${where}] ${m.from}: ${m.content}${flags ? ` (${flags})` : ""}`;
   }).join("\n");
 
+  // Le protocole pilote la suite du lien. Un échange refermé (`done`, rien
+  // d'attendu) ne consomme pas de relance : il n'appelle pas de suite, donc il
+  // ne doit pas rapprocher du plafond les échanges qui, eux, en appellent une.
+  const clos = echangeClos(data.messages);
+  ecrireLien(input.session_id, {
+    relais: clos ? lien.relais : lien.relais + 1,
+    attendreJusqua: clos ? 0 : echeanceAnnoncee(data.messages),
+  });
+
+  const restantes = MAX_RELANCES - lien.relais - 1;
+  const suite = clos
+    ? `\n\n(Échange clos de leur côté — si tu n'as rien à ajouter, tu peux t'arrêter.)`
+    : restantes <= 0
+      ? `\n\n⚠️ Dernier échange automatique de ce tour : après ta réponse, la discussion s'arrête jusqu'à la prochaine sollicitation. Si le sujet n'est pas clos, dis-le explicitement dans ta réponse.`
+      : `\n\n(${restantes} relance(s) automatique(s) encore possible(s) sans intervention humaine. ` +
+        `Si tu pars travailler, annonce-le : status="standby", eta_seconds=<durée> — ton interlocuteur tiendra le lien ouvert jusque-là au lieu de raccrocher.)`;
+
   const reason =
     `📬 ${data.messages.length} message(s) WikiChat t'attend(ent) (${agent}) :\n${lines}\n\n` +
     `On cherche à te contacter. Lis-les, et si une réponse est attendue, réponds via ` +
-    `mcp__wikichat__send_message(channel="@<expéditeur>", ...). Si rien ne requiert ta réponse, tu peux t'arrêter.`;
+    `mcp__wikichat__send_message(channel="@<expéditeur>", ...). Si rien ne requiert ta réponse, tu peux t'arrêter.` +
+    suite;
 
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
   done();

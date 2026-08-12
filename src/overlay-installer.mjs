@@ -32,6 +32,8 @@ const TEMPLATE_DIR = path.resolve(__dirname, "..", "templates", ".claude-overlay
 const USER_CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const USER_CLAUDE_MD = path.join(USER_CLAUDE_DIR, "CLAUDE.md");
 const MARKER_FILE = path.join(USER_CLAUDE_DIR, ".wikichat-overlay-installed");
+/** Chemin absolu du guetteur de boîte, cité dans les instructions distribuées. */
+const GUETTEUR = path.resolve(__dirname, "..", "scripts", "wikichat-attendre-courrier.mjs").split(path.sep).join("/");
 
 const BLOCK_START = "<!-- wikichat:auto-injected:start -->";
 const BLOCK_END = "<!-- wikichat:auto-injected:end -->";
@@ -54,10 +56,26 @@ C'est un coordinateur local multi-agents qui te donne accès à :
 3. À la clôture du projet : \`mcp__wikichat__close_project(project=<name>, auto=true)\` — produit une closure structurée + capitalisation auto dans la KB transverse.
 4. Reprendre une équipe sur un projet : \`mcp__wikichat__list_project_agents(project=...)\` pour voir qui a contribué, puis \`mcp__wikichat__respawn_project_agents(project=..., mode="resume_only", max=3)\` pour ré-éveiller les resumables.
 
-**Protocole over/standby** — quand tu envoies un message, précise l'intention pour éviter les polls inutiles :
-- status="over" + expects_reply=true → tu as fini, tu attends une réponse
-- status="standby" + eta_seconds=300 → tu travailles 5min, ne pas attendre
-- status="done" → tâche terminée, aucune réponse attendue
+**Protocole over/standby** — ces champs ne sont pas décoratifs : ils pilotent la
+tenue du lien entre deux agents. Le hook de fin de tour les lit et décide s'il te
+relance ou te laisse t'arrêter.
+- status="over" + expects_reply=true → tu as fini, tu attends une réponse ; le lien reste ouvert
+- status="standby" + eta_seconds=300 → tu pars travailler 5 min ; ton interlocuteur t'attend jusque-là au lieu de raccrocher
+- status="done" → tâche terminée, aucune réponse attendue ; le lien se referme
+
+Annonce toujours un \`eta_seconds\` quand tu pars sur une tâche longue : sans lui,
+l'autre rend la main au bout de 45 s et l'échange se perd.
+
+**Être prévenu en cours de session, sans attendre la fin de ton tour** — pose un
+guetteur en tâche de fond et continue ton travail :
+
+    Bash(command='node "${GUETTEUR}"', run_in_background=true)
+
+Il dort sur une connexion HTTP jusqu'à ce qu'un message te soit adressé, puis
+sort en te le remettant. L'attente ne coûte **aucun token** : c'est un processus
+Node, pas un agent — rien n'est envoyé au modèle tant que rien n'arrive. À poser
+quand tu attends une réponse et que tu as autre chose à faire entre-temps ;
+inutile pour un agent qui exécute une tâche puis sort.
 
 **Lire les messages sans poll MCP bloquant** (bash, 0 tokens) :
 curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5"
@@ -79,6 +97,59 @@ ${BLOCK_END}
 `.trimStart();
 
 // ── USER-LEVEL : skill + commands + ~/.claude/CLAUDE.md ─────────────────────
+
+/**
+ * Installe le Stop hook « boîte mail » dans ~/.claude/settings.json.
+ *
+ * C'est la pièce qui fait qu'un agent en session reçoit ce qu'on lui adresse
+ * sans avoir à poller : à la fin de chaque tour, le hook demande au service s'il
+ * a du courrier et, le cas échéant, empêche l'arrêt le temps qu'il réponde.
+ *
+ * Elle n'était installée nulle part — elle avait été branchée à la main sur la
+ * machine de développement, si bien que toute la coordination reposait sur un
+ * réglage qu'une installation neuve n'aurait jamais eu.
+ *
+ * Idempotent, et non destructif : les autres hooks Stop déjà présents sont
+ * conservés, et une entrée WikiChat existante est mise à jour plutôt que
+ * dupliquée (le chemin du dépôt peut avoir changé).
+ */
+function ensureMailboxHook(log = console.log) {
+  const settingsPath = path.join(USER_CLAUDE_DIR, "settings.json");
+  const hookPath = path.resolve(__dirname, "..", "scripts", "wikichat-mailbox-hook.mjs");
+  if (!fs.existsSync(hookPath)) return "no-hook-script";
+  const command = `node "${hookPath.replace(/\\/g, "/")}"`;
+
+  try {
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf8") || "{}");
+    }
+    settings.hooks = settings.hooks || {};
+    const stops = Array.isArray(settings.hooks.Stop) ? settings.hooks.Stop : [];
+
+    const estLeNotre = h => typeof h?.command === "string" && h.command.includes("wikichat-mailbox-hook");
+    for (const groupe of stops) {
+      const entree = (groupe.hooks || []).find(estLeNotre);
+      if (entree) {
+        if (entree.command === command) return "already-present";
+        entree.command = command; // dépôt déplacé : on recale le chemin
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+        log("[overlay] Stop hook boîte mail : chemin mis à jour");
+        return "updated";
+      }
+    }
+
+    stops.push({ matcher: "", hooks: [{ type: "command", command }] });
+    settings.hooks.Stop = stops;
+    fs.mkdirSync(USER_CLAUDE_DIR, { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    log("[overlay] Stop hook boîte mail installé — les agents reçoivent leur courrier en fin de tour");
+    return "installed";
+  } catch (err) {
+    log(`[overlay] Stop hook non installé : ${err.message}`);
+    return "failed";
+  }
+}
 
 export function ensureUserOverlay({ force = false, log = console.log } = {}) {
   if (process.env.WIKICHAT_NO_OVERLAY_INSTALL === "1") return { skipped: "disabled" };
@@ -116,7 +187,20 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
       existing = fs.readFileSync(USER_CLAUDE_MD, "utf8");
     }
     if (existing.includes(BLOCK_START)) {
-      result.claudeMdAction = "already-present";
+      // Le bloc est là — mais il peut dater. Il était posé une fois puis jamais
+      // relu : une consigne corrigée ici ne rejoignait jamais les machines déjà
+      // installées. On remplace ce qui est entre les marqueurs, et rien d'autre :
+      // ce que l'utilisateur a écrit autour lui appartient.
+      const debut = existing.indexOf(BLOCK_START);
+      const fin = existing.indexOf(BLOCK_END);
+      const actuel = fin > debut ? existing.slice(debut, fin + BLOCK_END.length) : null;
+      const voulu = USER_CLAUDE_MD_BLOCK.trim();
+      if (actuel && actuel.trim() !== voulu) {
+        fs.writeFileSync(USER_CLAUDE_MD, existing.slice(0, debut) + voulu + existing.slice(fin + BLOCK_END.length));
+        result.claudeMdAction = "refreshed";
+      } else {
+        result.claudeMdAction = "already-present";
+      }
     } else {
       fs.mkdirSync(USER_CLAUDE_DIR, { recursive: true });
       const newContent = existing
@@ -129,7 +213,10 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
     log(`[overlay] CLAUDE.md update failed: ${err.message}`);
   }
 
-  // 3. Marker file
+  // 3. Stop hook "boîte mail" dans ~/.claude/settings.json
+  result.hookAction = ensureMailboxHook(log);
+
+  // 4. Marker file
   try { fs.writeFileSync(MARKER_FILE, new Date().toISOString()); } catch { /* */ }
 
   if (result.filesAdded > 0 || result.claudeMdAction === "created" || result.claudeMdAction === "appended") {

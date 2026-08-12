@@ -13,7 +13,7 @@ import os from "os";
 import { exec } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { listTriggers, getTrigger, registerTrigger, setEnabled, deleteTrigger, fireTrigger } from "./triggers.mjs";
+import { listTriggers, getTrigger, registerTrigger, setEnabled, deleteTrigger, fireTrigger, cronNext } from "./triggers.mjs";
 import { loadSpawnRegistry } from "./persistence.mjs";
 import { isActive, onWake } from "./dormant.mjs";
 import { spawnHeadless } from "./sampler.mjs";
@@ -135,43 +135,7 @@ export async function handlePiloteTools(_req, res) {
   }
 }
 
-// ── Cron helpers (next-run best-effort, tz = heure locale du serveur) ────────
-function parseField(f, min, max) {
-  const ok = new Set();
-  String(f).split(",").forEach((part) => {
-    let step = 1, range = part;
-    const slash = part.split("/");
-    if (slash.length === 2) { range = slash[0]; step = parseInt(slash[1], 10) || 1; }
-    let lo, hi;
-    if (range === "*") { lo = min; hi = max; }
-    else if (range.indexOf("-") !== -1) { const ab = range.split("-"); lo = parseInt(ab[0], 10); hi = parseInt(ab[1], 10); }
-    else { lo = hi = parseInt(range, 10); }
-    if (isNaN(lo)) return;
-    if (isNaN(hi)) hi = lo;
-    for (let v = lo; v <= hi; v += step) if (v >= min && v <= max) ok.add(v);
-  });
-  return ok;
-}
-
-function cronNext(schedule, from) {
-  const parts = String(schedule || "").trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  const mins = parseField(parts[0], 0, 59), hrs = parseField(parts[1], 0, 23),
-        doms = parseField(parts[2], 1, 31), mons = parseField(parts[3], 1, 12),
-        dows = parseField(parts[4], 0, 6);
-  const domStar = parts[2] === "*", dowStar = parts[4] === "*";
-  let d = new Date(from.getTime() + 60000); d.setSeconds(0, 0);
-  const limit = new Date(from.getTime() + 60 * 24 * 3600 * 1000); // borne à 60 jours
-  while (d < limit) {
-    const dayOk = (domStar && dowStar) ? true
-      : domStar ? dows.has(d.getDay())
-      : dowStar ? doms.has(d.getDate())
-      : (doms.has(d.getDate()) || dows.has(d.getDay()));
-    if (mons.has(d.getMonth() + 1) && dayOk && hrs.has(d.getHours()) && mins.has(d.getMinutes())) return new Date(d);
-    d = new Date(d.getTime() + 60000);
-  }
-  return null;
-}
+// Cron helpers : parseCronField/cronNext vivent dans triggers.mjs (propriétaire des crons).
 
 const pad = (n) => String(n).padStart(2, "0");
 

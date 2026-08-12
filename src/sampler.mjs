@@ -27,6 +27,7 @@ import { writeAtomicJSON } from "./persistence.mjs";
 import { upsertSpawnRegistry } from "./persistence.mjs";
 import { randomUUID } from "crypto";
 import { state } from "./state.mjs";
+import { recall } from "./identity.mjs";
 
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
@@ -224,7 +225,13 @@ function ensureMcpJson(projectPath, port = 3777) {
         mcpServers: {
           wikichat: {
             type: "sse",
-            url: `http://localhost:${port}/sse`,
+            // L'identité voyage avec la connexion, pas seulement via register().
+            // Le fichier est partagé par tous les agents d'un projet, donc le nom
+            // ne peut pas y être écrit en dur : il vient de WIKICHAT_AGENT, que
+            // le spawn pose dans l'environnement du process. Sans cela une session
+            // reste anonyme tant qu'elle n'a pas appelé register — et le redevient
+            // à chaque reconnexion.
+            url: `http://localhost:${port}/sse?agent=\${WIKICHAT_AGENT:-}`,
           },
         },
       });
@@ -247,6 +254,15 @@ PROTOCOLE OBLIGATOIRE — MCP-FIRST:
 5. Écris aussi ton résultat dans .wikichat/artifacts/<timestamp>_<titre>.md comme backup local.
 6. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
    format: {"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>","data":{"title":"...","content":"..."}}
+
+AVANT DE TERMINER — consigne ce qui doit survivre à ta session :
+- Décision actée, blocage rencontré ou question laissée ouverte qui engage le projet
+  → add_project_note(project=<projet>, type="decision"|"blocker"|"question", content=<une ligne précise>).
+- Chose comprise qui servira à la prochaine session portant TON nom (et à elle seule)
+  → remember(<clé>, <valeur>).
+Ton historique de conversation, lui, ne survit pas : il appartient à Claude Code et
+disparaît. Ces deux traces sont ce qu'on retrouvera de toi. N'y mets rien d'autre —
+pas de compte rendu, pas de recopie de l'artefact.
 `;
 
 // ── KB context injection ──────────────────────────────────────────────────────
@@ -395,7 +411,7 @@ export const PROMPT_TEMPLATES = {
   watchdog: (name) =>
     AGENT_PREAMBLE +
     `Tu es ${name}, agent watchdog WikiChat. ` +
-    `register() puis get_context() pour lire l'état du système. ` +
+    `register() puis get_briefing() pour lire l'état du système. ` +
     `Identifie les agents stales, les tâches expirées, les anomalies. ` +
     `broadcast() si alertes critiques. share_artifact le rapport sur #coordination. ` +
     `Écris aussi dans .wikichat/artifacts/watchdog-<timestamp>.md comme backup. Termine.`,
@@ -500,8 +516,16 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     if (allowedTools) baseArgs.push("--allowedTools", Array.isArray(allowedTools) ? allowedTools.join(",") : String(allowedTools));
     if (maxTurns) baseArgs.push("--max-turns", String(maxTurns));
     if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
-    if (resumeSessionId) {
-      baseArgs.push("--resume", resumeSessionId);
+    // Même garde que pour les daemons : un ID sans transcript fait échouer le CLI.
+    // Contrairement au daemon, jamais de reprise implicite ici — un headless est
+    // one-shot par nature, il ne reprend que si l'appelant le demande.
+    const resumeHeadless = resumeSessionId
+      ? resolveResumeSession(name, projectPath, resumeSessionId)
+      : null;
+    if (resumeHeadless) {
+      baseArgs.push("--resume", resumeHeadless.sessionId);
+    } else if (resumeSessionId) {
+      console.log(`[spawn] ${name} : transcript de ${resumeSessionId} introuvable — démarrage frais.`);
     }
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
@@ -511,7 +535,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
       windowsHide: true,
       shell: false,
     });
@@ -554,11 +578,84 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
   });
 }
 
+// ── Reprise de session (--resume) ─────────────────────────────────────────────
+
+/** Plafond de taille d'un transcript repris. Au-delà, démarrage frais. */
+const MAX_RESUME_BYTES = parseInt(process.env.WIKICHAT_MAX_RESUME_MB || "5") * 1024 * 1024;
+
+/**
+ * Resolve the Claude session an agent should resume, and verify its transcript
+ * still exists on disk and is small enough to be worth reloading.
+ *
+ * `remember(name, "__claude_session_id")` only stores an ID — the actual
+ * conversation lives in ~/.claude/projects/<slug>/<id>.jsonl, which Claude Code
+ * rotates independently. Passing --resume with a rotated ID makes the CLI fail
+ * at startup, so the ID alone is never sufficient : we check the file first and
+ * fall back to a fresh session when it is gone.
+ *
+ * Size matters as much as existence. Long-lived agents accumulate transcripts
+ * that reach hundreds of megabytes ; reloading one would exhaust the daemon's
+ * --max-budget-usd before its first poll. Past MAX_RESUME_BYTES we start fresh —
+ * a resident that loses its history still works, one that burns its budget on
+ * boot does not.
+ *
+ * @param {string} name          - Agent name (memory key)
+ * @param {string} projectPath   - cwd the agent runs in (used to derive the slug)
+ * @param {string} [explicitId]  - Caller-supplied ID ; takes precedence over memory
+ * @returns {{ sessionId: string, transcript: string, bytes: number } | null}
+ */
+export function resolveResumeSession(name, projectPath, explicitId = null) {
+  let sessionId = explicitId;
+  if (!sessionId) {
+    if (!name) return null;
+    try { sessionId = recall(name, "__claude_session_id"); } catch { return null; }
+  }
+  if (!sessionId) return null;
+
+  const projectsDir = path.join(os.homedir(), ".claude", "projects");
+  // Claude Code slugifies the absolute cwd : every non-alphanumeric char → "-".
+  const slug = String(projectPath || "").replace(/[^a-zA-Z0-9]/g, "-");
+
+  let transcript = null;
+  const direct = path.join(projectsDir, slug, `${sessionId}.jsonl`);
+  if (fs.existsSync(direct)) {
+    transcript = direct;
+  } else {
+    // The agent may have moved between repos, or the slug casing may differ —
+    // scan the sibling project dirs before giving up.
+    try {
+      for (const dir of fs.readdirSync(projectsDir)) {
+        const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
+        if (fs.existsSync(candidate)) { transcript = candidate; break; }
+      }
+    } catch { /* no transcripts dir — treat as fresh */ }
+  }
+
+  // Known ID, transcript gone : the memory is stale, not the agent.
+  if (!transcript) return null;
+
+  // statSync peut échouer si le fichier disparaît entre le existsSync et ici,
+  // ou sur un souci de droits. Ne jamais faire échouer un spawn pour ça.
+  let size = 0;
+  try { size = fs.statSync(transcript).size; } catch { return null; }
+
+  if (size > MAX_RESUME_BYTES) {
+    console.log(
+      `[spawn] ${name || sessionId} : transcript de ${(size / 1048576).toFixed(0)} Mo ` +
+      `> plafond ${(MAX_RESUME_BYTES / 1048576).toFixed(0)} Mo — démarrage frais ` +
+      `(WIKICHAT_MAX_RESUME_MB pour ajuster).`
+    );
+    return null;
+  }
+
+  return { sessionId, transcript, bytes: size };
+}
+
 // ── spawnDaemon — persistent background agent ────────────────────────────────
 
 /**
  * Spawn a persistent Claude session that runs in the background.
- * Unlike spawnHeadless (one-shot), this stays alive and loops on poll_messages.
+ * Unlike spawnHeadless (one-shot), this stays alive across several relèves.
  * Uses `claude --resume` if a previous session exists, or starts fresh.
  *
  * @param {string} projectPath  - Absolute path to the project directory
@@ -619,23 +716,27 @@ export function spawnDaemon(projectPath, options = {}) {
 
   const mcpConfigPath = path.join(projectPath, ".mcp.json");
 
-  // Daemon uses claude -p with a long-running prompt that loops on poll_messages
+  // Le daemon est un claude -p au prompt long. Il relève, agit, et sort quand il
   // Timeout is set very high (2 hours) to keep the agent alive
   const prompt = [
     AGENT_PREAMBLE,
     `Tu es ${name}${role ? `, ${role}` : ""}.`,
     task ? `Ta mission: ${task}` : "",
     ``,
-    `PROTOCOLE DAEMON — BOUCLE INFINIE:`,
-    `1. register(name="${name}"${role ? `, role="${role}"` : ""})`,
-    `2. send_message(channel="coordination", content="🟢 ${name} en ligne, prêt.")`,
-    `3. BOUCLE INFINIE (MINIMUM 100 itérations):`,
-    `   - poll_messages(timeout_seconds=30, types=["message","direct_message","broadcast","artifact"])`,
-    `   - Si timeout: relance poll_messages IMMÉDIATEMENT sans commentaire.`,
-    `   - Si message reçu: réponds BRIÈVEMENT via send_message, puis relance poll_messages.`,
-    `4. JAMAIS terminer. Chaque timeout = relance immédiate sans texte entre les appels.`,
-    `5. INTERDIT: résumés, récapitulatifs, "dois-je continuer?", réflexions entre les polls.`,
-    `6. Sois CONCIS: réponds en 1-2 phrases max, pas de bavardage. Économise les tokens.`,
+    `PROTOCOLE :`,
+    `1. register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID")`,
+    `   → claude_session_id est OBLIGATOIRE : sans lui ton transcript devient introuvable`,
+    `     et tes prochains réveils repartent de zéro au lieu de reprendre ce contexte.`,
+    `2. send_message(channel="coordination", content="🟢 ${name} en ligne.")`,
+    `3. poll(timeout_seconds=120) — relève ce qui t'est adressé, sans argument de canal.`,
+    `4. S'il y a quelque chose : traite, réponds via send_message, puis re-poll.`,
+    `5. Si deux relèves consécutives ne rapportent rien : consigne ce qui doit survivre`,
+    `   (add_project_note / remember) et TERMINE proprement.`,
+    ``,
+    `Ne boucle pas indéfiniment. Chaque tour d'attente relit tout ton historique :`,
+    `attendre coûte plus cher que d'être relancé. Un trigger te réveillera quand il y`,
+    `aura de quoi faire, et tu reprendras cette session avec --resume.`,
+    `Sois concis : 1-2 phrases par réponse, pas de récapitulatif entre les relèves.`,
   ].filter(Boolean).join("\n");
 
   // Register in spawn registry
@@ -657,8 +758,14 @@ export function spawnDaemon(projectPath, options = {}) {
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
     }
-    if (options.sessionId) {
-      baseArgs.push("--resume", options.sessionId);
+    // Reprise de contexte. Résolue ici plutôt que chez l'appelant : routines,
+    // triggers, watchdog et outils MCP passent tous par spawnDaemon, et aucun
+    // ne transmettait l'ID — les résidents repartaient de zéro à chaque réveil.
+    const resume = resolveResumeSession(name, projectPath, options.sessionId);
+    if (resume) {
+      baseArgs.push("--resume", resume.sessionId);
+    } else if (options.sessionId) {
+      console.log(`[spawn] ${name} : transcript de ${options.sessionId} introuvable — démarrage frais.`);
     }
     baseArgs.push("--max-budget-usd", "5");
 
@@ -669,7 +776,7 @@ export function spawnDaemon(projectPath, options = {}) {
     const child = spawn(spawnArgs.cmd, spawnArgs.args, {
       cwd: projectPath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
       windowsHide: true,
       detached: !isWindows,
       shell: false,
@@ -702,17 +809,21 @@ export function spawnDaemon(projectPath, options = {}) {
           const continuePrompt = [
             AGENT_PREAMBLE,
             `Tu es ${name}${role ? `, ${role}` : ""}. Redémarrage #${respawnCount}.`,
-            `register(name="${name}"${role ? `, role="${role}"` : ""}) puis poll_messages.`,
-            `Sois CONCIS. Boucle poll_messages(timeout_seconds=30).`,
+            `register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID") puis poll().`,
+            `Sois CONCIS. Traite ce qui t'attend, consigne, et termine — ne boucle pas.`,
           ].join("\n");
+          // Re-résolu à chaud : l'agent a pu enregistrer un ID plus récent depuis
+          // le spawn initial, et le transcript a pu disparaître entre-temps.
+          const respawnResume = resolveResumeSession(name, projectPath);
           const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
             ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
+            ...(respawnResume ? ["--resume", respawnResume.sessionId] : []),
             "--model", model, "--max-budget-usd", "5"];
           const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
           const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
             cwd: projectPath,
             stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+            env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
             windowsHide: true, detached: !isWindows, shell: false,
           });
           newChild.stdout.on("data", () => {});

@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
- * install-memory-refresh.mjs — tâche autonome quotidienne (brique 2).
+ * install-memory-refresh.mjs — battement de cœur autonome de la mémoire.
  *
- * Provisionne un déclencheur planifié qui lance scripts/publish-memory.mjs une
- * fois par jour : filet de sécurité qui capture tout ce qui ne passe pas par le
- * hook close_project (décisions, tasks, knowledge mis à jour en cours de route).
+ * Provisionne un déclencheur planifié qui lance scripts/sync-memory.mjs à
+ * intervalle régulier (défaut 15 min). Chaque passage ferme la boucle dans les
+ * deux sens : ingest des idées capturées (inbox -> local) puis publish du
+ * snapshot (local -> repo). Idempotent quand rien n'a bougé.
  *
- *   - Windows : Task Scheduler, /SC DAILY
- *   - macOS   : launchd LaunchAgent, StartCalendarInterval
- *   - Linux   : crontab utilisateur, entrée quotidienne
+ *   - Windows : Task Scheduler, /SC MINUTE /MO N
+ *   - macOS   : launchd LaunchAgent, StartInterval
+ *   - Linux   : crontab utilisateur, intervalle de N minutes
  *
  * Idempotent : re-run remplace l'entrée existante.
  *
  * Usage :
- *   node scripts/install-memory-refresh.mjs --repo <dir> [--at HH:MM]
+ *   node scripts/install-memory-refresh.mjs --repo <dir> [--every <minutes>]
  *   node scripts/install-memory-refresh.mjs --uninstall
  */
 
@@ -26,7 +27,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const NODE_BIN = process.execPath;
-const PUBLISH_ENTRY = path.join(REPO_ROOT, "scripts", "publish-memory.mjs");
+const SYNC_ENTRY = path.join(REPO_ROOT, "scripts", "sync-memory.mjs");
 const TASK_NAME = "WikiChatMemoryRefresh";
 const SERVICE_LABEL = "com.wikichat.memory-refresh";
 
@@ -37,7 +38,8 @@ const argVal = (n) => {
 };
 const UNINSTALL = argv.includes("--uninstall");
 const MEMORY_REPO = argVal("--repo") || process.env.WIKICHAT_MEMORY_REPO;
-const AT = argVal("--at") || "03:30"; // heure de run par défaut (creux)
+// Intervalle du sync bidirectionnel (ingest entrant + publish sortant), minutes.
+const EVERY = String(Math.max(1, Number(argVal("--every") || 15)));
 
 function fail(msg) {
   console.error(`[memory-refresh] ${msg}`);
@@ -50,14 +52,14 @@ function ok(msg) {
 if (!UNINSTALL && !MEMORY_REPO)
   fail("Repo privé requis : --repo <dir> ou WIKICHAT_MEMORY_REPO.");
 
-const [hh, mm] = AT.split(":");
-
 // --------------------------------------------------------------------------
 // Windows — Task Scheduler
 // --------------------------------------------------------------------------
 
 function installWindows() {
   const wrapperPath = path.join(os.homedir(), ".wikichat", "memory-refresh.cmd");
+  const vbsPath = path.join(os.homedir(), ".wikichat", "memory-refresh.vbs");
+  const logPath = path.join(os.homedir(), ".wikichat", "memory-sync.log");
   if (UNINSTALL) {
     try {
       execSync(`schtasks /Delete /TN "${TASK_NAME}" /F`, { stdio: "ignore" });
@@ -65,23 +67,36 @@ function installWindows() {
       /* pas installé */
     }
     fs.rmSync(wrapperPath, { force: true });
+    fs.rmSync(vbsPath, { force: true });
     return ok("Tâche supprimée.");
   }
   // Wrapper .cmd : contourne le quoting brutal de schtasks /TR (chemins avec
   // espaces + quotes imbriquées). cwd hérité d'une tâche = System32, d'où le cd.
+  // La sortie va dans un log (jamais à l'écran).
   const wrapper =
     `@echo off\r\n` +
     `cd /d "${REPO_ROOT}"\r\n` +
     `set "WIKICHAT_MEMORY_REPO=${MEMORY_REPO}"\r\n` +
-    `"${NODE_BIN}" "${PUBLISH_ENTRY}" --repo "${MEMORY_REPO}"\r\n`;
+    `"${NODE_BIN}" "${SYNC_ENTRY}" --repo "${MEMORY_REPO}" >> "${logPath}" 2>&1\r\n`;
   fs.mkdirSync(path.dirname(wrapperPath), { recursive: true });
   fs.writeFileSync(wrapperPath, wrapper);
+
+  // Launcher .vbs : exécute le .cmd en fenêtre CACHÉE (WindowStyle 0). Sans ça,
+  // Task Scheduler ouvre une console visible dans la session de l'utilisateur.
+  const vbs =
+    `' Sync mémoire WikiChat — exécution invisible (pas de fenêtre console).\r\n` +
+    `Dim WshShell\r\n` +
+    `Set WshShell = CreateObject("WScript.Shell")\r\n` +
+    `WshShell.Run "cmd /c " & Chr(34) & "${wrapperPath}" & Chr(34), 0, False\r\n`;
+  fs.writeFileSync(vbsPath, vbs, "utf8");
+
+  // La tâche lance wscript sur le .vbs → tout reste caché.
   execSync(
-    `schtasks /Create /TN "${TASK_NAME}" /TR "\\"${wrapperPath}\\"" /SC DAILY /ST ${hh}:${mm} /F`,
+    `schtasks /Create /TN "${TASK_NAME}" /TR "wscript.exe //nologo \\"${vbsPath}\\"" /SC MINUTE /MO ${EVERY} /F`,
     { stdio: "inherit" }
   );
-  ok(`Tâche quotidienne créée (${AT}). Wrapper: ${wrapperPath}`);
-  ok(`Test : schtasks /Run /TN "${TASK_NAME}"`);
+  ok(`Tâche de sync créée (toutes les ${EVERY} min, fenêtre cachée).`);
+  ok(`Log: ${logPath}`);
 }
 
 // --------------------------------------------------------------------------
@@ -111,8 +126,8 @@ function installMac() {
   <key>WorkingDirectory</key><string>${REPO_ROOT}</string>
   <key>EnvironmentVariables</key><dict><key>WIKICHAT_MEMORY_REPO</key><string>${MEMORY_REPO}</string></dict>
   <key>ProgramArguments</key>
-  <array><string>${NODE_BIN}</string><string>${PUBLISH_ENTRY}</string><string>--repo</string><string>${MEMORY_REPO}</string></array>
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${Number(hh)}</integer><key>Minute</key><integer>${Number(mm)}</integer></dict>
+  <array><string>${NODE_BIN}</string><string>${SYNC_ENTRY}</string><string>--repo</string><string>${MEMORY_REPO}</string></array>
+  <key>StartInterval</key><integer>${Number(EVERY) * 60}</integer>
 </dict></plist>`;
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
   fs.writeFileSync(plistPath, plist);
@@ -147,11 +162,11 @@ function installLinux() {
     return ok("Entrée crontab supprimée.");
   }
   const line =
-    `${Number(mm)} ${Number(hh)} * * * cd "${REPO_ROOT}" && ` +
-    `WIKICHAT_MEMORY_REPO="${MEMORY_REPO}" "${NODE_BIN}" "${PUBLISH_ENTRY}" --repo "${MEMORY_REPO}" ${marker}`;
+    `*/${Number(EVERY)} * * * * cd "${REPO_ROOT}" && ` +
+    `WIKICHAT_MEMORY_REPO="${MEMORY_REPO}" "${NODE_BIN}" "${SYNC_ENTRY}" --repo "${MEMORY_REPO}" ${marker}`;
   const next = (cleaned ? cleaned + "\n" : "") + line + "\n";
   execSync(`printf '%s' ${JSON.stringify(next)} | crontab -`, { shell: "/bin/bash" });
-  ok(`Entrée crontab installée (${AT}).`);
+  ok(`Entrée crontab installée (toutes les ${EVERY} min).`);
 }
 
 // --------------------------------------------------------------------------

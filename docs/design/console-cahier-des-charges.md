@@ -1,3 +1,5 @@
+> **ARCHIVE — fonctionnalité retirée.** Ce document décrit la console web, supprimée avec les cinq autres interfaces du projet : aucune n'a jamais été ouverte. Conservé comme trace de conception, il ne décrit rien de ce que fait WikiChat aujourd'hui. L'état du service se lit via `GET /api/health` ou depuis une session Claude Code.
+
 # Wikichat — Cahier des charges v2
 
 > **Objet** : spec écrite qui complète `wikichat-spec.html` (les 5 vues en pixels) et `docs/design/components.html` (les atomes/molécules). Lis ce fichier *en regard* de ces deux-là — il décrit les algos, les contrats, et les décisions qui ne se voient pas dans les pixels.

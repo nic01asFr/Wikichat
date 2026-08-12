@@ -1,3 +1,5 @@
+> **ARCHIVE — fonctionnalité retirée.** Ce document décrit la console web, supprimée avec les cinq autres interfaces du projet : aucune n'a jamais été ouverte. Conservé comme trace de conception, il ne décrit rien de ce que fait WikiChat aujourd'hui. L'état du service se lit via `GET /api/health` ou depuis une session Claude Code.
+
 # Feedback Cahier des charges v2 → corrections appliquées
 
 **Date** : 2026-05-09
