@@ -575,9 +575,14 @@ export function registerTools(server, sessionId) {
       expects_reply: z.boolean().optional().describe("Si true : tu attends une réponse. Les autres agents peuvent attendre ton next message avant de re-poll."),
       eta_seconds: z.number().optional().describe("Temps estimé en secondes avant ton prochain message (ex: 300 = 5 min de travail). Réduit les polls inutiles côté destinataire."),
       status: z.enum(["over", "standby", "done"]).optional().describe("over = j'ai terminé, c'est à toi | standby = je travaille, n'attends pas de réponse immédiate | done = tâche complètement terminée"),
+      priority: z.enum(["info", "warning", "urgent"]).optional().describe("Diffuse à TOUTES les sessions au lieu d'un canal. Avec parcimonie : remplace l'ancien outil broadcast."),
     },
-    async ({ content, channel: rawChannel, reply_to, expects_reply, eta_seconds, status }) => {
-      const channel = normalizeChannel(rawChannel);
+    async ({ content, channel: rawChannel, reply_to, expects_reply, eta_seconds, status, priority }) => {
+      // priority transforme l'envoi en diffusion générale : c'est l'ancien outil
+      // broadcast, absorbé ici. Un outil de moins, même canal __broadcast__, et
+      // les champs de coordination (status, expects_reply) deviennent disponibles
+      // sur une diffusion — ils ne l'étaient pas.
+      const channel = priority ? "__broadcast__" : normalizeChannel(rawChannel);
       const senderName = getSessionName(sessionId);
       let targetChannel = channel;
       let isDM = false;
@@ -601,11 +606,13 @@ export function registerTools(server, sessionId) {
         if (!res.matched) {
           dmHint += `\n⚠️ Aucune session nommée "${res.typedTarget}". Le DM reste en attente, visible uniquement quand un agent s'enregistre EXACTEMENT sous ce nom. Vérifie list_sessions.`;
         }
-      } else if (!state.channels.has(channel)) {
-        // Même raison que dans share_artifact : refuser un canal inexistant rend
-        // les triggers channel_match inutilisables sur un sujet neuf — personne
-        // ne peut écrire là où le trigger écoute tant que le canal n'existe pas.
-        // On crée, et on le signale pour qu'une faute de frappe reste visible.
+      } else if (!priority && !state.channels.has(channel)) {
+        // __broadcast__ est un canal virtuel : on ne le matérialise jamais.
+        // Pour les autres : même raison que dans share_artifact — refuser un canal
+        // inexistant rend les triggers channel_match inutilisables sur un sujet
+        // neuf, personne ne pouvant écrire là où le trigger écoute tant que le
+        // canal n'existe pas. On crée, et on le signale pour qu'une faute de
+        // frappe reste visible.
         state.channels.set(channel, {
           name: channel,
           description: `Canal auto-créé par send_message (${senderName})`,
@@ -616,9 +623,13 @@ export function registerTools(server, sessionId) {
         autoCreated = true;
       }
 
+      const emoji = priority ? { info: "ℹ️", warning: "⚠️", urgent: "🚨" }[priority] : null;
       const msg = pushMessage({
-        id: randomUUID(), from: sessionId, fromName: senderName,
-        channel: targetChannel, content, timestamp: new Date(),
+        id: randomUUID(), from: sessionId,
+        fromName: emoji ? `${emoji} ${senderName}` : senderName,
+        channel: targetChannel,
+        content: priority ? `[${priority.toUpperCase()}] ${content}` : content,
+        timestamp: new Date(),
         replyTo: reply_to ?? null, isDM,
         // Coordination metadata
         expects_reply: expects_reply ?? null,
@@ -647,7 +658,7 @@ export function registerTools(server, sessionId) {
       // chaque reconnexion, et rien ne le rattache à une identité. Le dire, plutôt
       // que de laisser l'agent croire qu'il a parlé à quelqu'un.
       let audienceHint = "";
-      if (!isDM) {
+      if (!isDM && !priority) {
         const nommes = [...state.sessions.values()].filter(
           s => s.name && !s.name.startsWith("session-") && s.sessionId !== sessionId
         ).length;
@@ -659,7 +670,10 @@ export function registerTools(server, sessionId) {
         }
       }
 
-      return txt(`${isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.`);
+      const entete = priority
+        ? `${emoji} Diffusé à toutes les sessions (${state.sessions.size - 1} destinataire(s))`
+        : isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`;
+      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.`);
     }
   );
 
@@ -901,28 +915,6 @@ export function registerTools(server, sessionId) {
         if (r.messages.length > 0) return formatMsgList(r.messages);
       }
       return txt(`⏰ Rien de neuf (timeout ${timeout / 1000}s). Ta boîte est à jour — rends la main, le hook t'apportera la suite.`);
-    }
-  );
-
-  // ── broadcast ───────────────────────────────────────────────────────────────
-
-  server.tool(
-    "broadcast",
-    "Diffuser un message à TOUTES les sessions. À utiliser avec parcimonie.",
-    {
-      content: z.string().describe("Message à diffuser"),
-      priority: z.enum(["info", "warning", "urgent"]).default("info"),
-    },
-    async ({ content, priority }) => {
-      const emoji = { info: "ℹ️", warning: "⚠️", urgent: "🚨" }[priority];
-      const msg = pushMessage({
-        id: randomUUID(), from: sessionId, fromName: `${emoji} ${getSessionName(sessionId)}`,
-        channel: "__broadcast__",
-        content: `[BROADCAST ${priority.toUpperCase()}] ${content}`,
-        timestamp: new Date(),
-      });
-      notify("__broadcast__", sessionId);
-      return txt(`${emoji} Broadcast envoyé à ${state.sessions.size - 1} session(s). 🆔 ${msg.id.slice(0, 8)}`);
     }
   );
 
