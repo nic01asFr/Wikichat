@@ -27,7 +27,7 @@ import { randomUUID } from "crypto";
 import cron from "node-cron";
 import chokidar from "chokidar";
 import { writeAtomicJSON } from "./persistence.mjs";
-import { state, sysMsg } from "./state.mjs";
+import { state, sysMsg, pushMessage } from "./state.mjs";
 import { isActive, onWake } from "./dormant.mjs";
 import { recall, knownAgentNames } from "./identity.mjs";
 
@@ -473,8 +473,21 @@ async function _runAction(t, source, message = null) {
     return _runSpawnAction(t, action.params || {}, source, message);
   }
   if (action.type === "broadcast") {
-    sysMsg(action.params?.channel || "coordination",
-      `🔔 [trigger ${t.id}] ${action.params?.content || ""}`);
+    // Ce message doit pouvoir ATTEINDRE une boîte. Poster via sysMsg le marquait
+    // `from: "system"`, et inboxFor écarte tout ce qui vient du système — à
+    // raison, sinon les avis de connexion noieraient les boîtes. Résultat : un
+    // agent qui posait un watcher pour être prévenu n'était jamais prévenu. Le
+    // trigger signe donc de son propre nom, et la @mention fait le reste.
+    pushMessage({
+      id: randomUUID(),
+      from: `trigger:${t.id}`,
+      fromName: `🔔 ${t.id}`,
+      channel: action.params?.channel || "coordination",
+      content: action.params?.content || "",
+      timestamp: new Date(),
+      expects_reply: action.params?.expects_reply ?? null,
+      status: action.params?.status ?? null,
+    });
     return { ok: true };
   }
   if (action.type === "run_routine") {

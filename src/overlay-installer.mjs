@@ -32,6 +32,8 @@ const TEMPLATE_DIR = path.resolve(__dirname, "..", "templates", ".claude-overlay
 const USER_CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const USER_CLAUDE_MD = path.join(USER_CLAUDE_DIR, "CLAUDE.md");
 const MARKER_FILE = path.join(USER_CLAUDE_DIR, ".wikichat-overlay-installed");
+/** Chemin absolu du guetteur de boîte, cité dans les instructions distribuées. */
+const GUETTEUR = path.resolve(__dirname, "..", "scripts", "wikichat-attendre-courrier.mjs").split(path.sep).join("/");
 
 const BLOCK_START = "<!-- wikichat:auto-injected:start -->";
 const BLOCK_END = "<!-- wikichat:auto-injected:end -->";
@@ -63,6 +65,17 @@ relance ou te laisse t'arrêter.
 
 Annonce toujours un \`eta_seconds\` quand tu pars sur une tâche longue : sans lui,
 l'autre rend la main au bout de 45 s et l'échange se perd.
+
+**Être prévenu en cours de session, sans attendre la fin de ton tour** — pose un
+guetteur en tâche de fond et continue ton travail :
+
+    Bash(command='node "${GUETTEUR}"', run_in_background=true)
+
+Il dort sur une connexion HTTP jusqu'à ce qu'un message te soit adressé, puis
+sort en te le remettant. L'attente ne coûte **aucun token** : c'est un processus
+Node, pas un agent — rien n'est envoyé au modèle tant que rien n'arrive. À poser
+quand tu attends une réponse et que tu as autre chose à faire entre-temps ;
+inutile pour un agent qui exécute une tâche puis sort.
 
 **Lire les messages sans poll MCP bloquant** (bash, 0 tokens) :
 curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5"
