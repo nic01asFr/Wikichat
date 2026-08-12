@@ -14,9 +14,15 @@ export const CONFIG_PATH = path.join(WIKICHAT_HOME, "config.json");
 
 // Default config
 const DEFAULT_CONFIG = {
-  roots: ["C:\\Users\\" + os.userInfo().username, os.homedir()],
+  // `os.homedir()` seul : sur Windows il vaut exactement "C:\Users\<user>", que
+  // la racine codée en dur dupliquait ; ailleurs, ce chemin n'existe pas et le
+  // scan ne trouvait rien, sans que rien ne le dise. Même famille de défaut que
+  // la porte dormante : invisible sur la machine où le projet a été écrit.
+  roots: [os.homedir()],
   maxDepth: 6,
-  excludeDirs: ["node_modules", ".git", "AppData", "Windows"],
+  // "Library" est à macOS ce que "AppData" est à Windows : un arbre immense et
+  // sans projets, qu'il faut écarter sous peine de faire durer le scan.
+  excludeDirs: ["node_modules", ".git", "AppData", "Windows", "Library"],
   autoScan: false,
   lastScan: null,
 };
