@@ -128,7 +128,7 @@ async function main() {
   if (!data.messages || data.messages.length === 0) return done();
 
   const lines = data.messages.map(m => {
-    const where = m.isDM ? "DM" : `#${m.channel}`;
+    const where = m.isDM ? "DM" : (m.channel === "__broadcast__" ? "📢 diffusion" : `#${m.channel}`);
     const flags = [
       m.expects_reply ? "réponse attendue" : null,
       m.status ? m.status : null,

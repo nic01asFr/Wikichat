@@ -12,7 +12,7 @@ import { spawn } from "child_process";
 import {
   state, pushMessage, sysMsg, getSessionByName, getSessionName,
   dmChannelKey, isAgentInDMChannel, resolveAgentName, timeSince, timeUntil, cronInMinutes, overlapScore, getEtaSummary,
-  getChannelCount, inboxFor, normalizeChannel,
+  getChannelCount, inboxFor, normalizeChannel, channelLabel,
 } from "./state.mjs";
 import { scanForProjects } from "./scanner.mjs";
 import { loadRegistry, loadConfig, saveRegistry, mergeProjects } from "./registry.mjs";
@@ -61,7 +61,7 @@ function coordMarkers(msg) {
 function formatMsgList(msgs) {
   const lines = msgs.map(msg => {
     const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
-    const ch = msg.isDM ? "📩DM" : `#${msg.channel}`;
+    const ch = channelLabel(msg);
     const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
     const readers = state.reads.get(msg.id);
     const ack = readers?.size > 0 ? ` ✓${[...readers].join(",")}` : "";
@@ -206,7 +206,7 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   // Format helpers
   const fmtMsg = m => {
     const t = new Date(m.timestamp).toLocaleTimeString("fr-FR");
-    const ch = m.isDM ? "📩DM" : `#${m.channel}`;
+    const ch = channelLabel(m);
     return `  [${t}] [${ch}] ${m.fromName}: ${m.content.slice(0, 200)}${m.content.length > 200 ? "…" : ""}`;
   };
 
@@ -735,7 +735,7 @@ export function registerTools(server, sessionId) {
 
       const lines = filtered.map(msg => {
         const t = new Date(msg.timestamp).toLocaleTimeString("fr-FR");
-        const ch = msg.isDM ? "📩DM" : `#${msg.channel}`;
+        const ch = channelLabel(msg);
         const re = msg.replyTo ? ` ↩️${msg.replyTo.slice(0, 8)}` : "";
         return `[${t}] [${ch}] ${msg.fromName}: ${msg.content}${re}\n  └─ id:${msg.id.slice(0, 8)}${coordMarkers(msg)}`;
       });

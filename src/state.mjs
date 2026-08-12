@@ -50,6 +50,19 @@ const _channelCounts = new Map();
 export function getChannelCount(channel) { return _channelCounts.get(channel) || 0; }
 
 /**
+ * Étiquette lisible d'un message pour l'affichage.
+ *
+ * `__broadcast__` est un canal interne : l'exposer tel quel donne des lignes
+ * comme « [#__broadcast__] … » dans les boîtes et les hooks, où le lecteur
+ * n'a aucune idée de ce qu'il regarde.
+ */
+export function channelLabel(msg) {
+  if (msg?.isDM) return "📩DM";
+  if (msg?.channel === "__broadcast__") return "📢 diffusion";
+  return `#${msg?.channel ?? "?"}`;
+}
+
+/**
  * Normalise un nom de canal saisi par un agent.
  *
  * L'affichage préfixe les canaux d'un `#` décoratif (`[#insights] …`). Un agent
