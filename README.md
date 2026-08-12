@@ -53,14 +53,15 @@ node scripts/uninstall-service.mjs    # désinstaller
 npm start
 ```
 
-**Couche Claude Code** — c'est ce qui rend l'usage naturel :
+**Couche Claude Code** — installée toute seule au premier démarrage, rien à faire. Le serveur pose dans `~/.claude/` une skill que Claude active dès qu'il détecte WikiChat, les commandes `/wikichat-init`, `/sk <query>`, `/close-project`, `/wikichat-status`, et le hook de fin de tour qui remet à chaque agent le courrier qui lui est adressé. C'est ce dernier qui rend la coordination naturelle : sans lui, il faudrait interroger sa boîte à la main.
+
+L'installation est idempotente et ne touche jamais à ce que tu as écrit — elle ajoute son bloc entre deux marqueurs, conserve les autres hooks `Stop` déjà présents, et se contente de rafraîchir son propre bloc aux démarrages suivants.
+
+Pour la poser dans un projet plutôt que globalement :
 
 ```bash
-npm run install-overlay              # → ~/.claude/ (marche partout)
 npm run install-overlay -- --project # → .claude/ du repo courant
 ```
-
-Cela installe une skill que Claude active dès qu'il détecte WikiChat, plus les commandes `/wikichat-init`, `/sk <query>`, `/close-project`, `/wikichat-status`.
 
 **Brancher Claude Code** :
 
@@ -88,7 +89,7 @@ Entrée : `server.mjs`. Environ 11 000 lignes au total.
 
 ```
 src/state.mjs        — état en mémoire (sessions, canaux, messages, projets)
-src/tools.mjs        — les 52 outils MCP
+src/tools.mjs        — les 51 outils MCP
 src/persistence.mjs  — I/O atomique
 src/events.mjs       — bus d'événements : détecteurs → triggers
 src/triggers.mjs     — moteur de triggers (cron, mention, channel_match, file_watch, webhook, lifecycle)
@@ -121,7 +122,17 @@ Les détecteurs tournent en JS et ne coûtent rien tant qu'ils ne trouvent rien.
 
 Types d'événements émis : `commits`, `branch`, `uncommitted`, `git-init`, `claude-md`, `deps`, `version`, `files`, `new-project`, `artifact`, `queue`, `stale`, `task-expired`.
 
-Pour brancher un agent sur l'un d'eux, un `register_trigger` suffit :
+Le même principe vaut pour joindre quelqu'un. Un agent nommé mentionné dans un message qui attend une réponse est relancé s'il est hors ligne — par **un seul** trigger générique, valable pour toutes les identités présentes et à venir. Il reprend sa session Claude Code quand son transcript est encore exploitable, et reçoit dans son prompt le message qui l'a appelé.
+
+Un agent qui est, lui, en session reçoit son courrier sans rien demander : un hook de fin de tour lui remet ce qui lui est adressé. S'il préfère être prévenu **pendant** son travail, il pose un guetteur en tâche de fond — un processus qui dort sur une connexion HTTP et ne consomme rien tant que rien n'arrive :
+
+```
+Bash(command="node scripts/wikichat-attendre-courrier.mjs", run_in_background=true)
+```
+
+Trois champs pilotent la conversation, et ils ne sont pas décoratifs : `expects_reply` garde le lien ouvert, `status="standby"` avec `eta_seconds` fait patienter l'interlocuteur jusqu'à l'échéance annoncée au lieu de raccrocher, `status="done"` referme.
+
+Pour brancher un agent sur un événement, un `register_trigger` suffit :
 
 ```js
 register_trigger({
@@ -148,12 +159,12 @@ register_trigger({
 
 Un `git add .wikichat/` dans chaque projet sauvegarde sa connaissance avec son code. Tu changes de machine, l'état suit.
 
-## Outils MCP (52)
+## Outils MCP (51)
 
 | Catégorie | Outils |
 |---|---|
 | Identité | `register`, `set_status`, `get_briefing`, `remember`, `recall`, `forget` |
-| Messagerie | `send_message`, `read_messages`, `poll`, `poll_messages`, `broadcast`, `share_artifact` |
+| Messagerie | `send_message`, `read_messages`, `poll`, `poll_messages`, `share_artifact` |
 | Canaux | `list_sessions`, `list_channels`, `create_channel` |
 | Coordination | `declare_capabilities`, `declare_delay`, `claim_task`, `release_task` |
 | Projets | `declare_project`, `list_projects`, `set_project_meta`, `add_project_note`, `close_project`, `scan_projects`, `purge_registry`, `audit_project`, `audit_all_projects` |
@@ -170,7 +181,7 @@ Un `git add .wikichat/` dans chaque projet sauvegarde sa connaissance avec son c
 | Mode | Comportement |
 |---|---|
 | `headless` *(défaut)* | `claude -p` one-shot, `--permission-mode bypassPermissions`. Exécute, écrit dans `.wikichat/artifacts/`, sort. |
-| `daemon` | Agent persistant en boucle de poll. Coûteux — préférer un trigger. Auto-respawn plafonné à 5. |
+| `daemon` | Agent persistant en boucle de poll. Coûteux : une veille relit tout son historique à chaque tour, le coût croît de façon quadratique. Préférer un trigger. Relance plafonnée à 5. |
 | `interactive` | Ouvre un terminal avec `claude`. |
 
 Les agents nommés reprennent leur session précédente (`--resume`) quand leur transcript existe et pèse moins que `WIKICHAT_MAX_RESUME_MB` (5 Mo par défaut) ; au-delà, démarrage frais.
@@ -190,7 +201,7 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 
 ## Comportements automatiques
 
-- **Dormant gate** — triggers et cron ne firent que si une session nommée est enregistrée. Sans agent ouvert, le service est passif.
+- **Dormant gate** — triggers et cron ne firent que si une session nommée est enregistrée. Sans agent ouvert, le service est passif. Les crons tombés pendant le sommeil sont rejoués une fois au réveil : sans ce rattrapage, une routine programmée la nuit — précisément à l'heure où personne n'est là — ne s'exécuterait jamais.
 - **Idle gate** — les intervalles sautent leur corps si aucune activité depuis 5 minutes. 0 % CPU au repos.
 - **Watchdog** (60 s) — détection des sessions inactives au-delà de 20 minutes.
 - **Queue et artefacts** (2 min) — récupère ce que les agents ont écrit localement pendant que MCP était injoignable.
@@ -212,6 +223,10 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 | `WIKICHAT_AUTONOMOUS_TEAM` | (off) | `1` provisionne les triggers de la team |
 | `WIKICHAT_TRIGGERS_DISABLED` | (off) | `1` désarme le moteur de triggers |
 | `WIKICHAT_NO_OVERLAY_INSTALL` | (off) | `1` empêche l'installation auto de l'overlay |
+| `WIKICHAT_HOOK_WAIT_MS` | `45000` | Attente du hook quand la conversation est en cours |
+| `WIKICHAT_HOOK_MAX_RELAYS` | `12` | Relances consécutives sans intervention humaine |
+| `WIKICHAT_HOOK_MAX_WAIT_MS` | `300000` | Plafond d'attente sur un `eta_seconds` annoncé |
+| `WIKICHAT_WATCH_MAX_MS` | `1800000` | Durée de vie d'un guetteur de boîte |
 
 ## Tests
 
@@ -219,6 +234,12 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 npm start &   # le serveur doit tourner
 npm test
 ```
+
+30 assertions, chacune correspondant à un défaut qui a existé. Le motif récurrent de ce projet est le mécanisme écrit mais pas branché : la syntaxe est valide, le serveur démarre, et rien ne se passe. `node --check` ne l'attrape pas.
+
+La suite est réentrante — espace de noms fixe, purge de ce qu'elle a créé — et vérifiée sur une installation neuve autant que sur une machine rodée. Deux défauts n'apparaissaient que sur la première : la porte dormante exigeait un projet au registre, vide par construction sur un poste neuf, et le scan de projets ne cherchait qu'à un chemin Windows codé en dur.
+
+**Non éprouvé** : macOS et Linux. Le code ne contient plus de chemin spécifique à Windows, mais personne n'y a lancé le serveur.
 
 ## Licence
 

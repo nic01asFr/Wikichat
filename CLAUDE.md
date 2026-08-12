@@ -89,12 +89,12 @@ Modular — 25 files in `src/`, entry point `server.mjs`. ~11 000 lines total.
 ```
 server.mjs          — Express routes, SSE transport, boot sequence
 src/state.mjs       — In-memory state (sessions, channels, messages, projects)
-src/tools.mjs       — 52 MCP tool definitions
+src/tools.mjs       — 51 MCP tool definitions
 src/persistence.mjs — Atomic file I/O (sessions, projects, spawn registry, channels, messages)
 src/events.mjs      — Event bus: deterministic detectors → #insights → triggers
 src/triggers.mjs    — Trigger engine (cron, mention, channel_match, file_watch, webhook, lifecycle)
 src/routines.mjs    — Named multi-step workflows, idempotent by run_key
-src/notifier.mjs    — Long-poll waiter system for poll_messages
+src/notifier.mjs    — Long-poll waiters, shared by poll, poll_messages and /api/inbox
 src/sampler.mjs     — Agent spawning (headless, daemon, interactive) + --resume resolution
 src/resilience.mjs  — Watchdog (60s), cron persistence, heartbeat, stale detection
 src/snapshot.mjs    — Per-project change detection (git, CLAUDE.md, deps, files)
