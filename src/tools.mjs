@@ -2932,11 +2932,20 @@ export function registerTools(server, sessionId) {
     async () => {
       const ts = listTriggers();
       if (ts.length === 0) return txt("(aucun trigger enregistré)");
-      const lines = ts.map(t =>
-        `${t.enabled ? "🟢" : "⚫"} ${t.id} [${t.type}] — ${t.description || "(no desc)"}\n` +
-        `   action: ${t.action?.type}(${t.action?.params?.name || "?"}) | ` +
-        `fired ${t.fire_count}× | last: ${t.last_fired || "never"}`
-      );
+      const lines = ts.map(t => {
+        const cap = t.max_per_day ?? 100;
+        const aboutis = t.success_count ?? 0;
+        // Un trigger au plafond ne fait plus rien, et rien ne le disait : il
+        // affichait seulement son nombre de tirs, en vert, comme un trigger
+        // sain. Le réveil s'est ainsi tu pendant 24 h sans que ça se voie.
+        const sature = aboutis >= cap && t.last_fired &&
+          (Date.now() - new Date(t.last_fired).getTime()) < 24 * 3600 * 1000;
+        return `${sature ? "🟠" : t.enabled ? "🟢" : "⚫"} ${t.id} [${t.type}] — ${t.description || "(no desc)"}\n` +
+          `   action: ${t.action?.type}(${t.action?.params?.name || "?"}) | ` +
+          `${aboutis}/${cap} aboutis aujourd'hui | ${t.fire_count || 0} tir(s) | last: ${t.last_fired || "never"}` +
+          (sature ? `\n   ⚠️ PLAFOND ATTEINT — n'agit plus jusqu'à 24 h après le dernier tir.` : "") +
+          (t.last_refusal && !sature ? `\n   dernier refus : ${t.last_refusal}` : "");
+      });
       return txt(`📋 ${ts.length} trigger(s):\n\n${lines.join("\n\n")}`);
     }
   );

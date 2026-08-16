@@ -154,15 +154,15 @@ await alice.call("send_message", { channel: `e2e-${SUFFIX}`, content: "ceci cont
 await new Promise(r => setTimeout(r, 1500));
 const apresMatch = await alice.call("list_triggers", {});
 const ligne = apresMatch.split("\n\n").find(b => b.includes(TRIG)) || "";
-check("un channel_match fire sur son motif", /fired [1-9]/.test(ligne), ligne.split("\n").pop());
+check("un channel_match fire sur son motif", /[1-9]\d* tir\(s\)/.test(ligne), ligne.split("\n").pop());
 
 // Le pendant : un motif absent ne doit rien déclencher.
-const avant = (ligne.match(/fired (\d+)/) || [])[1];
+const avant = (ligne.match(/(\d+) tir\(s\)/) || [])[1];
 await alice.call("send_message", { channel: `e2e-${SUFFIX}`, content: "message sans le motif" });
 await new Promise(r => setTimeout(r, 1200));
 const apresNonMatch = await alice.call("list_triggers", {});
 const ligne2 = apresNonMatch.split("\n\n").find(b => b.includes(TRIG)) || "";
-const apres = (ligne2.match(/fired (\d+)/) || [])[1];
+const apres = (ligne2.match(/(\d+) tir\(s\)/) || [])[1];
 check("un channel_match ne fire pas hors motif", avant === apres, `${avant} → ${apres}`);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ await dormeur.close(); // il est désormais connu mais hors ligne
 
 function fireCount(liste) {
   const bloc = liste.split("\n\n").find(b => b.includes("evt-wake-any")) || "";
-  return parseInt((bloc.match(/fired (\d+)/) || [])[1] ?? "-1", 10);
+  return parseInt((bloc.match(/(\d+) tir\(s\)/) || [])[1] ?? "-1", 10);
 }
 const wake0 = fireCount(await alice.call("list_triggers", {}));
 check("le trigger de réveil générique existe", wake0 >= 0, "evt-wake-any absent");

@@ -301,6 +301,8 @@ export async function fireTrigger(id, { force = false, source = "manual", messag
   const result = await _runAction(t, source, message);
   t.last_fired = new Date().toISOString();
   t.fire_count = (t.fire_count || 0) + 1;
+  if (result.ok) t.success_count = (t.success_count ?? 0) + 1;
+  else t.last_refusal = result.reason || "inconnue";
   _saveDebounced();
   return { ok: result.ok, reason: result.reason, detail: result.detail };
 }
@@ -452,14 +454,29 @@ function _onCooldown(t) {
   return elapsed < (t.cooldown_s || 0);
 }
 
+/**
+ * Le plafond quotidien borne les actions RÉELLEMENT exécutées, pas les
+ * évaluations.
+ *
+ * Il comptait auparavant tous les tirs, y compris ceux qui se refusaient
+ * aussitôt — cible déjà en ligne, repo introuvable, aucun nom éligible. Or ces
+ * refus ne lancent rien et ne coûtent rien. Conséquence vécue : la suite de
+ * tests, dont les tirs se refusent tous par construction, a épuisé le quota du
+ * trigger de réveil de production, qui a cessé de réveiller quiconque pendant
+ * 24 h — sans que rien ne le signale.
+ *
+ * `fire_count` continue de compter les tirs, pour qu'on voie l'activité ;
+ * `success_count` compte ce qui a abouti, et c'est lui que le plafond borne.
+ */
 function _quotaOk(t) {
   if (!t.last_fired) return true;
   const cap = t.max_per_day ?? 100;
-  if (t.fire_count >= cap) {
-    // Reset rolling window once 24h have passed since first fire of the day
+  const aboutis = t.success_count ?? 0;
+  if (aboutis >= cap) {
+    // Fenêtre glissante : 24 h après le dernier tir, le compteur repart.
     const dayMs = 24 * 60 * 60 * 1000;
     if (Date.now() - new Date(t.last_fired).getTime() > dayMs) {
-      t.fire_count = 0;
+      t.success_count = 0;
       return true;
     }
     return false;
