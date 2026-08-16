@@ -28,6 +28,12 @@ import { upsertSpawnRegistry } from "./persistence.mjs";
 import { randomUUID } from "crypto";
 import { state } from "./state.mjs";
 import { recall } from "./identity.mjs";
+import { fileURLToPath } from "url";
+
+/** Chemin absolu de l'émetteur de jeton d'identité, cité dans les .mcp.json générés. */
+const CHEMIN_JETON = path
+  .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-token-helper.mjs")
+  .split(path.sep).join("/");
 
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
@@ -232,6 +238,13 @@ function ensureMcpJson(projectPath, port = 3777) {
             // reste anonyme tant qu'elle n'a pas appelé register — et le redevient
             // à chaque reconnexion.
             url: `http://localhost:${port}/sse?agent=\${WIKICHAT_AGENT:-}`,
+            // Pour une session interactive, WIKICHAT_AGENT n'est pas posé : le
+            // `?agent=` est vide et l'identité ne tient que par register(), donc
+            // elle meurt à la première reconnexion. Ce helper émet un jeton
+            // stable par fenêtre Claude (clé : le PID parent), que le serveur
+            // relie au nom au premier register et réattache ensuite tout seul.
+            // register() redevient ce qu'il annonce : une fois par conversation.
+            headersHelper: `node "${CHEMIN_JETON}"`,
           },
         },
       });

@@ -66,6 +66,38 @@ const CHEMIN_GUETTEUR = path
   .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-attendre-courrier.mjs")
   .split(path.sep).join("/");
 
+/**
+ * Prévient une session anonyme qu'elle l'est — au moment où ça lui coûte.
+ *
+ * Une identité ne survit à une reconnexion SSE que si un jeton la porte
+ * (`?agent=`, `?token=`, en-tête `x-wikichat-token`). Sans lui, tout
+ * redémarrage du service rend anonyme chaque session ouverte, en silence : les
+ * messages partent sous un identifiant jetable, les pairs ne savent plus qui
+ * parle, et personne ne peut plus être adressé par son nom.
+ *
+ * Vécu : deux agents ont continué à s'écrire par pseudonymes pendant une heure
+ * alors qu'aucun des deux ne portait plus le sien. Ils recevaient — le hook les
+ * identifie en relisant leur transcrit — mais émettaient sous « session-0247fa ».
+ * L'asymétrie est indétectable de l'intérieur : rien, nulle part, ne disait que
+ * le nom était perdu. D'où cet avertissement, à l'endroit exact où l'anonymat
+ * fait échouer l'intention.
+ *
+ * Répété à chaque appel : contrairement au guetteur, ce n'est pas une
+ * suggestion de confort — tant que l'agent n'a pas repris son nom, chacun de
+ * ses envois se perd pour ses interlocuteurs.
+ */
+function hintAnonyme(sessionId, { cible = null } = {}) {
+  const s = state.sessions.get(sessionId);
+  if (s?.name && !s.name.startsWith("session-")) return ""; // identité en place
+  const nom = s?.name || "cette session";
+  return `\n\n⚠️ TU N'ES PAS IDENTIFIÉ — tu apparais comme "${nom}".\n` +
+    `   ${cible ? `${cible} verra ce message` : "Tes messages partent"} sous cet identifiant jetable : ` +
+    `personne ne peut te répondre par ton nom, et tu ne seras pas réveillé si tu te déconnectes.\n` +
+    `   Reprends ton identité maintenant : register(name="<ton nom>", role="<ton rôle>").\n` +
+    `   (Une reconnexion au service efface le nom : c'est à refaire après chaque redémarrage, ` +
+    `sauf si ta configuration porte un jeton d'identité.)`;
+}
+
 function hintGuetteur(sessionId) {
   const s = state.sessions.get(sessionId);
   if (!s?.name || s.name.startsWith("session-")) return ""; // sans identité, rien à guetter
@@ -707,7 +739,11 @@ export function registerTools(server, sessionId) {
         : isDM ? `📩 DM envoyé à ${channel}` : `📤 Envoyé sur #${channel}`;
       // Le guetteur n'est proposé que si ce message crée réellement une attente.
       const guetteur = expects_reply ? hintGuetteur(sessionId) : "";
-      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.${guetteur}`);
+      // Un message qui interpelle quelqu'un ou qui attend une réponse n'a de
+      // sens que signé. C'est là que l'anonymat fait échouer l'intention.
+      const interpelle = /@[\w.-]{2,}/.test(content || "");
+      const anonyme = (interpelle || expects_reply || isDM) ? hintAnonyme(sessionId) : "";
+      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.${guetteur}${anonyme}`);
     }
   );
 
@@ -940,7 +976,9 @@ export function registerTools(server, sessionId) {
       }
 
       if (timeout <= 0) {
-        return txt(`📭 Rien de neuf pour toi.\n💡 Tu peux rendre la main — le hook boîte mail te livrera ce qui arrive à ton prochain tour. Ou poll(timeout_seconds=N) pour attendre maintenant.`);
+        // Une boîte vide sous un nom jetable n'a rien d'étonnant : rien ne peut
+        // y être adressé. Le dire, plutôt que de laisser conclure au silence.
+        return txt(`📭 Rien de neuf pour toi.\n💡 Tu peux rendre la main — le hook boîte mail te livrera ce qui arrive à ton prochain tour. Ou poll(timeout_seconds=N) pour attendre maintenant.${hintAnonyme(sessionId)}`);
       }
 
       // Long-poll : wait for a message that lands in MY inbox, re-waiting through
