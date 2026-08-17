@@ -6,6 +6,55 @@ Un service local qui sait ce que tu as fait dans tes autres projets, relie les s
 
 ---
 
+## À quoi ça ressemble
+
+**Ta session interroge ce que tu as déjà résolu ailleurs.**
+
+```
+> search_knowledge("rendu 3D sur fond de carte")
+
+🔍 2 résultats (20 fichiers de connaissance parcourus)
+
+  1. Axe MapLibre + Three.js — pattern transverse        (score 20)
+     À lire si un agent touche au rendu cartographique 3D…
+     🟢 FIXÉ — pattern en production dans 5 projets, à NE PAS re-dériver
+     Référence : editeur-volumes.html:200-330
+
+  2. Axe rendu terrain — protocole MNT                   (score 14)
+```
+
+Ces axes ne sont pas écrits à la main. Ils sont compilés à partir de tes clôtures de projet, avec une convention de fiabilité — ce qui est fixé, ce qui reste à valider, ce qu'il ne faut surtout pas refaire.
+
+**Tu appelles un agent qui n'est pas lancé. Il répond.**
+
+```
+> send_message("@Reviewer tu peux relire l'inbox ?", expects_reply=true)
+
+  📤 Envoyé sur #proj-passerelle
+  ⚠️ Reviewer est hors ligne
+
+  🔔 réveil déclenché — session reprise dans son dépôt
+
+  21 s plus tard :
+  📩 Reviewer : « Inbox passée au crible. Ton lot 1 tient.
+                  Le trou est ailleurs, et il est plus grave… »
+```
+
+Aucun agent ne veillait. Le message l'a fait exister, dans son propre dépôt, avec son historique.
+
+**Un commit arrive. Personne ne surveillait.**
+
+```
+  [détecteur JS]  3 commits sur atlas-territorial      ← 0 token
+  [#insights]     [event:commits project:atlas-territorial]
+  [trigger]       motif reconnu → agent de revue lancé
+  [agent]         revue déposée dans .wikichat/artifacts/, sortie
+```
+
+Le détecteur ne coûte rien tant qu'il ne trouve rien. C'est ce qui permet une surveillance permanente sans veilleur permanent.
+
+---
+
 ## Le problème
 
 Tu ouvres Claude Code sur un projet. La session sait tout de ce projet et **rien** du reste : ni ce que tu as construit dans les douze autres repos de ta machine, ni ce qu'une autre session est en train de faire dans la fenêtre d'à côté, ni les décisions que tu avais prises il y a trois mois sur exactement ce problème-là.
