@@ -91,7 +91,14 @@ try {
     const jeton = crypto.createHash("sha256")
       .update(`wikichat-identite:${sel()}:${conversation}`)
       .digest("hex").slice(0, 32);
-    process.stdout.write(JSON.stringify({ "x-wikichat-token": jeton }));
+    // L'identifiant de conversation voyage aussi, en clair : c'est le second
+    // filet côté serveur, qui retrouve un agent déjà déclaré même si la liaison
+    // de jeton manque. Le jeton reste la voie normale ; ceci n'est qu'un
+    // recours, et il ne divulgue rien que le disque local n'expose déjà.
+    process.stdout.write(JSON.stringify({
+      "x-wikichat-token": jeton,
+      "x-wikichat-claude-session": conversation,
+    }));
     process.exit(0);
   }
 

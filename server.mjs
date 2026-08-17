@@ -21,7 +21,7 @@ import { homedir } from "os";
 
 import { state, sysMsg, pushMessage, getSessionByName, setOnMessagePush, addMessageListener, rebuildChannelCounts, getChannelCount, markActivity, recentlyActive, isAgentInDMChannel, inboxFor } from "./src/state.mjs";
 import { loadProjects, saveSnapshot, saveProject, loadSpawnRegistry, gcSpawnRegistry, saveChannels, loadChannels, saveMessagesDebounced, loadMessages, flushSpawnRegistry, SESSION_STORE, getIdentityBinding, saveIdentityBinding, touchIdentityBinding } from "./src/persistence.mjs";
-import { loadMemories, flushMemories, restoreIdentity, remember, recall } from "./src/identity.mjs";
+import { loadMemories, flushMemories, restoreIdentity, remember, recall, knownAgentNames } from "./src/identity.mjs";
 import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters, registerWaiter } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
@@ -468,6 +468,24 @@ app.get("/sse", async (req, res) => {
   } else if (bindToken) {
     const ident = getIdentityBinding(bindToken);
     if (ident) { claimName = ident.name; claimRole = ident.role; }
+  }
+
+  // Second filet : la conversation Claude elle-même. Le hook de fin de tour
+  // consigne depuis longtemps `nom -> identifiant de conversation` ; on s'en
+  // sert ici à l'envers, quand aucune liaison de jeton ne répond.
+  //
+  // Le jeton dérive normalement de cet identifiant, donc les deux chemins se
+  // recouvrent — sauf si la liaison a été perdue, ou si Claude Code venait à
+  // renuméroter une conversation reprise. Ce recours rend l'identité
+  // indépendante d'un détail d'implémentation qu'on ne maîtrise pas : un agent
+  // qui s'est déclaré une fois se retrouve, même si le jeton, lui, a changé.
+  const convId = (req.query.claude_session || "").trim()
+    || (req.headers["x-wikichat-claude-session"] || "").toString().trim();
+  if (!claimName && convId) {
+    try {
+      const connu = knownAgentNames().find(n => recall(n, "__claude_session_id") === convId);
+      if (connu) { claimName = connu; claimRole = null; }
+    } catch { /* meilleur effort */ }
   }
   if (claimName) {
     const holder = getSessionByName(claimName);
