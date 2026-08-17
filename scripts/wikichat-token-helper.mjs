@@ -10,10 +10,24 @@
  * that re-attaches the same identity automatically. No env var, no behavioural
  * cooperation, multi-agent-per-repo safe (each window has a distinct PPID).
  *
- * Token is keyed by the helper's parent process id (= the Claude Code process).
- * Stored in ~/.wikichat/process-tokens/<PPID>.token so reconnects of the same
- * Claude window re-emit the same token; a brand-new Claude window gets a fresh
- * token (and thus needs its first register to bind it).
+ * Deux clés possibles, par ordre de préférence :
+ *
+ *   1. CLAUDE_CODE_SESSION_ID — l'identifiant de la CONVERSATION. C'est la
+ *      bonne granularité : un agent EST une conversation. Le jeton en dérive
+ *      par hachage, donc il est reproductible sans rien stocker, et il survit à
+ *      tout — fermeture de la fenêtre, reprise via --resume, redémarrage du
+ *      service, redémarrage de la machine. Une identité déclarée une fois reste
+ *      acquise pour toute la vie de la conversation.
+ *
+ *   2. Le PID du processus parent, quand la variable est absente (versions
+ *      anciennes, lancement inhabituel). Le jeton est alors tiré au sort et
+ *      stocké dans ~/.wikichat/process-tokens/<PPID>.token — il ne survit qu'à
+ *      la fenêtre, et périme au bout de 7 jours pour qu'une réattribution de PID
+ *      ne fasse hériter l'identité de personne.
+ *
+ * Le hachage est salé par un secret local, écrit une fois : sans lui, l'identifiant
+ * de conversation apparaît en clair dans les chemins de transcrits, et connaître
+ * un chemin suffirait à se faire passer pour son auteur.
  *
  * Claude Code contract: stdout MUST be a JSON object of header name → value.
  * Anything else, or any non-zero exit, drops the headers.
@@ -25,6 +39,24 @@ import crypto from "crypto";
 
 const TOK_DIR = path.join(os.homedir(), ".wikichat", "process-tokens");
 const ppid = process.ppid || process.pid; // fall back to self if PPID unavailable
+const SEL_FILE = path.join(os.homedir(), ".wikichat", "identity-salt");
+
+/** Secret local, créé au premier passage, pour que le jeton ne soit pas devinable. */
+function sel() {
+  try {
+    return fs.readFileSync(SEL_FILE, "utf8").trim() || null;
+  } catch {
+    const s = crypto.randomBytes(24).toString("hex");
+    try {
+      fs.mkdirSync(path.dirname(SEL_FILE), { recursive: true });
+      fs.writeFileSync(SEL_FILE, s, { mode: 0o600 });
+    } catch { /* non bloquant */ }
+    return s;
+  }
+}
+
+/** Identifiant de conversation, s'il est exposé. */
+const conversation = (process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || "").trim();
 
 /**
  * Péremption des jetons abandonnés.
@@ -53,6 +85,16 @@ function purgerJetonsPerimes() {
 }
 
 try {
+  // Chemin nominal : la conversation est connue, le jeton en dérive. Rien à
+  // stocker, rien à périmer, rien à perdre.
+  if (conversation) {
+    const jeton = crypto.createHash("sha256")
+      .update(`wikichat-identite:${sel()}:${conversation}`)
+      .digest("hex").slice(0, 32);
+    process.stdout.write(JSON.stringify({ "x-wikichat-token": jeton }));
+    process.exit(0);
+  }
+
   fs.mkdirSync(TOK_DIR, { recursive: true });
   const tokenFile = path.join(TOK_DIR, `${ppid}.token`);
   let token = null;
