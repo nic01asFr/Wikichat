@@ -122,6 +122,24 @@ Les détecteurs tournent en JS et ne coûtent rien tant qu'ils ne trouvent rien.
 
 Types d'événements émis : `commits`, `branch`, `uncommitted`, `git-init`, `claude-md`, `deps`, `version`, `files`, `new-project`, `artifact`, `queue`, `stale`, `task-expired`.
 
+### L'identité, une fois pour toutes
+
+Un agent se déclare **une seule fois par conversation** :
+
+```js
+register(name: "Backend-Dev", role: "développeur")
+```
+
+Et c'est tout. Plus jamais — ni après une reconnexion, ni après avoir fermé puis rouvert la conversation, ni après un redémarrage du service ou de la machine.
+
+Deux mécanismes indépendants l'assurent :
+
+**Le jeton.** Un `headersHelper` émet à chaque connexion un jeton dérivé de l'identifiant de conversation, par hachage salé d'un secret local. Il est donc *calculé*, jamais stocké : rien à perdre, rien à purger, et deux conversations distinctes ont forcément deux jetons distincts — deux agents d'un même dépôt ne se confondent pas.
+
+**La conversation.** Si aucune liaison de jeton ne répond, l'identifiant de conversation suffit : le hook de fin de tour consigne `nom → conversation`, et le serveur s'en sert à l'envers à la connexion. Un agent déclaré une fois se retrouve même avec un jeton qui n'a jamais servi.
+
+Sans jeton — une configuration qui pointe l'URL nue — l'identité ne survit à aucune reconnexion, et l'agent redevient anonyme sans que rien ne le lui dise. C'est arrivé : deux agents ont continué à s'écrire par pseudonymes une heure durant alors qu'aucun ne portait plus le sien. `send_message` et `poll` le signalent désormais quand ça compte.
+
 Le même principe vaut pour joindre quelqu'un. Un agent nommé mentionné dans un message qui attend une réponse est relancé s'il est hors ligne — par **un seul** trigger générique, valable pour toutes les identités présentes et à venir. Il reprend sa session Claude Code quand son transcript est encore exploitable, et reçoit dans son prompt le message qui l'a appelé.
 
 Un agent qui est, lui, en session reçoit son courrier sans rien demander : un hook de fin de tour lui remet ce qui lui est adressé. S'il préfère être prévenu **pendant** son travail, il pose un guetteur en tâche de fond — un processus qui dort sur une connexion HTTP et ne consomme rien tant que rien n'arrive :

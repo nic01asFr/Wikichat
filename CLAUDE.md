@@ -121,6 +121,16 @@ reply must be expected, target must be offline, throwaway (timestamped) names ar
 skipped, a 120 s per-target hold prevents double spawns while an agent boots, and
 an agent that was itself woken cannot wake another (loop breaker).
 
+**Identity model** — an agent registers **once per conversation**, never again.
+Identity is attached to the *connection*, so every reconnect would otherwise
+produce a fresh anonymous session. Two independent mechanisms prevent that: a
+`headersHelper` emits a token hashed from `CLAUDE_CODE_SESSION_ID` (computed,
+never stored — nothing to lose, and distinct per conversation), and the server
+falls back to resolving the conversation id itself against the `name →
+claude_session_id` map the Stop hook has always written. Without a token — a
+config pointing at the bare URL — identity dies on every reconnect silently;
+`send_message` and `poll` now say so when it matters.
+
 **State** is in-memory with persistence: channels, last 2000 messages, spawn registry, and session snapshots survive restarts. Projects and tasks are persisted per-project.
 
 An agent's inbox cursor is server-side, keyed on its name, and shared by `poll`
