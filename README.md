@@ -26,6 +26,22 @@ WikiChat répond à ces trois manques.
 
 **Zéro coût au repos.** Installé comme service, WikiChat démarre au logon et reste dormant à 0 % CPU. Il s'éveille quand une session Claude Code s'enregistre, se rendort cinq minutes après la dernière.
 
+## Sur ton abonnement, pas sur l'API
+
+C'est la décision qui structure tout le reste, et elle mérite d'être explicite.
+
+Les agents que WikiChat lance **sont** des sessions Claude Code : il exécute `claude -p` dans le dépôt visé. Il n'y a **aucune clé API à fournir**, rien à provisionner, rien à surveiller côté facturation.
+
+Trois conséquences concrètes :
+
+**Un agent délégué vaut ta session.** Il lit le `CLAUDE.md` du projet, hérite de tes serveurs MCP, de tes skills, de tes permissions. Quand un agent a besoin de GitHub, il utilise *ton* outillage MCP — c'est pourquoi WikiChat ne va jamais chercher une source externe lui-même : il oriente, l'agent exécute. Une orchestration bâtie sur l'API redescendrait à une boucle d'appels sans ce contexte.
+
+**Le coût n'est pas au token.** Une surveillance permanente facturée à l'appel devient vite déraisonnable ; c'est même la mesure qui a fait retirer les daemons résidents de ce projet — 28,4 M tokens d'entrée pour trois actes utiles en trois mois. Sur un abonnement, ce qui compte est le nombre de tours et de sessions, pas une addition. Les garde-fous bornent donc ces grandeurs-là : sessions concurrentes (`WIKICHAT_MAX_SESSIONS`), quotas par appelant, profondeur de spawn, plafonds par trigger, tours d'un daemon (`WIKICHAT_DAEMON_MAX_TURNS`).
+
+**Rien ne sort de la machine.** Le service écoute sur `127.0.0.1`, l'état vit dans tes dépôts, et aucun secret n'a besoin d'exister pour que ça tourne.
+
+**Ce que ça implique aussi**, et qu'il faut savoir avant de s'y engager : Claude Code doit être installé et connecté, et les agents consomment ton quota d'abonnement comme le ferait ton propre travail. Un déclencheur mal réglé ne te coûtera pas d'argent, mais il peut consommer ta capacité — d'où les plafonds ci-dessus, actifs par défaut.
+
 ## Quand ça ne sert à rien
 
 Un seul projet, une seule session, rien à retenir d'un mois sur l'autre : WikiChat n'apporte qu'une couche de complexité. Son intérêt commence avec plusieurs projets qui se ressemblent, plusieurs sessions simultanées, ou du travail répétitif qui gagnerait à tourner sans toi.
@@ -257,6 +273,7 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 | `HOST` | `127.0.0.1` | Adresse d'écoute |
 | `MAX_MESSAGES` | `2000` | Messages gardés en mémoire |
 | `WIKICHAT_MAX_SESSIONS` | `30` | Budget de spawn concurrent |
+| `WIKICHAT_DAEMON_MAX_TURNS` | `50` | Tours max d'un daemon avant qu'il sorte |
 | `WIKICHAT_MAX_SPAWN_DEPTH` | `3` | Profondeur de spawn maximale |
 | `WIKICHAT_MAX_RESUME_MB` | `5` | Plafond de transcript repris via `--resume` |
 | `WIKICHAT_PRINCIPAL_GATE` | `any-named` | `any-named` / `strict` / `0` |

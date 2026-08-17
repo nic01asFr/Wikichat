@@ -41,6 +41,18 @@ const MAX_CONCURRENT_RESPAWNS = 3;
 
 // ── Resource budget — global ceiling on live + spawning sessions ──────────────
 const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "30");
+/**
+ * Bornage d'un daemon, en TOURS et non en dollars.
+ *
+ * Les agents tournent sur l'abonnement Claude Code, pas sur l'API : un plafond
+ * `--max-budget-usd` n'y correspond à aucune facturation. Il donnait l'illusion
+ * d'une garde-fou tout en bornant sur une grandeur qui n'existe pas ici.
+ *
+ * Ce qui coûte réellement, c'est le nombre de tours : une veille en boucle relit
+ * tout son historique à chaque passage, donc la dépense croît de façon
+ * quadratique. C'est cette grandeur-là qu'on borne.
+ */
+const MAX_TOURS_DAEMON = parseInt(process.env.WIKICHAT_DAEMON_MAX_TURNS || "50");
 let _pendingSpawns = 0; // processes spawned but not yet MCP-connected
 
 /** Count current load: named MCP sessions + processes still booting.
@@ -780,7 +792,7 @@ export function spawnDaemon(projectPath, options = {}) {
     } else if (options.sessionId) {
       console.log(`[spawn] ${name} : transcript de ${options.sessionId} introuvable — démarrage frais.`);
     }
-    baseArgs.push("--max-budget-usd", "5");
+    baseArgs.push("--max-turns", String(MAX_TOURS_DAEMON));
 
     const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
 
@@ -831,7 +843,7 @@ export function spawnDaemon(projectPath, options = {}) {
           const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
             ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
             ...(respawnResume ? ["--resume", respawnResume.sessionId] : []),
-            "--model", model, "--max-budget-usd", "5"];
+            "--model", model, "--max-turns", String(MAX_TOURS_DAEMON)];
           const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
           const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
             cwd: projectPath,
