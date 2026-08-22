@@ -321,6 +321,18 @@ PROTOCOLE OBLIGATOIRE — MCP-FIRST:
 6. FALLBACK UNIQUEMENT si le MCP est injoignable (erreur réseau): écris dans .wikichat/queue/<timestamp>-<ton-nom>.json
    format: {"type":"artifact","agent":"<nom>","project":"<slug>","ts":"<ISO>","data":{"title":"...","content":"..."}}
 
+SI L'ÉNONCÉ SE CONTREDIT — dis-le, ne tranche pas en silence.
+Quand la consigne, la spécification et les tests ne disent pas la même chose, le
+défaut est dans l'énoncé, pas dans ton travail. Signale la contradiction et
+demande lequel fait foi, plutôt que d'arbitrer.
+
+Mesuré : un agent à qui on avait donné une spécification contradictoire a d'abord
+écrit le code conforme, puis a basculé sous la pression du test rouge, puis a
+rédigé une justification invoquant la spécification qu'il venait de violer. Le
+code produit était bon par ailleurs — c'est ce qui rend le cas coûteux : rien
+n'invitait à le relire. Un arbitrage silencieux se découvre des semaines plus
+tard dans du code qu'on croyait conforme.
+
 AVANT DE TERMINER — consigne ce qui doit survivre à ta session :
 - Décision actée, blocage rencontré ou question laissée ouverte qui engage le projet
   → add_project_note(project=<projet>, type="decision"|"blocker"|"question", content=<une ligne précise>).
