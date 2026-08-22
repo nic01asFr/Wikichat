@@ -70,7 +70,13 @@ const SECRET_FIELDS = new Set([
 const SECRET_PATTERNS = [
   { name: "absolute-win-path", re: /[A-Za-z]:(?:\\{1,2}|\/)Users/ },
   { name: "absolute-unix-home", re: /\/(?:home|Users)\/[^/"]+\/\.wikichat/ },
-  { name: "bearer-token", re: /\b(sk|tok|bearer|ghp)[-_][A-Za-z0-9]{16,}/i },
+  // Le corps d'un jeton contient des séparateurs — `sk_live_…`, `sk-proj-…`,
+  // `ghp_…`. En n'acceptant que [A-Za-z0-9] après le préfixe, ce motif ratait
+  // tout jeton segmenté : Stripe, OpenAI moderne, et les jetons GitHub autres
+  // que le format historique. Vérifié — cinq échantillons sur cinq passaient.
+  { name: "bearer-token", re: /\b(sk|tok|bearer|gh[pousr])[-_][A-Za-z0-9_-]{16,}/i },
+  { name: "cle-google", re: /\bAIza[0-9A-Za-z_-]{35}/ },
+  { name: "jeton-slack", re: /\bxox[bpsaor]-[0-9A-Za-z-]{10,}/ },
   { name: "process-token", re: /"process_token"\s*:/ },
 
   // Cinq formats que le scan ne connaissait pas, et qui passaient donc dans le
