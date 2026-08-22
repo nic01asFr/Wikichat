@@ -72,6 +72,19 @@ const SECRET_PATTERNS = [
   { name: "absolute-unix-home", re: /\/(?:home|Users)\/[^/"]+\/\.wikichat/ },
   { name: "bearer-token", re: /\b(sk|tok|bearer|ghp)[-_][A-Za-z0-9]{16,}/i },
   { name: "process-token", re: /"process_token"\s*:/ },
+
+  // Cinq formats que le scan ne connaissait pas, et qui passaient donc dans le
+  // snapshot poussé sur GitHub. Le message « 0 secret détecté » ne voulait pas
+  // dire « aucun secret » : il voulait dire « aucun des quatre motifs connus ».
+  //
+  // Trouvés en comparant ce scan au filtre écrit par un agent du pod SSPCloud,
+  // qui couvrait précisément ceux-là. Mesuré : cinq échantillons sur six
+  // passaient au travers.
+  { name: "github-pat-fin", re: /\bgithub_pat_[A-Za-z0-9_]{20,}/ },
+  { name: "cle-aws", re: /\bAKIA[0-9A-Z]{16}\b/ },
+  { name: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
+  { name: "cle-privee", re: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/ },
+  { name: "identifiants-url", re: /\b[a-z][a-z0-9+.-]*:\/\/[^\/\s:@]+:[^\/\s:@]+@/ },
 ];
 
 /**
@@ -427,7 +440,7 @@ function main() {
     console.error("  Export bloqué tant que ces motifs ne sont pas traités.");
     process.exit(2);
   }
-  console.log("  Sanitisation OK — 0 secret détecté dans le snapshot.");
+  console.log(`  Sanitisation OK — aucun des ${SECRET_PATTERNS.length} motifs connus détecté dans le snapshot.`);
 }
 
 main();
