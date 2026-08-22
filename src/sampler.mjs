@@ -54,6 +54,21 @@ const MAX_SESSIONS = parseInt(process.env.WIKICHAT_MAX_SESSIONS || "30");
  * quadratique. C'est cette grandeur-là qu'on borne.
  */
 const MAX_TOURS_DAEMON = parseInt(process.env.WIKICHAT_DAEMON_MAX_TURNS || "50");
+/**
+ * Borne d'un daemon en TEMPS MURAL — la seule qui fonctionne réellement.
+ *
+ * `--max-turns` n'existe ni en Claude Code 2.1.86 (poste local) ni en 2.1.237
+ * (pod SSPCloud) : le CLI l'ignore en silence, sans erreur ni code de retour.
+ * `--max-budget-usd` existe mais ne borne rien sur abonnement, où le coût
+ * remonté vaut zéro. Les deux plafonds délégués au CLI sont donc inertes, et
+ * `spawnDaemon` n'avait par ailleurs aucune minuterie — contrairement à
+ * `spawnHeadless`. Un daemon n'était en pratique borné par rien.
+ *
+ * Le temps mural, lui, est mesurable ici et ne dépend d'aucune version. On
+ * garde `--max-turns` — inoffensif s'il est ignoré, utile s'il est un jour
+ * reconnu — mais on ne compte plus dessus.
+ */
+const MAX_DUREE_DAEMON_MS = parseInt(process.env.WIKICHAT_DAEMON_MAX_MS || `${30 * 60 * 1000}`);
 let _pendingSpawns = 0; // processes spawned but not yet MCP-connected
 
 /** Count current load: named MCP sessions + processes still booting.
@@ -835,6 +850,14 @@ export function spawnDaemon(projectPath, options = {}) {
 
     child.stdout.on("data", () => {}); // drain
     child.stderr.on("data", () => {}); // drain
+
+    // Garde-fou réel : au-delà de la durée admise, on arrête. Sans lui, un
+    // daemon qui boucle tourne jusqu'à l'arrêt du service.
+    const minuterie = setTimeout(() => {
+      console.warn(`[spawn] ${name} : durée maximale atteinte (${Math.round(MAX_DUREE_DAEMON_MS / 60000)} min) — arrêt.`);
+      try { child.kill(); } catch { /* déjà mort */ }
+    }, MAX_DUREE_DAEMON_MS);
+    child.on("exit", () => clearTimeout(minuterie));
 
     // Auto-respawn with exponential backoff + global rate limit
     let respawnCount = 0;

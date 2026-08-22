@@ -85,7 +85,9 @@ Trois conséquences concrètes :
 
 **Un agent délégué vaut ta session.** Il lit le `CLAUDE.md` du projet, hérite de tes serveurs MCP, de tes skills, de tes permissions. Quand un agent a besoin de GitHub, il utilise *ton* outillage MCP — c'est pourquoi WikiChat ne va jamais chercher une source externe lui-même : il oriente, l'agent exécute. Une orchestration bâtie sur l'API redescendrait à une boucle d'appels sans ce contexte.
 
-**Le coût n'est pas au token.** Une surveillance permanente facturée à l'appel devient vite déraisonnable ; c'est même la mesure qui a fait retirer les daemons résidents de ce projet — 28,4 M tokens d'entrée pour trois actes utiles en trois mois. Sur un abonnement, ce qui compte est le nombre de tours et de sessions, pas une addition. Les garde-fous bornent donc ces grandeurs-là : sessions concurrentes (`WIKICHAT_MAX_SESSIONS`), quotas par appelant, profondeur de spawn, plafonds par trigger, tours d'un daemon (`WIKICHAT_DAEMON_MAX_TURNS`).
+**Le coût n'est pas au token.** Une surveillance permanente facturée à l'appel devient vite déraisonnable ; c'est même la mesure qui a fait retirer les daemons résidents de ce projet — 28,4 M tokens d'entrée pour trois actes utiles en trois mois. Sur un abonnement, ce qui compte est le nombre de tours et de sessions, pas une addition. Les garde-fous bornent donc ces grandeurs-là : sessions concurrentes (`WIKICHAT_MAX_SESSIONS`), quotas par appelant, profondeur de spawn, plafonds par trigger, et **durée d'un daemon** (`WIKICHAT_DAEMON_MAX_MS`).
+
+Une précision mesurée, parce qu'elle contredit une intuition : `--max-turns` n'existe ni en Claude Code 2.1.86 ni en 2.1.237, et le CLI l'ignore **en silence** ; `--max-budget-usd` existe mais ne borne rien sur abonnement, où le coût remonté vaut zéro. Déléguer un plafond au CLI ne borne donc rien. Le temps mural est la seule grandeur mesurable de ce côté-ci, et c'est celle qu'on applique.
 
 **Rien ne sort de la machine.** Le service écoute sur `127.0.0.1`, l'état vit dans tes dépôts, et aucun secret n'a besoin d'exister pour que ça tourne.
 
@@ -322,7 +324,8 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 | `HOST` | `127.0.0.1` | Adresse d'écoute |
 | `MAX_MESSAGES` | `2000` | Messages gardés en mémoire |
 | `WIKICHAT_MAX_SESSIONS` | `30` | Budget de spawn concurrent |
-| `WIKICHAT_DAEMON_MAX_TURNS` | `50` | Tours max d'un daemon avant qu'il sorte |
+| `WIKICHAT_DAEMON_MAX_MS` | `1800000` | Durée max d'un daemon — la seule borne qui tienne (voir ci-dessous) |
+| `WIKICHAT_DAEMON_MAX_TURNS` | `50` | Tours max, si le CLI le reconnaît (ignoré en 2.1.86 et 2.1.237) |
 | `WIKICHAT_MAX_SPAWN_DEPTH` | `3` | Profondeur de spawn maximale |
 | `WIKICHAT_MAX_RESUME_MB` | `5` | Plafond de transcript repris via `--resume` |
 | `WIKICHAT_PRINCIPAL_GATE` | `any-named` | `any-named` / `strict` / `0` |

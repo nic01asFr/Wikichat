@@ -54,7 +54,8 @@ des triggers ; les trois triggers lifecycle correspondants sont désactivés.
 - `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant mise en sommeil (défaut 5min)
 - `WIKICHAT_MAX_RESUME_MB=5` : plafond de transcript repris via `--resume`
 - `WIKICHAT_MAX_SESSIONS=30` : budget de spawn concurrent
-- `WIKICHAT_DAEMON_MAX_TURNS=50` : tours max d'un daemon (les agents tournent sur l'abonnement, pas sur l'API : borner en dollars n'aurait aucun sens)
+- `WIKICHAT_DAEMON_MAX_MS=1800000` : durée max d'un daemon — SEULE borne effective. `--max-turns` est ignoré en silence par le CLI (absent en 2.1.86 et 2.1.237) et `--max-budget-usd` ne borne rien sur abonnement.
+- `WIKICHAT_DAEMON_MAX_TURNS=50` : passé au CLI au cas où une version le reconnaîtrait
 
 ## Distribution principle
 
