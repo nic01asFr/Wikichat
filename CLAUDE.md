@@ -50,7 +50,17 @@ des triggers ; les trois triggers lifecycle correspondants sont désactivés.
   - `any-named` : tout session non-anonyme registered active la team
   - `strict` : seul `WIKICHAT_PRINCIPAL_AGENT` (défaut "Claude-Code") compte
   - `0` : pas de gate principal (registry seul décide)
-- `WIKICHAT_DORMANT_DISABLED=1` : toujours actif (legacy, déconseillé)
+- `WIKICHAT_DORMANT_DISABLED=1` : **à poser sur toute instance qui sert des agents
+  autonomes** — pas seulement sur une instance hébergée. Le critère est l'usage,
+  pas le déploiement.
+  La porte dormante suppose que « personne n'est là » signifie « rien à faire ».
+  C'est vrai d'un poste de travail, faux dès qu'un agent doit travailler la nuit :
+  la porte se ferme exactement au moment où la routine devait tourner. Et le
+  rattrapage au réveil (`catchupMissedCrons`) ne répare pas ce cas — rejouer une
+  tâche nocturne le matin ne fait que déplacer le travail devant l'utilisateur,
+  alors que son intérêt était de se faire pendant son sommeil.
+  Cas mixte typique : un pod qui porte des onglets de travail en journée ET des
+  routines nocturnes. Le même service sert les deux, et seul l'usage tranche.
 - `WIKICHAT_DORMANT_GRACE_MS=300000` : grace period avant mise en sommeil (défaut 5min)
 - `WIKICHAT_MAX_RESUME_MB=5` : plafond de transcript repris via `--resume`
 - `WIKICHAT_MAX_SESSIONS=30` : budget de spawn concurrent

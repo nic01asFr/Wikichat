@@ -330,6 +330,7 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 | `WIKICHAT_MAX_RESUME_MB` | `5` | Plafond de transcript repris via `--resume` |
 | `WIKICHAT_PRINCIPAL_GATE` | `any-named` | `any-named` / `strict` / `0` |
 | `WIKICHAT_DORMANT_GRACE_MS` | `300000` | Délai avant mise en sommeil |
+| `WIKICHAT_DORMANT_DISABLED` | (off) | `1` sur toute instance **servant des agents autonomes** — la porte dormante suppose que « personne n'est là » = « rien à faire », ce qui est faux dès qu'une routine doit tourner la nuit |
 | `WIKICHAT_AUTONOMOUS_TEAM` | (off) | `1` provisionne les triggers de la team |
 | `WIKICHAT_TRIGGERS_DISABLED` | (off) | `1` désarme le moteur de triggers |
 | `WIKICHAT_NO_OVERLAY_INSTALL` | (off) | `1` empêche l'installation auto de l'overlay |
