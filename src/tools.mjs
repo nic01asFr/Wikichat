@@ -805,7 +805,11 @@ export function registerTools(server, sessionId) {
       since_id: z.string().optional().describe("Messages après cet ID"),
     },
     async ({ channel: rawChannel, from_session, since_minutes, limit, since_id }) => {
-      const channel = normalizeChannel(rawChannel);
+      // `let` et non `const` : les deux branches ci-dessous réaffectent. La
+      // normalisation de canal avait été introduite ici en `const`, ce qui
+      // faisait planter read_messages sur « Assignment to constant variable »
+      // dès qu'on visait un DM — c'est-à-dire sur tout `@Nom` et tout `@me`.
+      let channel = normalizeChannel(rawChannel);
       // Resolve "@Name" → DM channel key. "@me" / self-reference → DMs only.
       // Same name resolution as send_message so both sides agree on the key.
       let dmOnly = false;

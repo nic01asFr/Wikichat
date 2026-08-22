@@ -133,6 +133,14 @@ const poll2 = await bob.call("poll", {});
 check("poll livre le message adressé", /ping e2e/.test(poll1));
 check("poll ne re-livre pas le même message", !/ping e2e/.test(poll2), "curseur non avancé");
 
+// Bug réel : read_messages réaffectait une `const` dès qu'on visait un DM, donc
+// tout `@Nom` et tout `@me` plantaient sur « Assignment to constant variable ».
+// Un agent qui cherchait ses messages directs recevait une erreur brute.
+const dmSelf = await bob.call("read_messages", { channel: "@me", since_minutes: 5 });
+check("read_messages accepte @me sans planter", !/Assignment to constant/.test(dmSelf), dmSelf.slice(0, 60));
+const dmNamed = await bob.call("read_messages", { channel: `@${ALICE}`, since_minutes: 5 });
+check("read_messages accepte @Nom sans planter", !/Assignment to constant/.test(dmNamed), dmNamed.slice(0, 60));
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section("Triggers");
