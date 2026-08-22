@@ -44,26 +44,80 @@ function detectAgentName(input) {
 
   const sid = input.session_id;
   const cache = sid ? path.join(HOOK_DIR, `sid-${String(sid).replace(/[^\w.-]/g, "_")}.name`) : null;
-  if (cache) { try { const n = fs.readFileSync(cache, "utf8").trim(); if (n) return n; } catch { /* miss */ } }
+
+  // Le cache retient AUSSI jusqu'où le transcrit a été lu.
+  //
+  // Il ne retenait que le nom, et rendait la main sans jamais rouvrir le
+  // transcrit. Un agent qui se renomme en cours de conversation restait donc
+  // identifié à son premier nom, définitivement — son hook relevait la boîte de
+  // quelqu'un d'autre, et avançait le curseur de cette autre identité.
+  //
+  // Vécu : un agent enregistré quatorze fois, dont la dernière sous
+  // « Refacteur », dont le hook cherchait depuis douze jours le courrier de
+  // « Claude-Audit-Simplification ». Il n'a reçu aucun message par ce chemin de
+  // toute la semaine, et rien ne le signalait.
+  //
+  // On relit donc, mais seulement ce qui a été ajouté depuis la dernière fois :
+  // le coût est proportionnel aux nouveaux octets, pas à la taille du transcrit.
+  let nom = null, offset = 0;
+  if (cache) {
+    try {
+      const brut = fs.readFileSync(cache, "utf8").trim();
+      if (brut.startsWith("{")) { const o = JSON.parse(brut); nom = o.name || null; offset = o.offset || 0; }
+      else if (brut) { nom = brut; offset = 0; } // ancien format : nom nu, on relira tout
+    } catch { /* pas de cache */ }
+  }
 
   const tp = input.transcript_path;
-  if (!tp || !fs.existsSync(tp)) return null;
-  let found = null;
+  if (!tp || !fs.existsSync(tp)) return nom;
+
+  let taille = 0;
+  try { taille = fs.statSync(tp).size; } catch { return nom; }
+  if (nom && taille <= offset) return nom; // rien de neuf depuis la dernière lecture
+
   try {
-    for (const ln of fs.readFileSync(tp, "utf8").split("\n")) {
-      if (!ln.includes("register")) continue; // cheap prefilter before JSON.parse
+    let texte;
+    if (offset > 0 && taille > offset) {
+      // Lecture incrémentale. On relit un octet AVANT l'offset pour savoir si
+      // celui-ci tombe sur une fin de ligne : si oui, tout ce qui suit est
+      // complet et doit être conservé. Jeter systématiquement la première ligne
+      // reviendrait à jeter le seul contenu nouveau quand l'offset est aligné —
+      // et le renommage suivant passerait inaperçu.
+      const depuis = Math.max(0, offset - 1);
+      const fd = fs.openSync(tp, "r");
+      const buf = Buffer.alloc(taille - depuis);
+      fs.readSync(fd, buf, 0, buf.length, depuis);
+      fs.closeSync(fd);
+      texte = buf.toString("utf8");
+      if (depuis < offset && texte.startsWith("\n")) {
+        texte = texte.slice(1);             // offset aligné : rien à jeter
+      } else {
+        const saut = texte.indexOf("\n");   // offset au milieu
+        if (saut >= 0) texte = texte.slice(saut + 1);
+      }
+    } else {
+      texte = fs.readFileSync(tp, "utf8");
+    }
+    for (const ln of texte.split("\n")) {
+      if (!ln.includes("register")) continue; // filtre bon marché avant JSON.parse
       let o; try { o = JSON.parse(ln); } catch { continue; }
       const content = o?.message?.content;
       if (!Array.isArray(content)) continue;
       for (const e of content) {
         if (e?.type === "tool_use" && /wikichat__register$/.test(e.name || "") && e.input?.name) {
-          found = String(e.input.name).trim(); // keep scanning → last register wins (rename)
+          nom = String(e.input.name).trim(); // on continue : le dernier register gagne
         }
       }
     }
-  } catch { /* unreadable transcript */ }
-  if (found && cache) { try { fs.mkdirSync(HOOK_DIR, { recursive: true }); fs.writeFileSync(cache, found); } catch { /* */ } }
-  return found;
+  } catch { /* transcrit illisible : on garde ce qu'on avait */ }
+
+  if (cache) {
+    try {
+      fs.mkdirSync(HOOK_DIR, { recursive: true });
+      fs.writeFileSync(cache, JSON.stringify({ name: nom, offset: taille }));
+    } catch { /* */ }
+  }
+  return nom;
 }
 
 /**
