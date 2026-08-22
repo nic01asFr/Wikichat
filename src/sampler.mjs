@@ -15,7 +15,8 @@
  *      Falls back to spawnHeadless if no live session found.
  *      Best for: asking a long-running agent to do something.
  *
- * Safety: this module ONLY writes to .mcp.json if it doesn't exist.
+ * Safety: this module writes .mcp.json (création, ou ajout du seul jeton
+ *         d'identité s'il manque à une entrée wikichat existante).
  *         It NEVER modifies CLAUDE.md or any existing file.
  */
 
@@ -237,6 +238,31 @@ export function buildSpawnArgs(claudeBin, extraArgs) {
  */
 function ensureMcpJson(projectPath, port = 3777) {
   const mcpPath = path.join(projectPath, ".mcp.json");
+
+  // Mise à niveau d'un fichier DÉJÀ présent.
+  //
+  // On ne créait le fichier que s'il manquait, et on n'y revenait jamais. Les
+  // dépôts équipés avant l'arrivée du jeton d'identité gardaient donc la forme
+  // `?agent=${WIKICHAT_AGENT:-}` — une variable que rien ne définit pour une
+  // session interactive. L'URL se résolvait en `?agent=` vide : anonyme à
+  // chaque reconnexion, sans que personne ne le sache. 30 dépôts étaient dans
+  // ce cas. C'est exactement le motif « écrit une fois, jamais relu » que ce
+  // projet passe son temps à corriger ailleurs.
+  //
+  // On n'ajoute que ce qui manque, et on ne touche à aucune autre entrée.
+  if (fs.existsSync(mcpPath)) {
+    try {
+      const conf = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      const wc = conf?.mcpServers?.wikichat;
+      if (wc && !wc.headersHelper) {
+        wc.headersHelper = `node "${CHEMIN_JETON}"`;
+        writeAtomicJSON(mcpPath, conf);
+        console.log(`[Sampler] .mcp.json mis à niveau (jeton d'identité) : ${projectPath}`);
+      }
+    } catch { /* fichier illisible ou non-JSON : on n'y touche pas */ }
+    return;
+  }
+
   if (!fs.existsSync(mcpPath)) {
     try {
       writeAtomicJSON(mcpPath, {
