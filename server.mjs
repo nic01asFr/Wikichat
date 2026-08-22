@@ -379,6 +379,40 @@ setInterval(async () => {
 const app = express();
 app.use(express.json());
 
+/**
+ * Garde contre le rebinding DNS.
+ *
+ * Le service ecoute sur la loopback, ce qui le protege du reseau — mais PAS
+ * d'une page web visitee par le navigateur de l'utilisateur, ni du navigateur
+ * pilote par un agent. Un nom de domaine qui resout vers 127.0.0.1 atteint la
+ * loopback depuis l'exterieur : l'origine est distante, la destination est
+ * locale, et rien ne le distingue d'un appel legitime.
+ *
+ * L'enjeu est concret ici, parce qu'une chaine d'injection complete existe :
+ * `/api/chat` accepte un expediteur arbitraire sans authentification, le canal
+ * `__broadcast__` delivre a toutes les sessions, et le hook de boite reinjecte
+ * le contenu brut dans le contexte de l'agent pour le relancer — sans humain
+ * dans la boucle. Un agent est un lecteur qui ne distingue pas la donnee de
+ * l'instruction, et il a Bash derriere.
+ *
+ * Un navigateur envoie toujours l'en-tete Host avec le nom qu'il a resolu. On
+ * n'accepte donc que les noms qui designent vraiment la machine locale.
+ */
+const HOTES_ADMIS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", "0.0.0.0"]);
+function hoteLocal(h) {
+  if (!h) return true; // client non-navigateur : pas de Host, pas de rebinding
+  const sansPort = String(h).replace(/:\d+$/, "").toLowerCase();
+  return HOTES_ADMIS.has(sansPort) || HOTES_ADMIS.has(String(h).toLowerCase());
+}
+app.use((req, res, next) => {
+  if (hoteLocal(req.headers.host)) return next();
+  console.warn(`[securite] requete refusee — Host inattendu : ${req.headers.host} (${req.method} ${req.path})`);
+  return res.status(403).json({
+    error: "host_non_autorise",
+    detail: "Ce service n'accepte que les requetes adressees a la machine locale.",
+  });
+});
+
 // Corps JSON malformé : répondre 400 avec un message lisible plutôt que de
 // laisser Express dérouler une pile sur stderr. Les appelants sont souvent des
 // agents qui construisent leur requête en shell — une variable non substituée
