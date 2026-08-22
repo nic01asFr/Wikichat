@@ -189,14 +189,42 @@ export function checkDepth(parentDepth) {
 
 // ── Claude CLI location ────────────────────────────────────────────────────────
 
+/**
+ * Emplacements connus du binaire, PUIS le PATH.
+ *
+ * La liste ne contenait que `~/.local/bin/claude.exe` — avec l'extension
+ * Windows — et omettait `~/.local/bin/claude`, qui est le chemin
+ * d'installation standard sous Linux. Les trois dernières entrées (`claude.exe`,
+ * `claude.cmd`, `claude`) ne servaient à rien non plus : `fs.accessSync("claude")`
+ * résout relativement au répertoire courant, jamais au PATH. Un poste où le
+ * binaire n'existe que dans le PATH — via nvm par exemple — ne le trouvait donc
+ * jamais.
+ *
+ * Signalé en spécification vérifiable par l'agent du pod SSPCloud, dont
+ * l'installation est en `~/.nvm/versions/node/v22.23.2/bin/claude`.
+ */
 const CLAUDE_CANDIDATES = [
   path.join(os.homedir(), ".local", "bin", "claude.exe"),
+  path.join(os.homedir(), ".local", "bin", "claude"),
   path.join(os.homedir(), ".npm-global", "claude.cmd"),
   path.join(os.homedir(), ".npm-global", "claude"),
-  "claude.exe",
-  "claude.cmd",
-  "claude",
+  path.join(os.homedir(), ".bun", "bin", "claude"),
 ];
+
+/** Parcourt le PATH — ce que `fs.accessSync("claude")` ne faisait pas. */
+function chercherDansPath() {
+  const noms = process.platform === "win32"
+    ? ["claude.exe", "claude.cmd", "claude.bat", "claude"]
+    : ["claude"];
+  const dossiers = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const d of dossiers) {
+    for (const n of noms) {
+      const c = path.join(d, n);
+      try { fs.accessSync(c); return c; } catch { /* suivant */ }
+    }
+  }
+  return null;
+}
 
 export function findClaudeBin() {
   for (const candidate of CLAUDE_CANDIDATES) {
@@ -205,7 +233,7 @@ export function findClaudeBin() {
       return candidate;
     } catch { /* try next */ }
   }
-  return null;
+  return chercherDansPath();
 }
 
 /**
@@ -831,8 +859,11 @@ export function spawnDaemon(projectPath, options = {}) {
 
   try {
     const isWindows = process.platform === "win32";
-    const model = options.model || "haiku";
-    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, "--model", model];
+    // Aucun modèle par défaut. « haiku » est un alias Anthropic qui n'existe pas
+    // sur un endpoint tiers — un pod servi par un LLM auto-hébergé le refuse.
+    // Sans valeur explicite, on laisse le CLI choisir le sien.
+    const model = options.model || null;
+    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, ...(model ? ["--model", model] : [])];
     if (fs.existsSync(mcpConfigPath)) {
       baseArgs.push("--mcp-config", mcpConfigPath);
     }
@@ -860,8 +891,19 @@ export function spawnDaemon(projectPath, options = {}) {
       shell: false,
     });
 
-    child.stdout.on("data", () => {}); // drain
-    child.stderr.on("data", () => {}); // drain
+    // Les sorties étaient jetées, et le respawn rejouait jusqu'à cinq fois : un
+    // spawn qui échoue le faisait donc EN BOUCLE ET SANS TRACE. Impossible de
+    // savoir si le binaire manquait, si le modèle était refusé, ou si le MCP ne
+    // répondait pas. On garde la dernière sortie sur disque — c'est ce qu'on
+    // cherche quand un daemon ne démarre pas.
+    const journal = path.join(os.homedir(), ".wikichat", "spawn-logs");
+    try { fs.mkdirSync(journal, { recursive: true }); } catch { /* */ }
+    const fichierLog = path.join(journal, `${name.replace(/[^\w.-]/g, "_")}.log`);
+    const ecrire = (flux) => (buf) => {
+      try { fs.appendFileSync(fichierLog, `[${new Date().toISOString()}] ${flux} ${buf}`); } catch { /* */ }
+    };
+    child.stdout.on("data", ecrire("out"));
+    child.stderr.on("data", ecrire("err"));
 
     // Garde-fou réel : au-delà de la durée admise, on arrête. Sans lui, un
     // daemon qui boucle tourne jusqu'à l'arrêt du service.
@@ -904,7 +946,7 @@ export function spawnDaemon(projectPath, options = {}) {
           const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
             ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
             ...(respawnResume ? ["--resume", respawnResume.sessionId] : []),
-            "--model", model, "--max-turns", String(MAX_TOURS_DAEMON)];
+            ...(model ? ["--model", model] : []), "--max-turns", String(MAX_TOURS_DAEMON)];
           const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
           const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
             cwd: projectPath,
@@ -912,8 +954,8 @@ export function spawnDaemon(projectPath, options = {}) {
             env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
             windowsHide: true, detached: !isWindows, shell: false,
           });
-          newChild.stdout.on("data", () => {});
-          newChild.stderr.on("data", () => {});
+          newChild.stdout.on("data", ecrire("out"));
+          newChild.stderr.on("data", ecrire("err"));
           newChild.on("exit", onExit);
           newChild.unref();
           upsertSpawnRegistry({ ...spawnEntry, pid: newChild.pid, status: "running", respawns: respawnCount });
