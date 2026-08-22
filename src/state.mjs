@@ -351,5 +351,25 @@ export function inboxFor(name, { sinceId = null, sinceMinutes = 0 } = {}) {
     if (m.channel === "__broadcast__") return true;
     return mention.test(m.content || "");
   });
-  return { messages, lastId: newestId ?? sinceId, ...(resynced ? { resynced: true } : {}) };
+  // Le curseur retient CE QUI A ÉTÉ REMIS, pas ce qui a existé.
+  //
+  // Il valait auparavant le message le plus récent du tampon, même quand la
+  // relève ne remettait rien. Toute lecture infructueuse brûlait donc le
+  // courrier en attente : le curseur sautait par-dessus, et le message
+  // n'atteignait jamais son destinataire — sans erreur, sans trace.
+  //
+  // Vécu : un clone spawné par un réveil portait le même nom qu'un agent
+  // vivant. Le curseur étant indexé sur le NOM, il a relevé la boîte à sa
+  // place. L'agent a alors reçu « Rien de neuf pour toi » trois fois de suite
+  // sur du courrier qui lui était nommément adressé, et ne l'a trouvé qu'en
+  // interrogeant l'API sans filtre. C'est le pire mode de défaillance pour une
+  // primitive de coordination : silencieux, et indiscernable d'une boîte vide.
+  //
+  // En ne l'avançant que sur remise effective, une lecture qui ne délivre rien
+  // laisse le courrier disponible pour le prochain lecteur légitime. Les deux
+  // cas d'amorçage — première activation, curseur évincé — continuent de se
+  // caler en tête : là, il n'y a rien à préserver.
+  const remis = messages.length ? messages[messages.length - 1].id : null;
+  const lastId = remis ?? (resynced ? newestId : (sinceId ?? newestId));
+  return { messages, lastId, ...(resynced ? { resynced: true } : {}) };
 }
