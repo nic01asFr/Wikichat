@@ -143,6 +143,32 @@ function formatMsgList(msgs) {
  * current_project → the reported cwd matched against the registry (else the
  * cwd's basename). Returns a channel slug, or null if nothing locates a project.
  */
+/**
+ * Canal-projet canonique — UNE seule règle, partagée par tous les appelants.
+ *
+ * Il y en avait deux. `declare_project` créait `#<slug>` ; `homeChannelFor`
+ * renvoyait `#proj-<slug>`. Le même projet avait donc deux salons : celui que
+ * l'agent voyait s'annoncer à sa déclaration, et celui où `contact_agent`
+ * déposait son courrier. Vécu : trois canaux pour un projet, un message déposé
+ * dans l'un pendant que l'agent regardait l'autre.
+ *
+ * Le préfixe `proj-` distingue un salon de projet d'un salon de sujet, et reste
+ * la forme canonique pour ce qui se crée désormais. Mais un canal DÉJÀ existant
+ * l'emporte, quelle que soit sa forme : on répare les installations en place au
+ * lieu d'exiger une migration, et surtout on ne crée jamais un salon parallèle
+ * à côté d'un salon déjà peuplé.
+ */
+function projectChannelFor(projectName) {
+  if (!projectName) return null;
+  const nu = String(projectName).toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  if (!nu) return null;
+  const prefixe = `proj-${nu}`;
+  if (state.channels.has(prefixe)) return prefixe;
+  if (state.channels.has(nu)) return nu;   // installation antérieure : on la respecte
+  return prefixe;
+}
+
 function homeChannelFor(name) {
   if (!name) return null;
   const persisted = recall(name, "__home_channel");
@@ -163,8 +189,8 @@ function homeChannelFor(name) {
     }
   }
   if (!proj) return null;
-  const slug = "proj-" + String(proj).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-  return slug.length > 5 ? slug : null;
+  const slug = projectChannelFor(proj);
+  return slug && slug.length > 5 ? slug : null;
 }
 
 /**
@@ -430,12 +456,31 @@ export function registerTools(server, sessionId) {
         // This handles the common case : agent disconnects, reconnects under same name.
         // Without this, the agent had to pick a new name → DM history lost.
         const lastSeenAge = Date.now() - new Date(conflict.lastSeen || conflict.connectedAt).getTime();
-        const stale = lastSeenAge > 5 * 60 * 1000 || conflict.availability === "stale";
+
+        // Reprise immédiate quand l'appelant PROUVE qu'il est le même agent.
+        //
+        // Une reconnexion laisse derrière elle une session fantôme dont le
+        // `lastSeen` est frais : elle paraît vivante, et l'ancienne règle des
+        // 5 minutes verrouillait alors l'agent hors de sa propre identité — par
+        // son propre fantôme. Vécu : « le nom est déjà pris par une session
+        // active (vue il y a 0min) », sur un agent qui venait de perdre son nom.
+        //
+        // Deux preuves acceptées, toutes deux hors de portée d'un tiers : le
+        // même identifiant de conversation Claude, ou le même jeton de
+        // connexion. Dans les deux cas c'est le même agent qui revient, pas
+        // quelqu'un qui usurpe.
+        const moi = state.sessions.get(sessionId);
+        const memeConversation = !!claude_session_id
+          && (conflict.claude_session_id === claude_session_id
+              || recall(name, "__claude_session_id") === claude_session_id);
+        const memeJeton = !!moi?.bindToken && moi.bindToken === conflict.bindToken;
+        const stale = memeConversation || memeJeton
+          || lastSeenAge > 5 * 60 * 1000 || conflict.availability === "stale";
         if (stale) {
           // Liberate the name : revert old session to anonymous, transfer identity
           const oldSession = state.sessions.get(conflict.id);
           if (oldSession) oldSession.name = `session-${conflict.id.slice(0, 6)}`;
-          sysMsg("system", `Identité "${name}" transférée (session précédente stale depuis ${Math.floor(lastSeenAge/60000)}min)`);
+          sysMsg("system", `Identité "${name}" reprise par son propriétaire (session précédente inactive depuis ${Math.floor(lastSeenAge/60000)}min).`);
         } else {
           const ageMin = Math.floor(lastSeenAge / 60000);
           return txt(`❌ Le nom "${name}" est déjà pris par une session active (vue il y a ${ageMin}min). Choisis un autre nom ou attends qu'elle expire (5min).`);
@@ -1315,7 +1360,7 @@ export function registerTools(server, sessionId) {
       // Auto-create a dedicated channel for the project (slug = lowercase, spaces → hyphens).
       // Having a project channel means agents don't fallback to #coordination (which is generic
       // and shared by all projects), and decisions/updates stay contextualised to the project.
-      const projectSlug = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const projectSlug = projectChannelFor(name);
       if (!state.channels.has(projectSlug)) {
         state.channels.set(projectSlug, {
           name: projectSlug,
