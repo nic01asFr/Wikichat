@@ -204,6 +204,7 @@ export function checkDepth(parentDepth) {
  * l'installation est en `~/.nvm/versions/node/v22.23.2/bin/claude`.
  */
 const CLAUDE_CANDIDATES = [
+  path.join(os.homedir(), "work", "bin", "claude"), // SSP Cloud / Atelier pod
   path.join(os.homedir(), ".local", "bin", "claude.exe"),
   path.join(os.homedir(), ".local", "bin", "claude"),
   path.join(os.homedir(), ".npm-global", "claude.cmd"),
@@ -661,11 +662,21 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
       const success = code === 0;
       // Capture le session-id Claude depuis la sortie --output-format json (resume ultérieur)
       let claudeSessionId = null;
-      try { const j = JSON.parse(stdout); claudeSessionId = j.session_id || j.sessionId || null; } catch { /* stdout non-json */ }
+      let sousType = "";
+      try {
+        const j = JSON.parse(stdout);
+        claudeSessionId = j.session_id || j.sessionId || null;
+        sousType = String(j.subtype || "");
+      } catch { /* stdout non-json */ }
+      // Un agent qui epuise ses tours sort avec le code 0. Sans regarder le
+      // sous-type, un run coupe au milieu se lit donc comme une reussite :
+      // deux agents sur quatre finissaient ainsi, sur un resultat d'outil,
+      // sans avoir rien rapporte — et l'ecran affichait « OK ».
+      const tronque = sousType === "error_max_turns";
       try {
         upsertSpawnRegistry({
           ...spawnEntry,
-          status: success ? "done" : "failed",
+          status: tronque ? "max_turns" : (success ? "done" : "failed"),
           exit_code: code,
           ...(claudeSessionId ? { claude_session_id: claudeSessionId } : {}),
           ended_at: new Date().toISOString(),
