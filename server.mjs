@@ -517,6 +517,10 @@ app.get("/sse", async (req, res) => {
   // jeton du headersHelper n'arrive jamais, ou s'il arrive sans correspondance.
   // Sans cette trace, on ne peut que supposer — et on a assez donné dans les
   // dispositifs qui rendent un verdict que leur mécanique ne justifie pas.
+  // On journalise la valeur BRUTE, pas seulement le verdict : avec le garde-fou
+  // sur `${VAR}`, « pas de substitution » et « substitution vide » produisaient
+  // la même trace, et l'instrument ne pouvait plus distinguer les deux cas.
+  console.log(`[WikiChat] /sse brut — agent=${JSON.stringify(brutAgent)} token=${JSON.stringify(brutToken)}`);
   console.log(`[WikiChat] /sse entêtes — agent:${directName ? "oui" : "non"}`
     + ` token:${(req.headers["x-wikichat-token"] || "").toString() ? "oui" : "non"}`
     + ` conv:${(req.headers["x-wikichat-claude-session"] || "").toString() ? "oui" : "non"}`
