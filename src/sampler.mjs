@@ -319,7 +319,19 @@ function ensureMcpJson(projectPath, port = 3777) {
             // le spawn pose dans l'environnement du process. Sans cela une session
             // reste anonyme tant qu'elle n'a pas appelé register — et le redevient
             // à chaque reconnexion.
-            url: `http://localhost:${port}/sse?agent=\${WIKICHAT_AGENT:-}`,
+            // Deux porteurs d'identite dans l'URL, et non dans les en-tetes.
+            //
+            // `agent` sert aux agents spawnes, dont l'environnement porte
+            // WIKICHAT_AGENT. `token` sert aux sessions interactives : il vaut
+            // l'identifiant de la conversation, donc un register() suffit pour
+            // toute sa vie — c'est le contrat « une seule fois, jamais plus ».
+            //
+            // Pourquoi l'URL et pas l'en-tete : mesure sur 13 connexions
+            // reelles, en 2.1.251 et 2.1.260, VS Code et Desktop — aucun client
+            // n'envoie les en-tetes du headersHelper. La substitution de
+            // variables dans l'URL, elle, a lieu : sans elle le serveur
+            // recevrait la chaine litterale, et il recoit une valeur vide.
+            url: `http://localhost:${port}/sse?agent=\${WIKICHAT_AGENT:-}&token=\${CLAUDE_CODE_SESSION_ID:-}`,
             // Pour une session interactive, WIKICHAT_AGENT n'est pas posé : le
             // `?agent=` est vide et l'identité ne tient que par register(), donc
             // elle meurt à la première reconnexion. Ce helper émet un jeton

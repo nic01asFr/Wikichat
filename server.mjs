@@ -492,9 +492,21 @@ app.get("/sse", async (req, res) => {
   // transport sessionId changing across reconnects). Two delivery styles, same
   // mechanism: `?agent=<Name>` is the identity directly; `?token=`/header is an
   // opaque token bound to a name on first register(). See src/persistence.mjs.
-  const directName = (req.query.agent || "").trim() || null;
+  // Une valeur non substituee (`${VAR}`) doit etre traitee comme absente.
+  //
+  // L'identite voyage dans l'URL sous forme de variable, que le client
+  // developpe avant de se connecter. Si un client ne la developpe pas, la
+  // chaine litterale arrive telle quelle — et comme elle est IDENTIQUE pour
+  // toutes les fenetres, elles revendiqueraient toutes la meme identite. Une
+  // session anonyme est genante ; plusieurs sessions se croyant la meme est
+  // pire, et c'est le genre de defaut qui ne se voit qu'apres coup.
+  const nonSubstitue = (v) => !v || /^\$\{.*\}$/.test(v) || v.includes("${");
+  const brutAgent = (req.query.agent || "").trim();
+  const brutToken = (req.query.token || "").trim();
+  const directName = nonSubstitue(brutAgent) ? null : brutAgent;
+  const jetonUrl = nonSubstitue(brutToken) ? null : brutToken;
   const bindToken = directName
-    || (req.query.token || "").trim()
+    || jetonUrl
     || (req.headers["x-wikichat-token"] || "").toString().trim()
     || null;
 
