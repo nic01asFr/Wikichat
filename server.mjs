@@ -13,7 +13,7 @@
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { readdir, readFile } from "fs/promises";
 import { readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join, extname } from "path";
@@ -465,6 +465,26 @@ app.delete("/pilote/api/agent/:id", handlePiloteDelete);
 // MCP SSE endpoint
 app.get("/sse", async (req, res) => {
   const transport = new SSEServerTransport("/messages", res);
+
+  // Battement de coeur sur le flux SSE.
+  //
+  // Sans lui, un flux silencieux est coupe au bout de ~306 s — mesure sur une
+  // connexion nue : « INTERROMPU apres 306 s ». C'est le delai de Node, cote
+  // serveur, pas une lubie du client. Consequence en production : 6956
+  // deconnexions en cinq jours, une par minute, et autant de reconnexions qui
+  // repartent anonymes.
+  //
+  // Les sessions qui recevaient des messages survivaient plus longtemps — leur
+  // trafic rearmait le compteur — ce qui explique que les agents nommes, plus
+  // sollicites, paraissaient plus stables que les autres.
+  //
+  // Une ligne de commentaire SSE (`:` en tete) est du trafic pour le transport
+  // et rien pour le client : la specification impose de l'ignorer.
+  const battement = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch { /* flux deja ferme */ }
+
+  }, parseInt(process.env.WIKICHAT_SSE_KEEPALIVE_MS || "25000"));
+  battement.unref?.();  // ne retient pas la boucle d'evenements a l'arret
   const sid = transport.sessionId;
   const mcpServer = new McpServer({ name: "mcp-wikichat", version: "2.0.0" });
 
@@ -477,6 +497,19 @@ app.get("/sse", async (req, res) => {
     || (req.query.token || "").trim()
     || (req.headers["x-wikichat-token"] || "").toString().trim()
     || null;
+
+  // Instrument : que reçoit-on réellement à la connexion ?
+  //
+  // 6970 connexions en cinq jours, et ZÉRO restauration automatique d'identité.
+  // Les seules sessions nommées viennent de `?agent=`. On ne sait pas si le
+  // jeton du headersHelper n'arrive jamais, ou s'il arrive sans correspondance.
+  // Sans cette trace, on ne peut que supposer — et on a assez donné dans les
+  // dispositifs qui rendent un verdict que leur mécanique ne justifie pas.
+  console.log(`[WikiChat] /sse entêtes — agent:${directName ? "oui" : "non"}`
+    + ` token:${(req.headers["x-wikichat-token"] || "").toString() ? "oui" : "non"}`
+    + ` conv:${(req.headers["x-wikichat-claude-session"] || "").toString() ? "oui" : "non"}`
+    + ` projet:${(req.headers["x-wikichat-project"] || "").toString() || "-"}`
+    + ` ua:${(req.headers["user-agent"] || "-").toString().slice(0, 40)}`);
 
   const session = {
     sessionId: sid,
@@ -496,12 +529,32 @@ app.get("/sse", async (req, res) => {
   // Auto-restore identity from the token if we know it (or if ?agent=Name is
   // authoritative). This is what makes "register once, recognised forever" work:
   // the agent never has to re-register after a reconnect.
-  let claimName = null, claimRole = null;
+  let claimName = null, claimRole = null, provisoire = false;
   if (directName) {
     claimName = directName; // authoritative on every connect
   } else if (bindToken) {
     const ident = getIdentityBinding(bindToken);
     if (ident) { claimName = ident.name; claimRole = ident.role; }
+  }
+
+  // Aucune liaison : la conversation ne s'est jamais declaree. On lui donne
+  // quand meme un nom, derive de son projet et de son jeton.
+  //
+  // Le jeton assurait la CONTINUITE d'une identite, pas son ATTRIBUTION : une
+  // conversation neuve restait anonyme jusqu'a un register() que rien ne
+  // garantit. En pratique 11 sessions sur 13 l'etaient — donc injoignables par
+  // leur nom, non reveillables, et invisibles au compte des agents presents.
+  //
+  // Le nom provisoire est stable (il derive du jeton, lui-meme derive de la
+  // conversation), lisible, et distinct entre deux conversations d'un meme
+  // projet. register() reste utile : il remplace ce nom par un nom qui a du
+  // sens, et c'est ce remplacement qui est enregistre ensuite.
+  const projetEntete = (req.headers["x-wikichat-project"] || "").toString().trim();
+  if (!claimName && bindToken && projetEntete) {
+    const slug = projetEntete.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "").slice(0, 24);
+    const court = createHash("sha256").update(bindToken).digest("hex").slice(0, 4);
+    if (slug) { claimName = `${slug}-${court}`; provisoire = true; }
   }
 
   // Second filet : la conversation Claude elle-même. Le hook de fin de tour
@@ -529,7 +582,7 @@ app.get("/sse", async (req, res) => {
       session.availability = "available";
       try { restoreIdentity(session, claimName); } catch { /* best-effort */ }
       try { saveIdentityBinding(bindToken, claimName, session.role); } catch { /* */ }
-      sysMsg("system", `${claimName} connecté — identité ${directName ? "fixée" : "restaurée"} automatiquement.`);
+      sysMsg("system", `${claimName} connecté — identité ${provisoire ? "provisoire attribuée" : directName ? "fixée" : "restaurée"} automatiquement.`);
     } else {
       // Name currently held by another live session: don't steal it. Stay
       // anonymous; register() will arbitrate (stale-takeover) if appropriate.
@@ -543,6 +596,7 @@ app.get("/sse", async (req, res) => {
     const name = session?.name ?? sid.slice(0, 8);
     const wasRegistered = session && !session.name.startsWith("session-");
     if (session && wasRegistered) saveSnapshot(session);
+    clearInterval(battement);
     state.sessions.delete(sid);
     transports.delete(sid);
     clearWaiters(sid);

@@ -95,9 +95,16 @@ try {
     // filet côté serveur, qui retrouve un agent déjà déclaré même si la liaison
     // de jeton manque. Le jeton reste la voie normale ; ceci n'est qu'un
     // recours, et il ne divulgue rien que le disque local n'expose déjà.
+    // Le projet voyage aussi : il permet au serveur d'attribuer un nom
+    // provisoire lisible dès la connexion, au lieu de laisser la session
+    // anonyme jusqu'à un register() que rien ne garantit. Le helper est lancé
+    // par Claude Code depuis le répertoire du projet, donc son cwd est le bon.
+    let projet = "";
+    try { projet = path.basename(process.cwd()); } catch { /* sans importance */ }
     process.stdout.write(JSON.stringify({
       "x-wikichat-token": jeton,
       "x-wikichat-claude-session": conversation,
+      ...(projet ? { "x-wikichat-project": projet } : {}),
     }));
     process.exit(0);
   }
