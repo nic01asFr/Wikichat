@@ -175,20 +175,20 @@ Voici les shapes des données que la console manipule. **Tu peux les utiliser po
 
 ```json
 {
-  "name": "Archipel",
-  "description": "Stack open-data territoriale pour Cerema",
-  "purpose": "Brique data partagée entre 5 territoires",
-  "axes": ["geomatique", "open-data"],
+  "name": "MyApp",
+  "description": "API interne partagée entre trois services",
+  "purpose": "Brique données partagée pour l'équipe",
+  "axes": ["backend", "api"],
   "lifecycle": "active",
   "publish": {
-    "github": { "visibility": "private", "url": "https://github.com/cerema/archipel" },
+    "github": { "visibility": "private", "url": "https://github.com/example/my-app" },
     "package": null,
-    "deployed": { "url": "https://archipel.cerema.fr", "env": "prod" },
+    "deployed": { "url": "https://my-app.example.com", "env": "prod" },
     "license": "MIT"
   },
   "relations": [
-    { "type": "depends-on", "project": "Portmap", "note": "auth" },
-    { "type": "provides-to", "project": "IISR-Audit" }
+    { "type": "depends-on", "project": "AuthGateway", "note": "auth" },
+    { "type": "provides-to", "project": "MobileClient" }
   ],
   "health": {
     "score": 72,

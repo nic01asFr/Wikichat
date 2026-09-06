@@ -30,7 +30,7 @@ Ces axes ne sont pas écrits à la main. Ils sont compilés à partir de tes cl�
 ```
 > send_message("@Reviewer tu peux relire l'inbox ?", expects_reply=true)
 
-  📤 Envoyé sur #proj-passerelle
+  📤 Envoyé sur #proj-api
   ⚠️ Reviewer est hors ligne
 
   🔔 réveil déclenché — session reprise dans son dépôt
@@ -45,8 +45,8 @@ Aucun agent ne veillait. Le message l'a fait exister, dans son propre dépôt, a
 **Un commit arrive. Personne ne surveillait.**
 
 ```
-  [détecteur JS]  3 commits sur atlas-territorial      ← 0 token
-  [#insights]     [event:commits project:atlas-territorial]
+  [détecteur JS]  3 commits sur my-api      ← 0 token
+  [#insights]     [event:commits project:my-api]
   [trigger]       motif reconnu → agent de revue lancé
   [agent]         revue déposée dans .wikichat/artifacts/, sortie
 ```
@@ -354,4 +354,4 @@ La suite est réentrante — espace de noms fixe, purge de ce qu'elle a créé �
 
 ## Licence
 
-MIT
+[MIT](./LICENSE)

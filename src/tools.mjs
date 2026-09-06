@@ -1898,7 +1898,7 @@ export function registerTools(server, sessionId) {
       if (terms.length === 0) return txt("⚠️ Query vide ou trop courte.");
 
       const candidates = [];
-      const seenPaths = new Set(); // dedup by absolute path (e.g. project="Omen" with path=~ collides with central)
+      const seenPaths = new Set(); // dedup by absolute path (e.g. project="home" with path=~ collides with central)
       const addCandidate = (source, p) => {
         let abs;
         try { abs = fs.realpathSync(p); } catch { abs = path.resolve(p); }
@@ -2604,7 +2604,7 @@ export function registerTools(server, sessionId) {
           `🎫 Ticket ${ticketId} — inutile d'attendre : le résultat arrive en artefact et ton hook te l'annonce\n` +
           `📄 Résultat → .wikichat/artifacts/ (récupéré automatiquement dans 2min)\n` +
           `📡 Progression visible sur #coordination\n` +
-          `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
+          `🛠️ Pilote: http://localhost:${process.env.PORT || 3777}/pilote`
         );
       }
 
@@ -2635,8 +2635,8 @@ export function registerTools(server, sessionId) {
             `🟢 "${name}" lancé en mode daemon (PID ${result.pid}) dans ${repoName}.\n\n` +
             `🎫 Ticket: ${ticketId}\n` +
             `📡 Il va register() puis relever sa boîte.\n` +
-            `💬 Envoie-lui des messages via send_message ou depuis le cockpit.\n` +
-            `📊 Dashboard: http://localhost:${process.env.PORT || 3777}/dashboard`
+            `💬 Envoie-lui des messages via send_message.\n` +
+            `🛠️ Pilote: http://localhost:${process.env.PORT || 3777}/pilote`
           );
         } else {
           ticket.status = "failed";

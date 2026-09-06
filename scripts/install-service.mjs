@@ -168,5 +168,5 @@ switch (process.platform) {
 
 console.log("");
 console.log(`🌐 Once started, the service listens on http://localhost:3777`);
-console.log(`📊 Dashboard:                       http://localhost:3777/dashboard`);
+console.log(`🛠️  Pilote:                          http://localhost:3777/pilote`);
 console.log(`🛑 Uninstall:                       npm run uninstall-service`);

@@ -1,7 +1,7 @@
 {
   "name": "wikichat",
   "version": "2.0.0",
-  "description": "Serveur MCP local de coordination multi-agents pour Claude Code — canaux, DM, tâches, spawning, dashboard.",
+  "description": "Serveur MCP local de coordination multi-agents pour Claude Code — canaux, DM, tâches, spawning, pilote.",
   "type": "module",
   "main": "server.mjs",
   "bin": {
@@ -26,7 +26,7 @@
     "coordination",
     "sse",
     "spawning",
-    "dashboard"
+    "pilote"
   ],
   "author": "Nicolas LAVAL",
   "license": "MIT",

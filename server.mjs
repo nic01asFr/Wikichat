@@ -1215,7 +1215,7 @@ app.get("/api/health", (_req, res) => {
     readReceipts: state.reads.size,
     waiters: state.waiters.size,
     spawnRegistry: loadSpawnRegistry().length,
-    budget: { current: currentLoad(), max: parseInt(process.env.WIKICHAT_MAX_SESSIONS || "10") },
+    budget: { current: currentLoad(), max: parseInt(process.env.WIKICHAT_MAX_SESSIONS || "30") },
     spawn_depth_max: getMaxSpawnDepth(),
     quotas: quotaSnapshot(),
   });

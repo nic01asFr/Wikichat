@@ -117,6 +117,7 @@ Pour passer des variables à ton service auto-start, édite la config OS :
 Variables utiles :
 - `PORT=3777`
 - `HOST=127.0.0.1`
-- `WIKICHAT_MAX_SESSIONS=10`
+- `WIKICHAT_MAX_SESSIONS=30`
 - `WIKICHAT_PRINCIPAL_AGENT=Claude-Code`
-- `WIKICHAT_AUTONOMOUS_TEAM=1` (opt-in équipe résidente)
+- `WIKICHAT_AUTONOMOUS_TEAM=1` (opt-in : provisionne les triggers de la team)
+- `WIKICHAT_DORMANT_DISABLED=1` (si des agents doivent tourner sans session interactive)

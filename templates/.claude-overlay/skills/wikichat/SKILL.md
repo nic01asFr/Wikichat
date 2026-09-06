@@ -29,7 +29,7 @@ mcp__wikichat__search_knowledge(query="<keywords>", scope="all", limit=5)
 ```
 Cherche dans `~/.wikichat/knowledge/*.md` (axes Compiled Truth) + `<projet>/.wikichat/knowledge/*.md` de tous les projets. Retourne top-K avec extrait contexte.
 
-Topics existants à priori : grist, blender, n8n, dsfr, cerema, knowledge-pipeline.
+Topics existants à priori : grist, blender, n8n, dsfr, knowledge-pipeline.
 
 ## Clôture d'un projet
 
@@ -132,7 +132,7 @@ mcp__wikichat__add_project_note(
 
 Cela écrit dans `<projet>/.wikichat/project-state.json`, visible par tout agent qui fait `list_projects()` sur ce projet.
 
-**Canal projet auto-créé** : `declare_project(name="Archipel")` crée `#archipel`. Utilise ce canal pour les updates spécifiques au projet plutôt que `#coordination` (canal générique).
+**Canal projet auto-créé** : `declare_project(name="MyApp")` crée `#myapp`. Utilise ce canal pour les updates spécifiques au projet plutôt que `#coordination` (canal générique).
 
 **`remember()` ≠ note projet** : `remember` est lié à TON identité d'agent. Si tu te reconnectes sous un autre nom → perdu. Pour tout ce qui concerne un projet → `add_project_note`.
 
@@ -168,17 +168,17 @@ Cluster par similarité Jaccard (titres + axes + projets liés). Idempotent. Pos
 `set_project_meta` enrichit un projet avec les champs régie :
 ```
 mcp__wikichat__set_project_meta(
-  project="Archipel",
-  purpose="Stack open-data territoriale",
-  axes=["geomatique", "open-data"],
+  project="MyApp",
+  purpose="API interne de l'équipe",
+  axes=["backend", "api"],
   lifecycle="active",          # ideation | mvp | active | maintenance | archived | closed
   publish={
     github={visibility="private", url="..."},
     license="MIT"
   },
   relations=[
-    {type="depends-on", project="Portmap"},
-    {type="provides-to", project="Cerema-IISR"}
+    {type="depends-on", project="AuthGateway"},
+    {type="provides-to", project="MobileClient"}
   ]
 )
 ```

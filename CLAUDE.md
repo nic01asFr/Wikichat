@@ -191,7 +191,7 @@ exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 
 ## Automatic Behaviors
 
-- **Watchdog** (60s): stale detection >15min, emits a `stale` event (no auto-respawn — the loop existed but never fired once in 54 registry entries)
+- **Watchdog** (60s): stale detection >20min, emits a `stale` event (no auto-respawn — the loop existed but never fired once in 54 registry entries)
 - **Queue pickup** (2min): recovers offline agent actions from .wikichat/queue/
 - **Artifact recovery** (2min): recovers local artifacts from .wikichat/artifacts/
 - **Cleanup** (5min): expired task TTLs, DM channel GC, snapshot rotation >7d

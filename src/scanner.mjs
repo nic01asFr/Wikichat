@@ -125,7 +125,7 @@ export function detectGitHubRemote(projectPath) {
 
     // Parse known forge patterns.
     // GitHub : git@github.com:user/repo.git OR https://github.com/user/repo.git
-    // GitLab CEREMA : git@gitlab.cerema.fr:group/repo.git OR https://gitlab.cerema.fr/...
+    // GitLab (self-hosted ou gitlab.com) : git@gitlab.example:group/repo.git OR https://…
     let host = null, owner = null, repo = null;
     const sshMatch = remoteUrl.match(/^[\w.-]+@([\w.-]+):([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
     const httpsMatch = remoteUrl.match(/^https?:\/\/([\w.-]+)\/([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
@@ -241,7 +241,7 @@ export async function readClaudeMd(projectPath) {
 
 /**
  * Build a URL-safe slug from a path.
- * e.g. "C:\Users\Omen\projects\my-app" => "my-app"
+ * e.g. "C:\Users\Alice\projects\my-app" => "my-app"
  * If a slug collision is possible, use last two path segments joined with "-"
  */
 export function pathToSlug(projectPath) {
