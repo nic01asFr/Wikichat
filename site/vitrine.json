@@ -1,42 +1,42 @@
 {
   "nom": "WikiChat",
-  "pitch": "La mémoire et le système nerveux de ta machine de développement — sessions Claude Code reliées, connaissance transverse, agents qui s’éveillent seulement quand il se passe quelque chose.",
-  "couleur": "#1FA7A0",
-  "tags": ["Local", "Claude Code", "Multi-agents", "Mémoire", "Sans clé API"],
+  "pitch": "La collaboration entre tes projets et tes agents Claude Code — mémoire partagée, sessions qui se parlent, travail délégué quand un événement le justifie. Tout reste sur ta machine.",
+  "couleur": "#d97757",
+  "tags": ["Projets", "Agents", "Collaboration", "Local", "Claude Code"],
   "depot": "https://github.com/nic01asFr/Wikichat",
   "points": [
     {
-      "titre": "Une mémoire qui traverse les projets",
-      "texte": "Avant de reconstruire un pattern déjà résolu ailleurs, ta session interroge la connaissance capitalisée à chaque clôture de projet."
+      "titre": "Projets reliés par la mémoire",
+      "texte": "Ce qu’un dépôt a capitalisé devient trouvable depuis un autre. Les agents ne repartent plus de zéro à chaque projet."
     },
     {
-      "titre": "Des sessions qui se parlent",
-      "texte": "Deux fenêtres Claude Code s’écrivent, se réveillent, se passent des artefacts — sans que tu joues les messagers."
+      "titre": "Agents qui collaborent",
+      "texte": "Sessions nommées, canaux, DM, réveil d’un agent hors ligne : la coordination passe par WikiChat, pas par le copier-coller."
     },
     {
-      "titre": "Une surveillance qui ne coûte rien",
-      "texte": "Des détecteurs JavaScript veillent sur commits, fichiers, artefacts. Un agent ne s’allume que lorsqu’un événement le justifie."
+      "titre": "Humain dans la boucle",
+      "texte": "Le Pilote propose, tu valides ou tu rejettes. Les agents travaillent ; les décisions structurantes restent les tiennes."
     },
     {
-      "titre": "Du travail délégué, puis capitalisé",
-      "texte": "Tu spawnes une tâche bornée ; elle écrit dans le dépôt. Tu clôtures ; la synthèse nourrit les projets suivants."
+      "titre": "Allumés seulement quand il faut",
+      "texte": "Détecteurs locaux sur commits, artefacts, échéances. Pas de veilleur qui poll pour rien — spawn borné, puis sortie."
     },
     {
       "titre": "Zéro coût au repos",
-      "texte": "Installé comme service, WikiChat dort à 0 % CPU. Il s’éveille avec ta session, se rendort quand tu pars."
+      "texte": "Service dormant à 0 % CPU. Il s’éveille avec tes sessions, se rendort quand tu pars."
     }
   ],
   "titreFonctionnalites": "Ce que tu peux faire",
   "fonctionnalites": [
     {
-      "titre": "Mémoire transverse",
+      "titre": "Mémoire transverse entre projets",
       "texte": "Une base de connaissance qui traverse tes dépôts : ce que tu as capitalisé en clôturant un projet redevient trouvable depuis un autre. Avant d’implémenter, tu demandes — et tu évites de redériver ce qui est déjà fixé.",
       "pourQui": "Dès que tu as plus d’un projet qui se ressemble."
     },
     {
-      "titre": "Sessions reliées",
+      "titre": "Sessions et agents reliés",
       "texte": "Chaque fenêtre Claude Code s’enregistre sous un nom. Canaux thématiques, messages directs, artefacts partagés : elles se coordonnent sans que tu recopies le contexte d’un onglet à l’autre. Un agent nommé hors ligne peut être réveillé quand on lui écrit et qu’on attend une réponse.",
-      "pourQui": "Quand tu travailles avec plusieurs sessions en parallèle."
+      "pourQui": "Quand projets et agents travaillent en parallèle."
     },
     {
       "titre": "Surveillance événementielle",
@@ -59,9 +59,9 @@
       "pourQui": "Machine de travail au quotidien, sans bruit de fond."
     },
     {
-      "titre": "Pilote",
-      "texte": "Une petite UI locale pour des agents planifiés et une file d’approbation : tu proposes, tu valides, tu lances. C’est la couche « power user » au-dessus des triggers — pas obligatoire pour démarrer.",
-      "pourQui": "Quand tu veux orchestrer des échéances avec un œil humain."
+      "titre": "Pilote — file d’approbation",
+      "texte": "Agents planifiés et propositions à valider : tu lances, tu continues, tu valides ou tu rejettes. Même langage visuel que cette page — c’est l’UI du service pour garder l’humain dans la boucle.",
+      "pourQui": "Quand la collaboration agents / projets passe par ton accord."
     }
   ],
   "encart": {
@@ -73,11 +73,11 @@
     }
   },
   "produit": {
-    "accroche": "Chaque session sait tout d’un projet et rien du reste. WikiChat relie la machine : mémoire transverse, coordination, et agents à la demande — tout reste sur 127.0.0.1.",
+    "accroche": "WikiChat est le service local qui fait collaborer tes projets et tes agents : mémoire transverse, coordination entre sessions, et délégation à la demande — sur 127.0.0.1, sans clé API.",
     "chiffres": [
       { "valeur": "0", "libelle": "clé API à fournir" },
       { "valeur": "0 %", "libelle": "CPU au repos (dormant)" },
-      { "valeur": "1", "libelle": "machine — rien ne sort sans toi" }
+      { "valeur": "∞", "libelle": "projets & agents reliés localement" }
     ],
     "titreSequence": "Le parcours",
     "sequence": [
@@ -90,38 +90,42 @@
         "texte": "Une URL SSE. L’overlay pose skill, commandes et hook de courrier. Tu t’enregistres une fois par conversation."
       },
       {
-        "titre": "Tu cherches avant de reconstruire",
-        "texte": "search_knowledge — ce que tu as déjà fixé dans d’autres dépôts remonte avant que tu ne le redérives."
+        "titre": "Tes projets se souviennent",
+        "texte": "search_knowledge — ce déjà fixé dans d’autres dépôts remonte avant que tu ne le redérives."
       },
       {
-        "titre": "Tu délègues quand ça bloque",
-        "texte": "Mention d’un agent hors ligne, commit détecté, tâche bornée : un headless s’exécute et sort."
+        "titre": "Tes agents collaborent",
+        "texte": "Mention, commit détecté, tâche bornée : un agent agit dans le bon projet et te rend la main."
       },
       {
-        "titre": "Tu clôtures pour la suite",
-        "texte": "close_project capitalise. La mémoire transverse grossit pour le prochain projet qui se ressemble."
+        "titre": "Tu valides ce qui compte",
+        "texte": "Pilote et file d’approbation quand tu veux garder la main ; clôture de projet pour capitaliser."
       }
     ],
     "titreContextes": "Quand ça compte",
     "contextes": [
       {
-        "titre": "Plusieurs projets qui se ressemblent",
-        "texte": "Tu retombes sur le même problème carto, data ou UI. La base transverse te dit ce qui est fixé — et ce qu’il ne faut pas refaire.",
-        "pourquoi": "Sans elle, chaque dépôt réinvente la roue dans son CLAUDE.md isolé."
+        "titre": "Plusieurs projets en parallèle",
+        "texte": "La mémoire transverse et les canaux projet relient ce que tu construis d’un dépôt à l’autre.",
+        "pourquoi": "Sinon chaque CLAUDE.md reste une île."
       },
       {
-        "titre": "Plusieurs sessions en parallèle",
-        "texte": "Une fenêtre code, une autre revue, une troisième explore. Elles se parlent sur des canaux et en DM.",
-        "pourquoi": "Sinon tu copies-colles le contexte entre onglets jusqu’à l’erreur."
+        "titre": "Plusieurs agents ensemble",
+        "texte": "Une session code, une autre revue, un headless sur une tâche : elles se parlent et se réveillent via WikiChat.",
+        "pourquoi": "Sinon tu es le bus de messages entre onglets."
       },
       {
-        "titre": "Du travail qui doit tourner sans toi",
-        "texte": "Triggers, Pilote, routines : un événement ou une échéance lance un agent borné pendant que tu n’es pas devant.",
-        "pourquoi": "Un daemon qui poll en boucle mange ton quota pour rien — ici on n’allume que sur signal."
+        "titre": "Travail qui doit tourner sans toi",
+        "texte": "Triggers et Pilote : un événement ou une échéance lance un agent borné ; tu valides ce qui engage.",
+        "pourquoi": "Un daemon qui poll en boucle mange ton quota pour rien."
       }
     ]
   },
   "journal": [
+    {
+      "version": "style",
+      "texte": "Vitrine alignée sur l’UI du Pilote — même palette, mêmes typos, message centré collaboration projets & agents."
+    },
     {
       "version": "fonctionnalites",
       "texte": "Section « Ce que tu peux faire » : mémoire, sessions, événements, spawn, capitalisation, dormant, Pilote."

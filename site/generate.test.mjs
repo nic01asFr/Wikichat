@@ -33,6 +33,7 @@ test("generate produit un index.html avec pitch et parcours", () => {
   assert.match(html, /id="parcours"/);
   assert.match(html, /id="fonctionnalites"/);
   assert.match(html, /Mémoire transverse/);
+  assert.match(html, /#d97757|#16120e|IBM Plex/);
   assert.doesNotMatch(html, /Widgets Grist/i);
   assert.doesNotMatch(html, /manifest\.json/);
 });
