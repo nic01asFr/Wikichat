@@ -31,6 +31,8 @@ test("generate produit un index.html avec pitch et parcours", () => {
   assert.match(html, /WikiChat/);
   assert.match(html, /base href="\/Wikichat\/"/);
   assert.match(html, /id="parcours"/);
+  assert.match(html, /id="fonctionnalites"/);
+  assert.match(html, /Mémoire transverse/);
   assert.doesNotMatch(html, /Widgets Grist/i);
   assert.doesNotMatch(html, /manifest\.json/);
 });

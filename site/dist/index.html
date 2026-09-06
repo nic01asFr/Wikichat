@@ -114,6 +114,24 @@
       color: #c5d2cb;
     }
     .points b { font-family: Syne, sans-serif; display: block; margin-bottom: 0.2rem; color: var(--ink); }
+    .feat-list { display: grid; gap: 1.15rem; }
+    .feat-list article {
+      padding: 1.15rem 1.2rem 1.2rem;
+      border-top: 1px solid var(--line);
+    }
+    .feat-list article:first-child { border-top: none; padding-top: 0; }
+    .feat-list h3 {
+      color: var(--accent);
+      font-size: 1.15rem;
+      margin-bottom: 0.5rem;
+    }
+    .feat-list p { margin: 0; color: #c5d2cb; }
+    .pour-qui {
+      margin-top: 0.65rem !important;
+      font-size: 0.9rem;
+      color: var(--muted) !important;
+      font-style: italic;
+    }
     .sequence ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
     .sequence li { display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.85rem; align-items: start; }
     .sequence .n {
@@ -195,6 +213,46 @@
     <li><b>Zéro coût au repos</b> Installé comme service, WikiChat dort à 0 % CPU. Il s’éveille avec ta session, se rendort quand tu pars.</li>
   </ul>
     </section>
+    <section class="features" id="fonctionnalites">
+    <h2>Ce que tu peux faire</h2>
+    <div class="feat-list">
+      <article>
+        <h3>Mémoire transverse</h3>
+        <p>Une base de connaissance qui traverse tes dépôts : ce que tu as capitalisé en clôturant un projet redevient trouvable depuis un autre. Avant d’implémenter, tu demandes — et tu évites de redériver ce qui est déjà fixé.</p>
+        <p class="pour-qui">Dès que tu as plus d’un projet qui se ressemble.</p>
+      </article>
+      <article>
+        <h3>Sessions reliées</h3>
+        <p>Chaque fenêtre Claude Code s’enregistre sous un nom. Canaux thématiques, messages directs, artefacts partagés : elles se coordonnent sans que tu recopies le contexte d’un onglet à l’autre. Un agent nommé hors ligne peut être réveillé quand on lui écrit et qu’on attend une réponse.</p>
+        <p class="pour-qui">Quand tu travailles avec plusieurs sessions en parallèle.</p>
+      </article>
+      <article>
+        <h3>Surveillance événementielle</h3>
+        <p>Des détecteurs locaux surveillent commits, branches, fichiers, artefacts, tâches expirées. Tant qu’il ne se passe rien, ça ne consomme pas ton quota. Quand un motif matche, un agent headless est lancé pour le traitement — puis il sort.</p>
+        <p class="pour-qui">Pour une veille permanente sans veilleur permanent.</p>
+      </article>
+      <article>
+        <h3>Délégation (spawn)</h3>
+        <p>Depuis une session, tu lances une tâche bornée dans un dépôt : revue, audit, exploration. L’agent écrit dans `.wikichat/artifacts/`, te signale le résultat, et s’arrête. Des plafonds bornent le nombre de sessions et la durée des daemons.</p>
+        <p class="pour-qui">Quand une tâche mérite une autre paire de mains, pas ton focus entier.</p>
+      </article>
+      <article>
+        <h3>Capitalisation de projet</h3>
+        <p>En fin de course, tu clôtures : synthèse structurée (doc, livrables, rétro, capitalisation), diffusion sur le réseau, absorption dans la mémoire transverse. Le prochain projet similaire part moins de zéro.</p>
+        <p class="pour-qui">Pour que l’apprentissage survive à la session.</p>
+      </article>
+      <article>
+        <h3>Service dormant</h3>
+        <p>Installé au logon, WikiChat reste à 0 % CPU tant qu’aucune session nommée n’est là. Il s’éveille quand tu ouvres Claude Code, se rendort après une période de grâce. Optionnellement, tu peux désarmer cette porte si des routines doivent tourner la nuit.</p>
+        <p class="pour-qui">Machine de travail au quotidien, sans bruit de fond.</p>
+      </article>
+      <article>
+        <h3>Pilote</h3>
+        <p>Une petite UI locale pour des agents planifiés et une file d’approbation : tu proposes, tu valides, tu lances. C’est la couche « power user » au-dessus des triggers — pas obligatoire pour démarrer.</p>
+        <p class="pour-qui">Quand tu veux orchestrer des échéances avec un œil humain.</p>
+      </article>
+    </div>
+  </section>
     <section class="sequence" id="parcours">
     <h2>Le parcours</h2>
     <ol>
@@ -232,6 +290,7 @@
   </aside>
     <section class="journal" id="journal">
     <h2>Journal</h2>
+    <div><b>fonctionnalites</b><p>Section « Ce que tu peux faire » : mémoire, sessions, événements, spawn, capitalisation, dormant, Pilote.</p></div>
     <div><b>vitrine</b><p>Première page produit publique — distincte du README technique.</p></div>
     <div><b>public</b><p>Dépôt ouvert sous licence MIT ; interfaces legacy retirées, Pilote conservé.</p></div>
   </section>

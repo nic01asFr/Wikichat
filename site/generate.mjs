@@ -41,6 +41,21 @@ ${points.map((p) => `    <li><b>${echapper(p.titre)}</b> ${echapper(p.texte)}</l
   </ul>`;
 }
 
+function blocFonctionnalites(v) {
+  const l = v.fonctionnalites || [];
+  if (!l.length) return "";
+  return `<section class="features" id="fonctionnalites">
+    <h2>${echapper(v.titreFonctionnalites || "Ce que tu peux faire")}</h2>
+    <div class="feat-list">
+${l.map((f) => `      <article>
+        <h3>${echapper(f.titre)}</h3>
+        <p>${echapper(f.texte)}</p>
+        ${f.pourQui ? `<p class="pour-qui">${echapper(f.pourQui)}</p>` : ""}
+      </article>`).join("\n")}
+    </div>
+  </section>`;
+}
+
 function blocChiffres(chiffres) {
   if (!chiffres?.length) return "";
   return `<div class="chiffres">
@@ -215,6 +230,24 @@ export function rendreHtml(v, base = BASE) {
       color: #c5d2cb;
     }
     .points b { font-family: Syne, sans-serif; display: block; margin-bottom: 0.2rem; color: var(--ink); }
+    .feat-list { display: grid; gap: 1.15rem; }
+    .feat-list article {
+      padding: 1.15rem 1.2rem 1.2rem;
+      border-top: 1px solid var(--line);
+    }
+    .feat-list article:first-child { border-top: none; padding-top: 0; }
+    .feat-list h3 {
+      color: var(--accent);
+      font-size: 1.15rem;
+      margin-bottom: 0.5rem;
+    }
+    .feat-list p { margin: 0; color: #c5d2cb; }
+    .pour-qui {
+      margin-top: 0.65rem !important;
+      font-size: 0.9rem;
+      color: var(--muted) !important;
+      font-style: italic;
+    }
     .sequence ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
     .sequence li { display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.85rem; align-items: start; }
     .sequence .n {
@@ -286,6 +319,7 @@ export function rendreHtml(v, base = BASE) {
       <h2>Ce que ça change</h2>
       ${blocPoints(v.points)}
     </section>
+    ${blocFonctionnalites(v)}
     ${blocSequence(produit)}
     ${blocContextes(produit)}
     ${blocEncart(v.encart)}
