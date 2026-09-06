@@ -1,0 +1,96 @@
+{
+  "nom": "WikiChat",
+  "pitch": "La mémoire et le système nerveux de ta machine de développement — sessions Claude Code reliées, connaissance transverse, agents qui s’éveillent seulement quand il se passe quelque chose.",
+  "couleur": "#1FA7A0",
+  "tags": ["Local", "Claude Code", "Multi-agents", "Mémoire", "Sans clé API"],
+  "depot": "https://github.com/nic01asFr/Wikichat",
+  "points": [
+    {
+      "titre": "Une mémoire qui traverse les projets",
+      "texte": "Avant de reconstruire un pattern déjà résolu ailleurs, ta session interroge la connaissance capitalisée à chaque clôture de projet."
+    },
+    {
+      "titre": "Des sessions qui se parlent",
+      "texte": "Deux fenêtres Claude Code s’écrivent, se réveillent, se passent des artefacts — sans que tu joues les messagers."
+    },
+    {
+      "titre": "Une surveillance qui ne coûte rien",
+      "texte": "Des détecteurs JavaScript veillent sur commits, fichiers, artefacts. Un agent ne s’allume que lorsqu’un événement le justifie."
+    },
+    {
+      "titre": "Du travail délégué, puis capitalisé",
+      "texte": "Tu spawnes une tâche bornée ; elle écrit dans le dépôt. Tu clôtures ; la synthèse nourrit les projets suivants."
+    },
+    {
+      "titre": "Zéro coût au repos",
+      "texte": "Installé comme service, WikiChat dort à 0 % CPU. Il s’éveille avec ta session, se rendort quand tu pars."
+    }
+  ],
+  "encart": {
+    "titre": "Sur ton abonnement, pas sur l’API",
+    "texte": "Les agents que WikiChat lance sont des sessions Claude Code. Aucune clé API à provisionner — le quota, c’est le tien, borné par des plafonds de sessions et de durée.",
+    "lien": {
+      "libelle": "Voir l’installation",
+      "url": "https://github.com/nic01asFr/Wikichat/blob/main/docs/setup/INSTALL.md"
+    }
+  },
+  "produit": {
+    "accroche": "Chaque session sait tout d’un projet et rien du reste. WikiChat relie la machine : mémoire transverse, coordination, et agents à la demande — tout reste sur 127.0.0.1.",
+    "chiffres": [
+      { "valeur": "0", "libelle": "clé API à fournir" },
+      { "valeur": "0 %", "libelle": "CPU au repos (dormant)" },
+      { "valeur": "1", "libelle": "machine — rien ne sort sans toi" }
+    ],
+    "titreSequence": "Le parcours",
+    "sequence": [
+      {
+        "titre": "Tu installes le service",
+        "texte": "Clone, npm install, service de fond au logon — ou npm start. Le serveur écoute en local."
+      },
+      {
+        "titre": "Tu branches Claude Code",
+        "texte": "Une URL SSE. L’overlay pose skill, commandes et hook de courrier. Tu t’enregistres une fois par conversation."
+      },
+      {
+        "titre": "Tu cherches avant de reconstruire",
+        "texte": "search_knowledge — ce que tu as déjà fixé dans d’autres dépôts remonte avant que tu ne le redérives."
+      },
+      {
+        "titre": "Tu délègues quand ça bloque",
+        "texte": "Mention d’un agent hors ligne, commit détecté, tâche bornée : un headless s’exécute et sort."
+      },
+      {
+        "titre": "Tu clôtures pour la suite",
+        "texte": "close_project capitalise. La mémoire transverse grossit pour le prochain projet qui se ressemble."
+      }
+    ],
+    "titreContextes": "Quand ça compte",
+    "contextes": [
+      {
+        "titre": "Plusieurs projets qui se ressemblent",
+        "texte": "Tu retombes sur le même problème carto, data ou UI. La base transverse te dit ce qui est fixé — et ce qu’il ne faut pas refaire.",
+        "pourquoi": "Sans elle, chaque dépôt réinvente la roue dans son CLAUDE.md isolé."
+      },
+      {
+        "titre": "Plusieurs sessions en parallèle",
+        "texte": "Une fenêtre code, une autre revue, une troisième explore. Elles se parlent sur des canaux et en DM.",
+        "pourquoi": "Sinon tu copies-colles le contexte entre onglets jusqu’à l’erreur."
+      },
+      {
+        "titre": "Du travail qui doit tourner sans toi",
+        "texte": "Triggers, Pilote, routines : un événement ou une échéance lance un agent borné pendant que tu n’es pas devant.",
+        "pourquoi": "Un daemon qui poll en boucle mange ton quota pour rien — ici on n’allume que sur signal."
+      }
+    ]
+  },
+  "journal": [
+    {
+      "version": "vitrine",
+      "texte": "Première page produit publique — distincte du README technique."
+    },
+    {
+      "version": "public",
+      "texte": "Dépôt ouvert sous licence MIT ; interfaces legacy retirées, Pilote conservé."
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # WikiChat
 
+**Présentation produit :** [nic01asfr.github.io/Wikichat](https://nic01asfr.github.io/Wikichat/) — ce README reste la doc technique.
+
 **La mémoire et le système nerveux de ta machine de développement.**
 
 Un service local qui sait ce que tu as fait dans tes autres projets, relie les sessions Claude Code que tu ouvres séparément, et continue de travailler quand tu fermes le laptop. Tout tourne en local, sur ton abonnement Claude — aucune clé API.

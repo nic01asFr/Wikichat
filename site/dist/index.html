@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WikiChat — mémoire et coordination pour Claude Code</title>
+  <meta name="description" content="La mémoire et le système nerveux de ta machine de développement — sessions Claude Code reliées, connaissance transverse, agents qui s’éveillent seulement quand il se passe quelque chose." />
+  <meta property="og:title" content="WikiChat" />
+  <meta property="og:description" content="La mémoire et le système nerveux de ta machine de développement — sessions Claude Code reliées, connaissance transverse, agents qui s’éveillent seulement quand il se passe quelque chose." />
+  <meta property="og:type" content="website" />
+  <link rel="canonical" href="https://nic01asfr.github.io/Wikichat/" />
+  <base href="/Wikichat/" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --accent: #1FA7A0;
+      --bg: #0b1210;
+      --bg2: #121a17;
+      --ink: #e7efe9;
+      --muted: #8a9a92;
+      --line: rgba(231, 239, 233, 0.12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      font-size: 1.05rem;
+      line-height: 1.55;
+      color: var(--ink);
+      background:
+        radial-gradient(1000px 520px at 12% -8%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 60%),
+        radial-gradient(700px 400px at 95% 10%, rgba(255,255,255,0.04), transparent 45%),
+        linear-gradient(180deg, var(--bg), var(--bg2) 40%, var(--bg));
+      min-height: 100vh;
+    }
+    a { color: var(--accent); }
+    .wrap { width: min(920px, calc(100% - 2.5rem)); margin: 0 auto; }
+    header.hero { padding: clamp(3.5rem, 12vw, 6.5rem) 0 2.5rem; }
+    .brand {
+      font-family: Syne, system-ui, sans-serif;
+      font-weight: 800;
+      font-size: clamp(2.8rem, 9vw, 4.6rem);
+      letter-spacing: -0.04em;
+      line-height: 0.95;
+      margin: 0 0 1rem;
+    }
+    .pitch {
+      font-size: clamp(1.05rem, 2.4vw, 1.25rem);
+      max-width: 38rem;
+      color: var(--muted);
+      margin: 0 0 1.5rem;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 1.75rem; }
+    .tag {
+      font-family: Syne, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.28rem 0.55rem;
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .cta { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+    .btn {
+      font-family: Syne, sans-serif;
+      font-weight: 700;
+      text-decoration: none;
+      padding: 0.7rem 1.15rem;
+      border-radius: 2px;
+      display: inline-block;
+    }
+    .btn.primary { background: var(--accent); color: #04110f; }
+    .btn.ghost { border: 1px solid var(--line); color: var(--ink); }
+    .btn.primary:hover { filter: brightness(1.08); }
+    main section, main aside { margin: 3.2rem 0; }
+    h2 {
+      font-family: Syne, sans-serif;
+      font-size: 1.45rem;
+      letter-spacing: -0.02em;
+      margin: 0 0 1.1rem;
+    }
+    h3 {
+      font-family: Syne, sans-serif;
+      font-size: 1.05rem;
+      margin: 0 0 0.45rem;
+    }
+    .accroche { font-size: 1.15rem; max-width: 40rem; color: #c5d2cb; }
+    .chiffres {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      margin: 1.5rem 0 0;
+    }
+    .chiffres div {
+      padding: 1rem 1.1rem;
+      background: rgba(255,255,255,0.03);
+      border-left: 3px solid var(--accent);
+    }
+    .chiffres strong {
+      font-family: Syne, sans-serif;
+      font-size: 1.8rem;
+      display: block;
+      letter-spacing: -0.03em;
+    }
+    .chiffres span { color: var(--muted); font-size: 0.9rem; }
+    .points { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.9rem; }
+    .points li {
+      padding: 0.9rem 0 0.9rem 1rem;
+      border-left: 2px solid var(--accent);
+      color: #c5d2cb;
+    }
+    .points b { font-family: Syne, sans-serif; display: block; margin-bottom: 0.2rem; color: var(--ink); }
+    .sequence ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
+    .sequence li { display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.85rem; align-items: start; }
+    .sequence .n {
+      font-family: Syne, sans-serif;
+      font-weight: 800;
+      color: var(--accent);
+      font-size: 1.2rem;
+    }
+    .sequence p { margin: 0.25rem 0 0; color: var(--muted); }
+    .ctx-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+    }
+    .ctx-grid article {
+      padding: 1.1rem 1.15rem;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--line);
+    }
+    .ctx-grid p { color: #c5d2cb; margin: 0; }
+    .pourquoi { color: var(--muted) !important; font-size: 0.92rem; margin-top: 0.6rem !important; }
+    .encart {
+      padding: 1.4rem 1.5rem;
+      background: color-mix(in srgb, var(--accent) 16%, #0b1210);
+      border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .encart p { color: #c5d2cb; }
+    .encart a.btn.ghost { border-color: var(--accent); color: var(--ink); }
+    .journal { border-left: 2px solid var(--line); padding-left: 1.1rem; }
+    .journal div { margin-bottom: 1rem; }
+    .journal b { font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; color: var(--accent); }
+    .journal p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.95rem; }
+    footer {
+      margin: 4rem 0 2.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .hero .brand { animation: rise 0.7s ease both; }
+      .hero .pitch { animation: rise 0.7s 0.08s ease both; }
+      .hero .tags, .hero .cta { animation: rise 0.7s 0.14s ease both; }
+      @keyframes rise {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: none; }
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <p class="brand">WikiChat</p>
+      <p class="pitch">La mémoire et le système nerveux de ta machine de développement — sessions Claude Code reliées, connaissance transverse, agents qui s’éveillent seulement quand il se passe quelque chose.</p>
+      <div class="tags"><span class="tag">Local</span><span class="tag">Claude Code</span><span class="tag">Multi-agents</span><span class="tag">Mémoire</span><span class="tag">Sans clé API</span></div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/nic01asFr/Wikichat">Code source</a>
+        <a class="btn ghost" href="https://github.com/nic01asFr/Wikichat/blob/main/docs/setup/INSTALL.md">Installer</a>
+      </div>
+    </div>
+  </header>
+  <main class="wrap">
+    <section id="produit">
+      <p class="accroche">Chaque session sait tout d’un projet et rien du reste. WikiChat relie la machine : mémoire transverse, coordination, et agents à la demande — tout reste sur 127.0.0.1.</p>
+      <div class="chiffres">
+    <div><strong>0</strong><span>clé API à fournir</span></div>
+    <div><strong>0 %</strong><span>CPU au repos (dormant)</span></div>
+    <div><strong>1</strong><span>machine — rien ne sort sans toi</span></div>
+  </div>
+    </section>
+    <section id="promesse">
+      <h2>Ce que ça change</h2>
+      <ul class="points">
+    <li><b>Une mémoire qui traverse les projets</b> Avant de reconstruire un pattern déjà résolu ailleurs, ta session interroge la connaissance capitalisée à chaque clôture de projet.</li>
+    <li><b>Des sessions qui se parlent</b> Deux fenêtres Claude Code s’écrivent, se réveillent, se passent des artefacts — sans que tu joues les messagers.</li>
+    <li><b>Une surveillance qui ne coûte rien</b> Des détecteurs JavaScript veillent sur commits, fichiers, artefacts. Un agent ne s’allume que lorsqu’un événement le justifie.</li>
+    <li><b>Du travail délégué, puis capitalisé</b> Tu spawnes une tâche bornée ; elle écrit dans le dépôt. Tu clôtures ; la synthèse nourrit les projets suivants.</li>
+    <li><b>Zéro coût au repos</b> Installé comme service, WikiChat dort à 0 % CPU. Il s’éveille avec ta session, se rendort quand tu pars.</li>
+  </ul>
+    </section>
+    <section class="sequence" id="parcours">
+    <h2>Le parcours</h2>
+    <ol>
+      <li><span class="n">1</span><div><b>Tu installes le service</b><p>Clone, npm install, service de fond au logon — ou npm start. Le serveur écoute en local.</p></div></li>
+      <li><span class="n">2</span><div><b>Tu branches Claude Code</b><p>Une URL SSE. L’overlay pose skill, commandes et hook de courrier. Tu t’enregistres une fois par conversation.</p></div></li>
+      <li><span class="n">3</span><div><b>Tu cherches avant de reconstruire</b><p>search_knowledge — ce que tu as déjà fixé dans d’autres dépôts remonte avant que tu ne le redérives.</p></div></li>
+      <li><span class="n">4</span><div><b>Tu délègues quand ça bloque</b><p>Mention d’un agent hors ligne, commit détecté, tâche bornée : un headless s’exécute et sort.</p></div></li>
+      <li><span class="n">5</span><div><b>Tu clôtures pour la suite</b><p>close_project capitalise. La mémoire transverse grossit pour le prochain projet qui se ressemble.</p></div></li>
+    </ol>
+  </section>
+    <section class="contextes" id="usages">
+    <h2>Quand ça compte</h2>
+    <div class="ctx-grid">
+      <article>
+        <h3>Plusieurs projets qui se ressemblent</h3>
+        <p>Tu retombes sur le même problème carto, data ou UI. La base transverse te dit ce qui est fixé — et ce qu’il ne faut pas refaire.</p>
+        <p class="pourquoi">Sans elle, chaque dépôt réinvente la roue dans son CLAUDE.md isolé.</p>
+      </article>
+      <article>
+        <h3>Plusieurs sessions en parallèle</h3>
+        <p>Une fenêtre code, une autre revue, une troisième explore. Elles se parlent sur des canaux et en DM.</p>
+        <p class="pourquoi">Sinon tu copies-colles le contexte entre onglets jusqu’à l’erreur.</p>
+      </article>
+      <article>
+        <h3>Du travail qui doit tourner sans toi</h3>
+        <p>Triggers, Pilote, routines : un événement ou une échéance lance un agent borné pendant que tu n’es pas devant.</p>
+        <p class="pourquoi">Un daemon qui poll en boucle mange ton quota pour rien — ici on n’allume que sur signal.</p>
+      </article>
+    </div>
+  </section>
+    <aside class="encart">
+    <h2>Sur ton abonnement, pas sur l’API</h2>
+    <p>Les agents que WikiChat lance sont des sessions Claude Code. Aucune clé API à provisionner — le quota, c’est le tien, borné par des plafonds de sessions et de durée.</p>
+    <p class="cta-line"><a class="btn ghost" href="https://github.com/nic01asFr/Wikichat/blob/main/docs/setup/INSTALL.md">Voir l’installation</a></p>
+  </aside>
+    <section class="journal" id="journal">
+    <h2>Journal</h2>
+    <div><b>vitrine</b><p>Première page produit publique — distincte du README technique.</p></div>
+    <div><b>public</b><p>Dépôt ouvert sous licence MIT ; interfaces legacy retirées, Pilote conservé.</p></div>
+  </section>
+  </main>
+  <footer class="wrap">
+    <p>WikiChat — MIT · <a href="https://github.com/nic01asFr/Wikichat">github.com/nic01asFr/Wikichat</a></p>
+    <p>Service local pour Claude Code. Cette page présente le produit ; la documentation technique vit dans le dépôt.</p>
+  </footer>
+</body>
+</html>

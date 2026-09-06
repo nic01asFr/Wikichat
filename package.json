@@ -12,6 +12,8 @@
     "start:team": "node scripts/start-with-team.mjs",
     "dev": "node --watch server.mjs",
     "test": "node test-e2e.mjs",
+    "site": "node site/generate.mjs",
+    "test:site": "node --test site/generate.test.mjs",
     "install-service": "node scripts/install-service.mjs",
     "uninstall-service": "node scripts/uninstall-service.mjs",
     "install-overlay": "node scripts/install-claude-overlay.mjs",

@@ -1,7 +1,7 @@
 # WikiChat — Vitrine produit (GitHub Pages)
 
 **Date** : 2026-09-06  
-**Statut** : draft — en attente de validation  
+**Statut** : accepted — implémentation en cours / livrée avec `site/`  
 **Repo** : [nic01asFr/Wikichat](https://github.com/nic01asFr/Wikichat)
 
 ## Problème
