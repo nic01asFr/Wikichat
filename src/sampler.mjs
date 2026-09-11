@@ -15,8 +15,8 @@
  *      Falls back to spawnHeadless if no live session found.
  *      Best for: asking a long-running agent to do something.
  *
- * Safety: this module writes .mcp.json (création, ou ajout du seul jeton
- *         d'identité s'il manque à une entrée wikichat existante).
+ * Safety: this module writes .mcp.json (création, ou bascule SSE→pont stdio
+ *         si l'entrée wikichat n'injectait pas d'identité fiable).
  *         It NEVER modifies CLAUDE.md or any existing file.
  */
 
@@ -31,11 +31,25 @@ import { state } from "./state.mjs";
 import { recall } from "./identity.mjs";
 import { fileURLToPath } from "url";
 
-/** Chemin absolu de l'émetteur de jeton d'identité, cité dans les .mcp.json générés. */
-const CHEMIN_JETON = path
-  .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-token-helper.mjs")
+/** Pont stdio → SSE : injecte le jeton dans l'URL (seule voie honorée par Cursor / Claude VS Code). */
+const CHEMIN_STDIO = path
+  .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-mcp-stdio.mjs")
   .split(path.sep).join("/");
 
+function entreeWikichatMcp() {
+  return {
+    command: "node",
+    args: [CHEMIN_STDIO],
+  };
+}
+
+/** True si l'entrée est l'ancien SSE sans identité fiable (variables vides / pas de pont). */
+function mcpSseSansIdentite(wc) {
+  if (!wc || wc.command) return false;
+  if (wc.type && wc.type !== "sse") return false;
+  const url = String(wc.url || "");
+  return url.includes("/sse");
+}
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
 const MAX_CONCURRENT_RESPAWNS = 3;
@@ -283,68 +297,32 @@ export function buildSpawnArgs(claudeBin, extraArgs) {
 function ensureMcpJson(projectPath, port = 3777) {
   const mcpPath = path.join(projectPath, ".mcp.json");
 
-  // Mise à niveau d'un fichier DÉJÀ présent.
-  //
-  // On ne créait le fichier que s'il manquait, et on n'y revenait jamais. Les
-  // dépôts équipés avant l'arrivée du jeton d'identité gardaient donc la forme
-  // `?agent=${WIKICHAT_AGENT:-}` — une variable que rien ne définit pour une
-  // session interactive. L'URL se résolvait en `?agent=` vide : anonyme à
-  // chaque reconnexion, sans que personne ne le sache. 30 dépôts étaient dans
-  // ce cas. C'est exactement le motif « écrit une fois, jamais relu » que ce
-  // projet passe son temps à corriger ailleurs.
-  //
-  // On n'ajoute que ce qui manque, et on ne touche à aucune autre entrée.
+  // Mise à niveau : l'ancien SSE + headersHelper ne porte pas l'identité sur
+  // Cursor / Claude VS Code (en-têtes ignorés, ${CLAUDE_CODE_SESSION_ID} vide).
+  // On bascule vers le pont stdio qui met le jeton dans l'URL.
   if (fs.existsSync(mcpPath)) {
     try {
       const conf = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
       const wc = conf?.mcpServers?.wikichat;
-      if (wc && !wc.headersHelper) {
-        wc.headersHelper = `node "${CHEMIN_JETON}"`;
+      if (mcpSseSansIdentite(wc)) {
+        conf.mcpServers.wikichat = entreeWikichatMcp();
         writeAtomicJSON(mcpPath, conf);
-        console.log(`[Sampler] .mcp.json mis à niveau (jeton d'identité) : ${projectPath}`);
+        console.log(`[Sampler] .mcp.json mis à niveau (pont stdio identité) : ${projectPath}`);
+      } else if (wc && wc.command === "node" && Array.isArray(wc.args) && !wc.args.some((a) => String(a).includes("wikichat-mcp-stdio"))) {
+        // entrée stdio étrangère : ne pas toucher
       }
     } catch { /* fichier illisible ou non-JSON : on n'y touche pas */ }
     return;
   }
 
-  if (!fs.existsSync(mcpPath)) {
-    try {
-      writeAtomicJSON(mcpPath, {
-        mcpServers: {
-          wikichat: {
-            type: "sse",
-            // L'identité voyage avec la connexion, pas seulement via register().
-            // Le fichier est partagé par tous les agents d'un projet, donc le nom
-            // ne peut pas y être écrit en dur : il vient de WIKICHAT_AGENT, que
-            // le spawn pose dans l'environnement du process. Sans cela une session
-            // reste anonyme tant qu'elle n'a pas appelé register — et le redevient
-            // à chaque reconnexion.
-            // Deux porteurs d'identite dans l'URL, et non dans les en-tetes.
-            //
-            // `agent` sert aux agents spawnes, dont l'environnement porte
-            // WIKICHAT_AGENT. `token` sert aux sessions interactives : il vaut
-            // l'identifiant de la conversation, donc un register() suffit pour
-            // toute sa vie — c'est le contrat « une seule fois, jamais plus ».
-            //
-            // Pourquoi l'URL et pas l'en-tete : mesure sur 13 connexions
-            // reelles, en 2.1.251 et 2.1.260, VS Code et Desktop — aucun client
-            // n'envoie les en-tetes du headersHelper. La substitution de
-            // variables dans l'URL, elle, a lieu : sans elle le serveur
-            // recevrait la chaine litterale, et il recoit une valeur vide.
-            url: `http://localhost:${port}/sse?agent=\${WIKICHAT_AGENT:-}&token=\${CLAUDE_CODE_SESSION_ID:-}`,
-            // Pour une session interactive, WIKICHAT_AGENT n'est pas posé : le
-            // `?agent=` est vide et l'identité ne tient que par register(), donc
-            // elle meurt à la première reconnexion. Ce helper émet un jeton
-            // stable par fenêtre Claude (clé : le PID parent), que le serveur
-            // relie au nom au premier register et réattache ensuite tout seul.
-            // register() redevient ce qu'il annonce : une fois par conversation.
-            headersHelper: `node "${CHEMIN_JETON}"`,
-          },
-        },
-      });
-    } catch (err) {
-      console.warn(`[Sampler] Cannot write .mcp.json in ${projectPath}:`, err.message);
-    }
+  try {
+    writeAtomicJSON(mcpPath, {
+      mcpServers: {
+        wikichat: entreeWikichatMcp(),
+      },
+    });
+  } catch (err) {
+    console.warn(`[Sampler] Cannot write .mcp.json in ${projectPath}:`, err.message);
   }
 }
 

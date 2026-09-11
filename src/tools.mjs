@@ -2667,8 +2667,11 @@ export function registerTools(server, sessionId) {
       // .mcp.json
       const mcpJsonPath = path.join(repo_path, ".mcp.json");
       if (!fs.existsSync(mcpJsonPath)) {
+        const pont = path
+          .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-mcp-stdio.mjs")
+          .split(path.sep).join("/");
         writeAgentFile(repo_path, "", ".mcp.json", JSON.stringify({
-          mcpServers: { wikichat: { type: "sse", url: `http://localhost:${process.env.PORT || 3777}/sse` } }
+          mcpServers: { wikichat: { command: "node", args: [pont] } }
         }, null, 2));
       }
 

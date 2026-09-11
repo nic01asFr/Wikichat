@@ -132,12 +132,28 @@ Pour la poser dans un projet plutôt que globalement :
 npm run install-overlay -- --project # → .claude/ du repo courant
 ```
 
-**Brancher Claude Code** :
+**Brancher Claude Code / Cursor** — pont stdio (identité stable) :
+
+Dans `~/.cursor/mcp.json` ou `.mcp.json` du projet :
+
+```json
+{
+  "mcpServers": {
+    "wikichat": {
+      "command": "node",
+      "args": ["<chemin-absolu>/wikichat/scripts/wikichat-mcp-stdio.mjs"]
+    }
+  }
+}
+```
+
+Le pont calcule un jeton et l’injecte dans l’URL SSE. Les clients qui ignorent `headersHelper` (Cursor, Claude VS Code) ne redeviennent plus anonymes à chaque reconnexion.
+
+Alternative SSE brute (moins fiable sans variables d’environnement) :
 
 ```bash
 claude mcp add wikichat --transport sse --url http://localhost:3777/sse
 ```
-
 ## Au quotidien
 
 Trois réflexes, largement automatiques une fois l'overlay installé :

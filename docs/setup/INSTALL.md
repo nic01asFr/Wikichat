@@ -30,7 +30,20 @@ node scripts/install-service.mjs
 
 Au premier démarrage, le serveur pose tout seul dans `~/.claude/` la skill WikiChat, les commandes `/wikichat-init`, `/sk`, `/close-project`, `/wikichat-status`, et le hook de fin de tour. Rien à faire de plus pour l'overlay.
 
-Pour déclarer le serveur MCP :
+Pour déclarer le serveur MCP (recommandé — pont stdio avec identité) :
+
+```json
+{
+  "mcpServers": {
+    "wikichat": {
+      "command": "node",
+      "args": ["C:/Users/Omen/Desktop/LAVAL/Github Repositories/wikichat/scripts/wikichat-mcp-stdio.mjs"]
+    }
+  }
+}
+```
+
+Adapte le chemin absolu. Alternative SSE (identité fragile sur Cursor / Claude VS Code) :
 
 ```bash
 claude mcp add wikichat --transport sse --url http://localhost:3777/sse
@@ -42,13 +55,12 @@ claude mcp add wikichat --transport sse --url http://localhost:3777/sse
 {
   "mcpServers": {
     "wikichat": {
-      "type": "sse",
-      "url": "http://localhost:3777/sse"
+      "command": "node",
+      "args": ["<chemin>/wikichat/scripts/wikichat-mcp-stdio.mjs"]
     }
   }
 }
 ```
-
 > Si tu as déjà des serveurs MCP dans ce fichier, ajoute juste l'entrée `wikichat` à `mcpServers`.
 
 ### `~/.claude/settings.json` (optionnel)
