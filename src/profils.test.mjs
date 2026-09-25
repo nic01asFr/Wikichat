@@ -138,6 +138,8 @@ const HORS_PROFIL_CODE = [
   "register_trigger", "list_triggers", "fire_trigger", "set_trigger_enabled", "delete_trigger",
   "register_routine", "list_routines", "run_routine", "delete_routine",
   "purge_registry", "register", "declare_project",
+  // Restés exclus par décision du coordinateur (26/09).
+  "create_channel", "update_idea", "harmonize_ideas", "list_spawned", "poll_ticket", "poll_messages",
 ];
 
 test("tools/list : l'agent code reçoit exactement les outils de son profil, l'Assistant et une connexion sans profil reçoivent tout", async () => {
@@ -188,6 +190,8 @@ test("projet du profil : un autre projet est refusé avec l'adresse de ses agent
     ["claim_task", { project: "beta", task: "t1", description: "x" }],
     ["release_task", { project: "beta", task: "t1", outcome: "x" }],
     ["set_project_meta", { project: "beta", lifecycle: "archived" }],
+    ["audit_project", { project: "beta" }],
+    ["list_project_agents", { project: "beta" }],
     ["close_project", { project: "beta", auto: false, closure: { documentation: "a", deliverables: "b", retro: "c", capitalisation: "d" } }],
   ]) {
     const r = await code.appel(outil, args);
@@ -326,6 +330,35 @@ test("bout en bout par le pont stdio : WIKICHAT_PROFIL et WIKICHAT_PROJET font l
   const p = statut.sessions.find(x => x.name === "Pont-Alpha");
   assert.deepEqual([p?.profil, p?.projet], ["code", "alpha"]);
   assert.equal(statut.sessions.find(x => x.name === "Pont-Sans")?.profil, null);
+});
+
+test("décision du 26/09 : outils rendus au profil code, bornés à son projet", async () => {
+  const code = await client("Code-Alpha-8", { profil: "code", projet: "alpha" });
+  assert.equal(OUTILS_CODE.length, 26);
+  const audit = await code.appel("audit_project", {});
+  assert.match(audit.texte, /Audit : "alpha"/, audit.texte);
+  assert.ok(audit.texte.includes(ALPHA), audit.texte);
+  assert.doesNotMatch((await code.appel("list_project_agents", {})).texte, /Refusé/);
+  assert.match((await code.appel("set_status", { status: "en revue" })).texte, /Statut/);
+  assert.match((await code.appel("declare_delay", { duration_minutes: 0 })).texte, /Disponibilité rétablie/);
+  assert.match((await code.appel("share_artifact", { title: "plan", artifact_type: "plan", content: "étapes", channel: "proj-alpha" })).texte, /partagé/);
+  assert.match((await code.appel("list_channels", {})).texte, /Canaux/);
+  const idee = (await code.appel("add_idea", { title: "idée alpha" })).texte;
+  const id = idee.match(/\[([a-z0-9-]+)\]/i)?.[1];
+  assert.ok(id, idee);
+  assert.match((await code.appel("list_ideas", {})).texte, /idée alpha/);
+  assert.match((await code.appel("get_idea", { id })).texte, /idée alpha/);
+});
+
+test("décision du 26/09 : close_project en profil code, auto=false seulement ; le Closer est réservé à l'Assistant", async () => {
+  const code = await client("Code-Alpha-9", { profil: "code", projet: "alpha" });
+  const auto = await code.appel("close_project", {});
+  assert.match(auto.texte, /auto=true lancerait un agent \(le Closer\), réservé à l'Assistant/);
+  assert.match((await code.appel("close_project", { auto: true })).texte, /réservé à l'Assistant/);
+  const closure = { documentation: "ETAT.md", deliverables: "A1", retro: "RAS", capitalisation: "motcleclosure" };
+  const manuel = await code.appel("close_project", { auto: false, closure });
+  assert.match(manuel.texte, /clôturé/, manuel.texte);
+  assert.ok(fs.existsSync(path.join(W, "knowledge", "closure-alpha.md")));
 });
 
 test("contrat : les ressources du profil code sont celles déclarées", () => {

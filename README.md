@@ -149,7 +149,7 @@ Dans `~/.cursor/mcp.json` ou `.mcp.json` du projet :
 
 Le pont calcule un jeton et l’injecte dans l’URL SSE. Les clients qui ignorent `headersHelper` (Cursor, Claude VS Code) ne redeviennent plus anonymes à chaque reconnexion.
 
-**Profil d’accès.** Avec `"env": { "WIKICHAT_PROFIL": "code", "WIKICHAT_PROJET": "<slug>" }`, le serveur n’expose à la conversation que les 18 outils du profil `code`, bornés à ce projet ; `WIKICHAT_PROFIL=assistant` donne tout. Sans profil, tous les outils (journalisé). Détail : `docs/atelier-coherence.md` §12.
+**Profil d’accès.** Avec `"env": { "WIKICHAT_PROFIL": "code", "WIKICHAT_PROJET": "<slug>" }`, le serveur n’expose à la conversation que les 26 outils du profil `code`, bornés à ce projet ; `WIKICHAT_PROFIL=assistant` donne tout. Sans profil, tous les outils (journalisé). Détail : `docs/atelier-coherence.md` §12.
 
 Alternative SSE brute (moins fiable sans variables d’environnement) :
 

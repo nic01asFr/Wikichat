@@ -2291,10 +2291,14 @@ ${lines.join("\n\n")}`);
       persist: z.boolean().default(true).describe("Si true (défaut), écrit le résultat dans project.health (saveProject). Si false, retourne juste l'audit."),
     },
     async ({ project, persist }) => {
-      const proj = state.projects.get(project);
-      if (!proj) return txt(`❌ Projet "${project}" introuvable.`);
+      const proj = state.projects.get(project) || null;
+      // Projet non déclaré mais connu par son dossier (registre, projets de
+      // l'Atelier) : on l'audite sans rien persister.
+      const racineConnue = proj ? null : racineDuProjet(project, getSessionName(sessionId));
+      if (!proj && !racineConnue) return txt(`❌ Projet "${project}" introuvable.`);
+      if (!proj) persist = false;
       // Resolve repo path : project.repo > registry path > agent's tracked path
-      let repoPath = proj.repo;
+      let repoPath = proj ? proj.repo : racineConnue;
       if (!repoPath) {
         try {
           const reg = loadRegistry();

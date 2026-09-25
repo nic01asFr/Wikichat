@@ -47,14 +47,17 @@ export const OUTILS_CODE = Object.freeze([
   // Tâches de son projet
   "claim_task", "release_task",
   // Idées
-  "add_idea",
-  // Méta et clôture de son projet (d'un autre projet : refusé)
-  "set_project_meta", "close_project",
+  "add_idea", "list_ideas", "get_idea",
+  // Méta, santé, contributeurs et clôture de son projet (d'un autre projet : refusé)
+  "set_project_meta", "close_project", "audit_project", "list_project_agents",
+  // Protocole over/standby, partage et canaux (décision du coordinateur, 26/09)
+  "set_status", "declare_delay", "share_artifact", "list_channels",
 ]);
 
 /** Outils dont l'argument `project` est remplacé par le projet du profil. */
 export const OUTILS_LIES_AU_PROJET = Object.freeze([
   "project_state", "add_project_note", "claim_task", "release_task", "set_project_meta", "close_project",
+  "audit_project", "list_project_agents",
 ]);
 
 /** Ressources du profil `code` (nom d'enregistrement dans resources.mjs). */
@@ -128,9 +131,15 @@ export function refusSansProjet(outil) {
 
 /** Gardes propres à un outil, en profil code. Rendent un texte de refus, ou null. */
 const GARDES_CODE = {
-  close_project: (args) => args?.repo_path
-    ? `⛔ Refusé : profil code, repo_path n'est pas disponible. La clôture vise le dossier de ton projet, résolu par wikichat.`
-    : null,
+  close_project: (args) => {
+    if (args?.repo_path) return `⛔ Refusé : profil code, repo_path n'est pas disponible. La clôture vise le dossier de ton projet, résolu par wikichat.`;
+    if (args?.auto !== false) {
+      return `⛔ Refusé : profil code, auto=true lancerait un agent (le Closer), réservé à l'Assistant.
+` +
+        `👉 Écris la clôture toi-même : close_project(auto=false, closure={documentation, deliverables, retro, capitalisation}).`;
+    }
+    return null;
+  },
   contact_agent: (args) => {
     if (args?.wake) {
       return `⛔ Refusé : profil code, wake=true lancerait un agent. Le message est à déposer sans réveil ` +

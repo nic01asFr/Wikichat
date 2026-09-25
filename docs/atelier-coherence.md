@@ -424,7 +424,7 @@ connexion voit et peut appeler, pas une consigne au modèle.
 
 **`assistant`** (et connexion sans profil) : les 53 outils.
 
-**`code`** : 18 outils, liste fermée (`OUTILS_CODE` dans `src/profils.mjs`).
+**`code`** : 26 outils, liste fermée (`OUTILS_CODE` dans `src/profils.mjs`).
 Un outil ajouté à wikichat n'est donné à un agent code qu'en l'ajoutant à
 cette liste.
 
@@ -432,7 +432,13 @@ cette liste.
 |---|---|
 | `project_state`, `add_project_note` | son projet |
 | `claim_task`, `release_task` | son projet |
-| `set_project_meta`, `close_project` | son projet ; `close_project` refuse `repo_path` |
+| `set_project_meta` | son projet |
+| `close_project` | son projet, **`auto=false` seulement** : l'agent écrit lui-même la clôture ; `auto=true` (qui lance le Closer) est réservé à l'Assistant et refusé ; `repo_path` refusé |
+| `audit_project` | la santé du dépôt de son projet ; un projet connu par son dossier mais non déclaré est audité sans rien persister |
+| `list_project_agents` | son projet |
+| `set_status`, `declare_delay` | inchangés (protocole over/standby) |
+| `share_artifact`, `list_channels` | inchangés |
+| `list_ideas`, `get_idea` | lecture du pool d'idées |
 | `remember`, `recall`, `forget` | sa mémoire (déjà liée à son nom) |
 | `search_knowledge` | connaissance centrale + `<son projet>/.wikichat/knowledge/` (registre, ou `<racine des projets de l'Atelier>/<slug>`) |
 | `send_message`, `read_messages`, `poll`, `list_threads` | inchangés |
@@ -441,7 +447,7 @@ cette liste.
 | `get_briefing` | son projet, les présents utiles, ses DM, ses @mentions, les diffusions et les canaux de son projet ; ni la liste des projets, ni le flux des autres canaux |
 | `add_idea` | inchangé |
 
-**Le projet est celui du profil, jamais un argument.** Pour les six outils liés
+**Le projet est celui du profil, jamais un argument.** Pour les huit outils liés
 au projet, l'argument `project` devient facultatif et vaut, s'il est omis, le
 projet du profil (sous le nom que wikichat lui connaît : « Nouveau Projet 4 »
 pour `nouveau-projet-4`). Un argument qui désigne un autre projet est refusé :
@@ -450,19 +456,26 @@ pour `nouveau-projet-4`). Un argument qui désigne un autre projet est refusé :
 > 👉 Pour voir ou faire agir un autre projet, passe par ses agents :
 > contact_agent(target="<agent de ce projet>", message=…), ou send_message.
 
-**Non exposés en profil `code`** (35) : `register`, `set_status`,
-`declare_capabilities`, `declare_delay`, `poll_messages`, `share_artifact`,
-`list_channels`, `create_channel`, `declare_project`, `list_projects`,
-`list_project_agents`, `respawn_project_agents`, `purge_registry`,
-`list_ideas`, `update_idea`, `get_idea`, `harmonize_ideas`, `audit_project`,
-`audit_all_projects`, `spawn_session`, `kill_spawn`, `list_spawned`,
-`poll_ticket`, `register_routine`, `list_routines`, `run_routine`,
-`delete_routine`, `register_trigger`, `list_triggers`, `fire_trigger`,
-`set_trigger_enabled`, `delete_trigger`, `run_cartography`,
-`run_clustering`, `scan_projects`. Ceux que le contrat ne nommait pas
-(`register`, `set_status`, `declare_*`, `poll_messages`, `share_artifact`,
-canaux, idées hors `add_idea`, `audit_project`, `list_project_agents`) sont
-restés hors de la liste : les y ajouter est un choix à faire.
+**Non exposés en profil `code`** (27) : `register`, `declare_capabilities`,
+`poll_messages`, `create_channel`, `declare_project`, `list_projects`,
+`respawn_project_agents`, `purge_registry`, `update_idea`,
+`harmonize_ideas`, `audit_all_projects`, `spawn_session`, `kill_spawn`,
+`list_spawned`, `poll_ticket`, `register_routine`, `list_routines`,
+`run_routine`, `delete_routine`, `register_trigger`, `list_triggers`,
+`fire_trigger`, `set_trigger_enabled`, `delete_trigger`, `run_cartography`,
+`run_clustering`, `scan_projects`.
+
+**Décisions du coordinateur (26/09)**, pour les outils que le contrat ne
+nommait pas :
+1. Rendus au profil `code`, bornés à son projet quand ils en prennent un :
+   `audit_project`, `list_project_agents`, `set_status`, `declare_delay`,
+   `share_artifact`, `list_channels`, `list_ideas`, `get_idea`. Restent
+   exclus : `register`, `create_channel`, `declare_project`, `update_idea`,
+   `harmonize_ideas`, `list_spawned`, `poll_ticket`, `poll_messages` (et
+   `declare_capabilities`, non cité, reste hors liste).
+2. `close_project` en profil `code` : `auto=false` seulement. `auto=true`
+   lance un agent (le Closer) : il est réservé à l'Assistant, et le refus dit
+   comment écrire la clôture soi-même.
 
 ### 12.3 Ressources
 
@@ -484,12 +497,14 @@ adressé, rien de `beta` (ni `ETAT.md`, ni message du canal de `beta`).
 
 ### 12.5 Tests
 
-- `npm run test:profils` (nouveau, 12 cas) : lecture de l'annonce ; contre un
+- `npm run test:profils` (nouveau, 14 cas) : lecture de l'annonce ; contre un
   serveur isolé à deux projets (`alpha`, `beta`) : `tools/list` exact en
   profil `code`, complet pour l'Assistant et sans profil ; `tools/call` d'un
   outil hors profil refusé et sans effet (`spawn_session`, `list_projects`,
-  `register_trigger`, `purge_registry`, `run_routine`) ; les six outils liés
-  au projet refusés sur `beta`, acceptés sur `alpha` ou sans argument ;
+  `register_trigger`, `purge_registry`, `run_routine`) ; les huit outils liés
+  au projet refusés sur `beta`, acceptés sur `alpha` ou sans argument ; les
+  outils rendus le 26/09 appelables ; `close_project` refusé en `auto=true`
+  (explicite ou par défaut), accepté en `auto=false` ;
   `repo_path` et `wake` refusés ; connaissance ; `contact_agent` vers un
   agent de `beta` ; `list_sessions` et briefing bornés ; ressources ; hook
   `SessionStart` ; **bout en bout par le vrai pont stdio** avec
@@ -518,7 +533,7 @@ Aucune dépendance ajoutée ; aucune donnée migrée.
    curl -s 127.0.0.1:3777/status | jq '.sessions[] | {name, profil, projet}'
    grep -E 'profil (code|assistant|non annoncé|inconnu)' <journal du service>
    ```
-   Puis, dans une conversation de projet : `/mcp` montre 18 outils wikichat ;
+   Puis, dans une conversation de projet : `/mcp` montre 26 outils wikichat ;
    `project_state(project="<autre projet>")` est refusé avec l'adresse de
    `contact_agent` ; dans l'Assistant, 53 outils.
 5. Retour arrière : `git checkout 82a06ce` et redémarrer. Les variables
@@ -533,8 +548,6 @@ Aucune dépendance ajoutée ; aucune donnée migrée.
 - La passerelle de l'Atelier (identité `passerelle-atelier`, audit M8)
   n'annonce pas de profil : elle garde tout. Le lot F doit retirer wikichat de
   son catalogue proposé aux agents.
-- `close_project(auto=true)` en profil `code` lance encore le Closer, borné au
-  dossier du projet et en lecture : à confirmer, ou à réserver à l'Assistant.
 - `read_messages` reste libre sur tous les canaux publics : c'est la
   messagerie que le contrat garde ; seuls briefing et ressources sont bornés.
 - Non vérifié en réel : `/mcp` d'une vraie conversation Claude Code, sur le
