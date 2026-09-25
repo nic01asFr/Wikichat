@@ -1,4 +1,4 @@
-# wikichat et la cohérence de projet (lots A, C, D, W)
+# wikichat et la cohérence de projet (lots A, C, D, W, profils)
 
 Branche `atelier-coherence`, 25/09/2026. Mise en œuvre, côté wikichat, de
 `Claude Code sspcloud/docs/coherence-projet.md` : un projet doit être le même
@@ -390,3 +390,152 @@ et `spawn_registry.json` sont repris dans `C:\Users\Omen\.wikichat` (où
 - Connecteurs par projet : lus dans `<projet>/.mcp.json` (noms seulement).
   L'Atelier complète `noeud.atelier` à l'assemblage.
 - W8 (capitalisation des conversations) : hors de ce lot.
+
+## 12. Profils
+
+Branche `lot-profils` (depuis `82a06ce`), 26/09/2026. Contrat :
+`Claude Code sspcloud/docs/vision/profils-acces.md`, qui fait foi. Un profil
+se filtre à la source : c'est le serveur wikichat qui décide de ce qu'une
+connexion voit et peut appeler, pas une consigne au modèle.
+
+### 12.1 Annonce et mécanique
+
+- L'entrée wikichat reçoit `WIKICHAT_PROFIL=code|assistant` et
+  `WIKICHAT_PROJET=<slug>` dans son environnement. Le pont stdio
+  (`scripts/wikichat-mcp-stdio.mjs`) les transmet en `?profil=` et `?projet=`
+  sur l'URL `/sse` ; un client SSE direct peut passer les en-têtes
+  `x-wikichat-profil` et `x-wikichat-projet`. Une variable non développée
+  (`${…}`) compte comme absente.
+- Le serveur lit l'annonce à la connexion (`src/profils.mjs`, `lireAnnonce`)
+  et la garde sur la session (`profil`, `projet`, visibles dans `/status`).
+  Chaque connexion a son propre serveur MCP : un outil hors profil n'y est
+  **jamais enregistré**. Il n'apparaît pas dans `tools/list`, et `tools/call`
+  le refuse (« Tool … not found », `isError`), même appelé directement.
+- **Sans profil annoncé** : comportement d'avant, tous les outils, et une
+  ligne au journal : `profil non annoncé — <nom> garde tous les outils`.
+- **Profil inconnu** (`WIKICHAT_PROFIL=admin`…) : traité comme `code`, le
+  plus restreint, avec un avertissement au journal.
+- **Profil `code` sans projet** : le projet de la conversation déclarée par
+  son hook `SessionStart` sert de repli ; à défaut, les outils liés au projet
+  refusent (« défaut de configuration de l'entrée wikichat »), et
+  `search_knowledge` ne lit que la connaissance centrale.
+
+### 12.2 Outils par profil
+
+**`assistant`** (et connexion sans profil) : les 53 outils.
+
+**`code`** : 18 outils, liste fermée (`OUTILS_CODE` dans `src/profils.mjs`).
+Un outil ajouté à wikichat n'est donné à un agent code qu'en l'ajoutant à
+cette liste.
+
+| Outil | Borne en profil code |
+|---|---|
+| `project_state`, `add_project_note` | son projet |
+| `claim_task`, `release_task` | son projet |
+| `set_project_meta`, `close_project` | son projet ; `close_project` refuse `repo_path` |
+| `remember`, `recall`, `forget` | sa mémoire (déjà liée à son nom) |
+| `search_knowledge` | connaissance centrale + `<son projet>/.wikichat/knowledge/` (registre, ou `<racine des projets de l'Atelier>/<slug>`) |
+| `send_message`, `read_messages`, `poll`, `list_threads` | inchangés |
+| `contact_agent` | refuse `wake=true` et `repo_path` (ils lancent un agent) ; avec `also_invite`, un invité hors ligne reçoit l'invitation dans sa maison au lieu d'être lancé |
+| `list_sessions` | réduit aux agents nommés présents, avec leur projet ; ni tâche, ni statut, ni compétences, ni roster hors ligne |
+| `get_briefing` | son projet, les présents utiles, ses DM, ses @mentions, les diffusions et les canaux de son projet ; ni la liste des projets, ni le flux des autres canaux |
+| `add_idea` | inchangé |
+
+**Le projet est celui du profil, jamais un argument.** Pour les six outils liés
+au projet, l'argument `project` devient facultatif et vaut, s'il est omis, le
+projet du profil (sous le nom que wikichat lui connaît : « Nouveau Projet 4 »
+pour `nouveau-projet-4`). Un argument qui désigne un autre projet est refusé :
+
+> ⛔ Refusé : profil code, limité au projet "alpha". "beta" est un autre projet.
+> 👉 Pour voir ou faire agir un autre projet, passe par ses agents :
+> contact_agent(target="<agent de ce projet>", message=…), ou send_message.
+
+**Non exposés en profil `code`** (35) : `register`, `set_status`,
+`declare_capabilities`, `declare_delay`, `poll_messages`, `share_artifact`,
+`list_channels`, `create_channel`, `declare_project`, `list_projects`,
+`list_project_agents`, `respawn_project_agents`, `purge_registry`,
+`list_ideas`, `update_idea`, `get_idea`, `harmonize_ideas`, `audit_project`,
+`audit_all_projects`, `spawn_session`, `kill_spawn`, `list_spawned`,
+`poll_ticket`, `register_routine`, `list_routines`, `run_routine`,
+`delete_routine`, `register_trigger`, `list_triggers`, `fire_trigger`,
+`set_trigger_enabled`, `delete_trigger`, `run_cartography`,
+`run_clustering`, `scan_projects`. Ceux que le contrat ne nommait pas
+(`register`, `set_status`, `declare_*`, `poll_messages`, `share_artifact`,
+canaux, idées hors `add_idea`, `audit_project`, `list_project_agents`) sont
+restés hors de la liste : les y ajouter est un choix à faire.
+
+### 12.3 Ressources
+
+| Ressource | `code` |
+|---|---|
+| `wikichat://briefing` | bornée comme `get_briefing` |
+| `wikichat://role/{name}` | inchangée |
+| `wikichat://identity/{name}` | sa seule identité (liste et lecture) |
+| `wikichat://kb/{topic}` | centrale + son projet ; une fiche d'un autre projet est introuvable |
+| `wikichat://principal`, `wikichat://decisions` | non exposées |
+
+### 12.4 Hooks
+
+Le briefing `SessionStart` était déjà borné : identité, fichiers de **son**
+projet (la racine de la conversation), **son** courrier, **ses** fils, les
+présents de **son** projet. Il ne dépend pas du profil. Vérifié par un test :
+une conversation dans `alpha` reçoit son `ETAT.md` et un DM qui lui est
+adressé, rien de `beta` (ni `ETAT.md`, ni message du canal de `beta`).
+
+### 12.5 Tests
+
+- `npm run test:profils` (nouveau, 12 cas) : lecture de l'annonce ; contre un
+  serveur isolé à deux projets (`alpha`, `beta`) : `tools/list` exact en
+  profil `code`, complet pour l'Assistant et sans profil ; `tools/call` d'un
+  outil hors profil refusé et sans effet (`spawn_session`, `list_projects`,
+  `register_trigger`, `purge_registry`, `run_routine`) ; les six outils liés
+  au projet refusés sur `beta`, acceptés sur `alpha` ou sans argument ;
+  `repo_path` et `wake` refusés ; connaissance ; `contact_agent` vers un
+  agent de `beta` ; `list_sessions` et briefing bornés ; ressources ; hook
+  `SessionStart` ; **bout en bout par le vrai pont stdio** avec
+  `WIKICHAT_PROFIL` et `WIKICHAT_PROJET`. Neutraliser le filtre fait échouer
+  6 cas.
+- `npm test` (36, serveur isolé), `test:hooks` (16), `test:lot-w` (16, plus 1
+  sauté sous Windows), `test:lancement` (32), `test:site` (3) : passent.
+  `test:lot-w` : le cas J-b lisait `triggers.json` avant son écriture
+  différée d'une seconde (échec une fois sur trois déjà sur `82a06ce`) ; il
+  attend maintenant le fichier.
+
+### 12.6 Mettre le pod à jour
+
+Aucune dépendance ajoutée ; aucune donnée migrée.
+
+1. `cd ~/work/wikichat/src && git fetch origin && git checkout lot-profils`
+   (une fois poussée ; la branche part de `82a06ce`, déjà déployé).
+2. Redémarrer wikichat **depuis `~/work/wikichat/src`**. Tant que l'Atelier
+   n'annonce rien, rien ne change : chaque connexion journalise
+   `profil non annoncé`.
+3. Côté Atelier (équipe S) : poser `WIKICHAT_PROFIL` et `WIKICHAT_PROJET`
+   dans l'`env` de l'entrée `wikichat` (pont stdio) : `code` et le slug du
+   projet pour une conversation de projet, `assistant` pour l'Assistant.
+4. Vérifier :
+   ```sh
+   curl -s 127.0.0.1:3777/status | jq '.sessions[] | {name, profil, projet}'
+   grep -E 'profil (code|assistant|non annoncé|inconnu)' <journal du service>
+   ```
+   Puis, dans une conversation de projet : `/mcp` montre 18 outils wikichat ;
+   `project_state(project="<autre projet>")` est refusé avec l'adresse de
+   `contact_agent` ; dans l'Assistant, 53 outils.
+5. Retour arrière : `git checkout 82a06ce` et redémarrer. Les variables
+   posées par l'Atelier sont alors ignorées (tous les outils).
+
+### 12.7 Ce qui reste
+
+- Le profil est une **annonce** de l'entrée wikichat : une connexion SSE sur
+  le port local sans annonce garde tous les outils (c'est le comportement
+  demandé « sans profil »). Quand toutes les entrées annonceront un profil,
+  faire de l'absence un refus ou un profil `code`.
+- La passerelle de l'Atelier (identité `passerelle-atelier`, audit M8)
+  n'annonce pas de profil : elle garde tout. Le lot F doit retirer wikichat de
+  son catalogue proposé aux agents.
+- `close_project(auto=true)` en profil `code` lance encore le Closer, borné au
+  dossier du projet et en lecture : à confirmer, ou à réserver à l'Assistant.
+- `read_messages` reste libre sur tous les canaux publics : c'est la
+  messagerie que le contrat garde ; seuls briefing et ressources sont bornés.
+- Non vérifié en réel : `/mcp` d'une vraie conversation Claude Code, sur le
+  pod, avec les variables posées par l'Atelier.
