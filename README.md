@@ -174,7 +174,7 @@ Entrée : `server.mjs`. Environ 11 000 lignes au total.
 
 ```
 src/state.mjs        — état en mémoire (sessions, canaux, messages, projets)
-src/tools.mjs        — les 51 outils MCP
+src/tools.mjs        — les 53 outils MCP
 src/persistence.mjs  — I/O atomique
 src/events.mjs       — bus d'événements : détecteurs → triggers
 src/triggers.mjs     — moteur de triggers (cron, mention, channel_match, file_watch, webhook, lifecycle)
@@ -259,6 +259,8 @@ register_trigger({
 | `~/.wikichat/registry.json` | Index des projets de la machine |
 | `~/.wikichat/knowledge/` | Connaissance transverse compilée |
 | `~/.wikichat/ideas/` | Idées, un fichier par idée |
+| `~/.wikichat/memories.json`, `messages.json`, `channels.json`, `fils.json`, `sessions/`, `projects/`, `agents/`, `spawn_registry.json` | État du service. Depuis le lot W2, plus rien ne dépend du dossier de lancement ; les anciennes données y sont reprises au démarrage (`src/migration.mjs`) |
+| `~/.wikichat/audits.json`, `clusters/`, `cartography/` | Santé des dépôts, proximités, cartes |
 
 Un `git add .wikichat/` dans chaque projet sauvegarde sa connaissance avec son code. Tu changes de machine, l'état suit.
 
@@ -285,7 +287,7 @@ npm run memory:refresh -- --repo <clone-local>       # battement toutes les 15 m
 npm run memory:refresh -- --uninstall                # retirer le battement
 ```
 
-## Outils MCP (51)
+## Outils MCP (53)
 
 | Catégorie | Outils |
 |---|---|
@@ -294,6 +296,7 @@ npm run memory:refresh -- --uninstall                # retirer le battement
 | Canaux | `list_sessions`, `list_channels`, `create_channel` |
 | Coordination | `declare_capabilities`, `declare_delay`, `claim_task`, `release_task` |
 | Projets | `declare_project`, `list_projects`, `set_project_meta`, `add_project_note`, `close_project`, `scan_projects`, `purge_registry`, `audit_project`, `audit_all_projects` |
+| Suivi de projet et fils | `project_state`, `list_threads` |
 | Agents projet | `list_project_agents`, `respawn_project_agents` |
 | Connaissance | `search_knowledge` |
 | Idées | `add_idea`, `get_idea`, `list_ideas`, `update_idea`, `harmonize_ideas` |
@@ -301,6 +304,19 @@ npm run memory:refresh -- --uninstall                # retirer le battement
 | Routines | `register_routine`, `list_routines`, `run_routine`, `delete_routine` |
 | Triggers | `register_trigger`, `list_triggers`, `fire_trigger`, `set_trigger_enabled`, `delete_trigger` |
 | Jobs | `run_cartography`, `run_clustering` |
+
+Les jobs déterministes (`run_cartography`, `run_clustering`, `harmonize_ideas`, `audit_all_projects`, `scan_changes`, `absorb_closures`) s'appellent aussi sans agent : étape `job` d'une routine, action `job` d'un trigger (`src/jobs/index.mjs`). Un trigger créé par un agent (`register_trigger`) naît désactivé et se plafonne à 24 actions par jour par défaut ; la personne l'active depuis le Pilote.
+
+## Ressources MCP (6)
+
+| URI | Contenu |
+|---|---|
+| `wikichat://briefing` | briefing de la session : mentions, nouveautés, projets actifs |
+| `wikichat://principal` | identité et statut de l'agent principal |
+| `wikichat://identity/{name}` | instantané et mémoires d'un agent |
+| `wikichat://decisions` | 50 dernières décisions de #decisions |
+| `wikichat://kb/{topic}` | une fiche de connaissance (même lecteur que `search_knowledge`) |
+| `wikichat://role/{name}` | définition d'un rôle (`~/.wikichat/roles/`, sinon `docs/roles/`) |
 
 ## Modes de spawn
 
@@ -320,14 +336,15 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 | `POST /api/spawn/headless`, `POST /api/spawn/daemon`, `GET /api/agents` | Spawn |
 | `POST /api/sample` | Prompt direct à une session vivante |
 | `GET /api/projects`, `/api/projects/:slug`, `/api/projects/scan` | Projets |
-| `GET /api/knowledge`, `/api/knowledge/:topic/:file` | Connaissance transverse |
+| `GET /api/knowledge` (`?q=` pour chercher), `/api/knowledge/:sujet`, `/api/knowledge/:projet/:nom` | Connaissance : index, recherche, fiche |
+| `GET /api/cartographie` | Graphe des projets pour la carte de l'Atelier (contrat : `docs/cartographie-contrat.md`) |
 | `GET /`, `/status`, `/api/health` | Santé |
 | `POST /api/triggers/webhook/:id` | Déclencher un trigger webhook |
 | `GET /pilote` + `/pilote/api/*` | Agents planifiés et file d'approbation |
 
 ## Comportements automatiques
 
-- **Dormant gate** — triggers et cron ne firent que si une session nommée est enregistrée. Sans agent ouvert, le service est passif. Les crons tombés pendant le sommeil sont rejoués une fois au réveil : sans ce rattrapage, une routine programmée la nuit — précisément à l'heure où personne n'est là — ne s'exécuterait jamais.
+- **Dormant gate** — les triggers qui lancent un agent ne firent que si une session nommée est enregistrée ; ceux qui n'exécutent que du code (jobs, messages) tournent toujours (décision J-c). Sans agent ouvert, le service est passif. Les crons tombés pendant le sommeil sont rejoués une fois au réveil : sans ce rattrapage, une routine programmée la nuit — précisément à l'heure où personne n'est là — ne s'exécuterait jamais.
 - **Idle gate** — les intervalles sautent leur corps si aucune activité depuis 5 minutes. 0 % CPU au repos.
 - **Watchdog** (60 s) — détection des sessions inactives au-delà de 20 minutes.
 - **Queue et artefacts** (2 min) — récupère ce que les agents ont écrit localement pendant que MCP était injoignable.

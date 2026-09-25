@@ -156,7 +156,7 @@ reçoit son courrier par le hook, en fin de tour.
 - `register_trigger(id, type, config, action_type, action_params, cooldown_s?, max_per_day?)`
 - `list_triggers()` / `fire_trigger(id, force?)` / `set_trigger_enabled(id, enabled)` / `delete_trigger(id)`
 
-**Total : 51 tools MCP.** La liste complète, par catégorie, est dans le README —
+**Total : 53 tools MCP.** La liste complète, par catégorie, est dans le README —
 c'est elle qui fait foi, ce document décrit les primitives structurantes.
 
 ---
@@ -169,11 +169,12 @@ c'est elle qui fait foi, ce document décrit les primitives structurantes.
 | `wikichat://principal` | identité + statut du Maire (connected / dormant / not-set) | routing decisions |
 | `wikichat://identity/{name}` | snapshot + memories d'un agent | inspecter un autre agent |
 | `wikichat://decisions` | dernier 50 décisions structurées | KB de plus haute valeur |
-| `wikichat://kb/{topic}` | knowledge base (Compiled Truth) | recherche thématique |
-| `wikichat://routines` | toutes les routines disponibles + last_run | catalogue exécutable |
-| `wikichat://routine/{id}` | définition + statistiques d'une routine | inspecter une workflow |
-| `wikichat://role/{name}` | role.md (sentinel, librarian, …) | bootstrap de prompt |
-| `wikichat://triggers` | triggers actifs + prochain fire | observabilité |
+| `wikichat://kb/{topic}` | fiche de connaissance (`~/.wikichat/knowledge/<topic>.md`), même lecteur que `search_knowledge` | recherche thématique |
+| `wikichat://role/{name}` | role.md (`~/.wikichat/roles/`, sinon `docs/roles/` du dépôt) | bootstrap de prompt |
+
+Six ressources en tout. `wikichat://routines`, `wikichat://routine/{id}` et
+`wikichat://triggers` étaient annoncées ici sans avoir jamais été écrites :
+`list_routines` et `list_triggers` en tiennent lieu.
 
 VS Code + Claude Code lisent automatiquement ces resources → l'agent humain a tout le contexte sans appeler de tool.
 
@@ -262,10 +263,16 @@ Et symétriquement `npm run uninstall-service`. Doc fallback `docs/setup/autosta
 ├── routines.json                    catalogue de workflows
 ├── triggers.json                    triggers actifs
 ├── memories.json                    K/V par nom d'agent
-├── audit.jsonl                      log append-only
+├── messages.json, channels.json     derniers messages, canaux
+├── fils.json, conversations.json    fils de discussion, conversations (hooks)
+├── sessions/, agents/               instantanés de session, dossiers d'agents
+├── spawn_registry.json              registre des lancements
+├── routine-runs.jsonl               historique des routines
+├── audits.json                      dernière santé des dépôts (job audit_all_projects)
+├── migration-w2.json                témoin de la reprise des données du lot W2
 ├── cartography/                     carte historique par jour
 ├── clusters/                        relations inter-projets par jour
-├── knowledge/                       KB Compiled Truth (Librarian)
+├── knowledge/                       fiches à plat : <sujet>-axis.md, closure-<projet>.md
 │   └── <topic>.md
 └── projects/<slug>/                 cache par projet
 
@@ -274,15 +281,19 @@ Et symétriquement `npm run uninstall-service`. Doc fallback `docs/setup/autosta
 ├── src/
 │   ├── state.mjs                    in-memory state
 │   ├── persistence.mjs              I/O atomique
-│   ├── tools.mjs                    23 outils MCP
-│   ├── resources.mjs                10 resources MCP
+│   ├── tools.mjs                    53 outils MCP
+│   ├── resources.mjs                6 resources MCP
 │   ├── identity.mjs                 register + memories
 │   ├── triggers.mjs                 moteur d'événements
 │   ├── routines.mjs                 moteur de workflows
 │   ├── sampler.mjs                  spawn (headless/daemon)
 │   ├── daemon-lifecycle.mjs         reconcile + shutdown
 │   ├── team-bootstrap.mjs           opt-in default team
-│   └── jobs/                        cartography, clustering, …
+│   ├── connaissance.mjs             seul lecteur de la connaissance
+│   ├── cartographie.mjs             graphe des projets (/api/cartographie)
+│   ├── closures.mjs                 prompt du Closer, fiches de clôture
+│   ├── migration.mjs                reprise des données (lot W2)
+│   └── jobs/                        catalogue des jobs sans agent (index.mjs), cartography, clustering
 ├── docs/
 │   ├── architecture.md              ce fichier
 │   ├── setup/{INSTALL.md, autostart.md, global-claude-md.template.md}

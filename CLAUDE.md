@@ -83,8 +83,9 @@ Côté wikichat (mairie, légitimement central) :
 - `~/.wikichat/triggers.json` — config triggers
 - `~/.wikichat/clusters/<date>.json` + `cartography/<date>.json` — vues transverses
 - `~/.wikichat/knowledge/` — Compiled Truth du Librarian (KB transverse), markdown plain
-- `wikichat-repo/.wikichat/messages.json` — derniers messages (cap MAX_MESSAGES, défaut 2000)
-- `wikichat-repo/projects/` — fallback pour projets déclarés sans repo réel
+- `~/.wikichat/messages.json`, `channels.json`, `memories.json`, `fils.json`, `sessions/`, `agents/`, `spawn_registry.json` — état du service (lot W2 : plus sous le dossier de lancement ; reprise automatique au démarrage par `src/migration.mjs`, retour arrière par `scripts/migrer-donnees.mjs --retour`)
+- `~/.wikichat/projects/` — fallback pour projets déclarés sans repo réel (et dossiers de l'injecteur)
+- `~/.wikichat/audits.json` — dernière santé des dépôts, lue par `/api/cartographie`
 
 ### Sources externes (GitHub, APIs) — DÉLÉGATION aux agents
 
@@ -101,7 +102,7 @@ Modular — 25 files in `src/`, entry point `server.mjs`. ~11 000 lines total.
 ```
 server.mjs          — Express routes, SSE transport, boot sequence
 src/state.mjs       — In-memory state (sessions, channels, messages, projects)
-src/tools.mjs       — 51 MCP tool definitions
+src/tools.mjs       — 53 MCP tool definitions
 src/persistence.mjs — Atomic file I/O (sessions, projects, spawn registry, channels, messages)
 src/events.mjs      — Event bus: deterministic detectors → #insights → triggers
 src/triggers.mjs    — Trigger engine (cron, mention, channel_match, file_watch, webhook, lifecycle)
@@ -116,7 +117,12 @@ src/identity.mjs    — Per-agent persistent memories (remember/recall)
 src/dormant.mjs     — Wake/sleep gate
 src/pilote.mjs      — Scheduled agents, proposer contract, approval queue (UI /pilote)
 src/injector.mjs    — Safe .wikichat/ overlay injection into projects
-src/jobs/           — Cartography, clustering
+src/jobs/           — Catalogue des jobs sans agent (index.mjs) : cartography, clustering, audits, harmonisation, instantanés, clôtures
+src/chemins.mjs     — Où vivent les données (~/.wikichat)
+src/migration.mjs   — Reprise des données laissées sous le dossier de lancement (lot W2)
+src/connaissance.mjs — Seul lecteur de la connaissance (search_knowledge, /api/knowledge, wikichat://kb)
+src/cartographie.mjs — Graphe des projets, GET /api/cartographie
+src/closures.mjs    — Prompt du Closer, fiches de clôture
 ```
 
 **Event model** — the core mechanism: a JavaScript detector costs nothing while
@@ -162,7 +168,7 @@ that woke it.
 Named agents resume their previous session (`--resume`) when the transcript still
 exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 
-## MCP Tools (51 total)
+## MCP Tools (53 total)
 
 **Identity:** register, set_status, get_briefing, remember, recall, forget
 **Messaging:** send_message, read_messages, poll, poll_messages, share_artifact
@@ -171,12 +177,15 @@ exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 **Coordination:** declare_capabilities, declare_delay, claim_task, release_task
 **Projects:** declare_project, list_projects, set_project_meta, add_project_note, close_project, scan_projects, purge_registry, audit_project, audit_all_projects
 **Project agents:** list_project_agents, respawn_project_agents
-**Knowledge:** search_knowledge
+**Project files and threads:** project_state, list_threads
+**Knowledge:** search_knowledge (même lecteur que `/api/knowledge` et `wikichat://kb/{topic}` : `src/connaissance.mjs`)
 **Ideas:** add_idea, get_idea, list_ideas, update_idea, harmonize_ideas
 **Spawning:** spawn_session, contact_agent, list_spawned, kill_spawn, poll_ticket
 **Routines:** register_routine, list_routines, run_routine, delete_routine
 **Triggers:** register_trigger, list_triggers, fire_trigger, set_trigger_enabled, delete_trigger
-**Background jobs:** run_cartography, run_clustering
+**Background jobs:** run_cartography, run_clustering — et, sans agent, étape `job` des routines / action `job` des triggers (`src/jobs/index.mjs`)
+
+**Resources (6):** wikichat://briefing, wikichat://principal, wikichat://identity/{name}, wikichat://decisions, wikichat://kb/{topic}, wikichat://role/{name}
 
 ## REST API
 
@@ -185,7 +194,9 @@ exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 **Sample:** POST /api/sample (direct prompt to live agent)
 **Projects:** GET /api/projects, GET /api/projects/:slug, GET /api/projects/scan
 **Health:** GET /, GET /status, GET /api/health (memory, sessions, metrics)
-**Artifacts:** GET /api/projects/:slug/wikichat/artifacts, GET /api/knowledge
+**Artifacts:** GET /api/projects/:slug/wikichat/artifacts
+**Knowledge:** GET /api/knowledge (?q=), /api/knowledge/:sujet
+**Carte:** GET /api/cartographie (docs/cartographie-contrat.md)
 **Webhook:** POST /api/triggers/webhook/:id (fire a webhook trigger from anywhere)
 **Pilote:** GET /pilote + /pilote/api/* (scheduled agents, approval queue)
 

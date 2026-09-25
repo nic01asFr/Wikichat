@@ -1,4 +1,4 @@
-# wikichat et la cohérence de projet (lots A, C, D)
+# wikichat et la cohérence de projet (lots A, C, D, W)
 
 Branche `atelier-coherence`, 25/09/2026. Mise en œuvre, côté wikichat, de
 `Claude Code sspcloud/docs/coherence-projet.md` : un projet doit être le même
@@ -272,3 +272,119 @@ En bref :
 Tests : `npm run test:hooks` (16 cas, dont un faux Claude Code qui lance les
 hooks réellement installés), `npm run test:lancement` (32), `npm test` (32,
 serveur isolé).
+
+## 11. Lot W : remise en état de wikichat
+
+Branche `lot-w` (depuis `atelier-coherence`), 25/09/2026. Transverse §5.4 :
+chaque point répare ou branche une brique existante.
+
+### 11.1 Ce qui a changé
+
+| # | Changement | Code |
+|---|---|---|
+| W1 | **Un seul lecteur de connaissance** : fiches à plat `~/.wikichat/knowledge/*.md` et `<projet>/.wikichat/knowledge/*.md`. `search_knowledge`, `GET /api/knowledge` (attendait des sous-dossiers : renvoyait vide) et `wikichat://kb/{topic}` (lisait `<cwd>`) passent par `connaissance.mjs`. `/api/knowledge?q=` cherche, `/api/knowledge/:sujet` rend une fiche | `src/connaissance.mjs` |
+| W2 | **Données sous `~/.wikichat/`** : `memories.json`, `messages.json`, `channels.json`, `fils.json`, `sessions/`, `projects/`, `agents/`, `spawn_registry.json`, `crons.json`, `roles/`. Plus rien sous `process.cwd()`. Reprise au démarrage, par copie et fusion (§11.3) | `src/chemins.mjs`, `src/migration.mjs`, `scripts/migrer-donnees.mjs` |
+| W3 | **Étape `job`** (routines) et **action `job`** (triggers) : appel direct de `runCartography`, `runClustering`, `runHarmonizer`, audits (`auditMany`, gardés dans `~/.wikichat/audits.json`), `scanForChanges`, absorption des clôtures. Les routines `team:job-cartography` et `team:job-clustering` n'ont plus d'agent ; celles déjà enregistrées sont **réparées au démarrage**, même sans équipe (stats gardées). Nouvelle routine d'équipe `team:job-audits` (04:00). Un job n'est pas soumis à la porte dormante (J-c). Une étape d'action inconnue est refusée à l'enregistrement | `src/jobs/index.mjs`, `routines.mjs`, `triggers.mjs`, `team-bootstrap.mjs` |
+| W4 | **`GET /api/cartographie`** : nœuds (registre et projets de l'Atelier, avec instantané, santé, ETAT.md, décisions, cycle de vie, clôture, connecteurs) et arêtes typées (`relation`, `proximite`, `meme_connecteur`). Contrat : `docs/cartographie-contrat.md`. Les ponts entre îles de `map-generator` sont ces vrais liens (plus trois paires de thèmes codées en dur) | `src/cartographie.mjs`, `map-generator.mjs` |
+| W5 | **Closer** : prompt avec les vrais chemins (ETAT.md, `docs/decisions/`, `.atelier/projet.json`, `.wikichat/`), rôle injecté (il lisait `docs/roles/closer.md` depuis le projet), lancé dans le dossier du projet (plus `process.cwd()`), outils en lecture. `close_project` accepte un projet **à fichiers** ou du registre. **Absorption par le code** : chaque clôture devient `knowledge/closure-<slug>.md`, retrouvée par `search_knowledge` ; job `absorb_closures` pour les anciennes, en tête de la routine d'absorption | `src/closures.mjs`, `tools.mjs`, `docs/roles/closer.md` |
+| W6 | Inventaire des triggers en échec, poste et pod, **sans rien couper** : `docs/triggers-en-echec.md`. `last_refusal` effacé au succès, `last_refusal_detail` garde la cause | `triggers.mjs` |
+| W7 | Documentation : 53 outils (il en manquait deux dans les listes : `project_state`, `list_threads`), 6 ressources réelles (`wikichat://routines`, `routine/{id}` et `triggers` n'ont jamais existé), `what_is` retiré. **Bogue trouvé** : `resources/list` échouait entièrement (« result.resources is not iterable ») — les modèles de ressources rendaient un tableau au lieu de `{ resources }` | `README.md`, `CLAUDE.md`, `architecture.md`, `resources.mjs` |
+| (a) | `~/.claude/settings.json` est écrit **à travers le lien** (`realpath`, lien pendant compris) : le lien vers `~/work/.claude/settings.json` survit | `overlay-installer.mjs` (`cibleReelle`) |
+| (b) | **J-b** : `max_per_day` vaut 24 par défaut ; un trigger créé par `register_trigger` (outil MCP, donc par un agent) naît `enabled:false`, et la réponse dit où l'activer (Pilote). Le Pilote et le code du service ne passent pas par cet outil | `triggers.mjs`, `tools.mjs` |
+| — | Pilote : la bascule d'un trigger renvoyait l'état inverse de l'état réel | `pilote.mjs` |
+
+### 11.2 Tests
+
+- `npm run test:lot-w` (nouveau, 17 cas) : chemins et migration (fusion,
+  conflits, idempotence, retour arrière), lecteur unique, jobs (routine,
+  trigger porte fermée, équipe, réparation), plafond 24, ponts de carte,
+  prompt du Closer, absorption ; puis serveur isolé : reprise au démarrage,
+  trois lecteurs sur les mêmes fiches, contrat `/api/cartographie`,
+  `close_project` sur un projet à fichiers, trigger créé par un agent. Le cas
+  du lien `settings.json` est **sauté sous Windows** (liens symboliques
+  interdits sans mode développeur) : il tourne sous Linux.
+- `npm test` (e2e, 33 cas : le cas trigger vérifie désormais la naissance
+  désactivée, puis l'activation par le Pilote), `npm run test:hooks` (16),
+  `npm run test:lancement` (32), `npm run test:site` (3).
+
+### 11.3 Mettre le pod à jour
+
+**Prérequis : rendre `~/.wikichat` durable.** Sur le pod, `~/.wikichat` est un
+dossier de la couche éphémère du conteneur, pas le lien vers `~/work/wikichat`
+que prévoit l'Atelier (`ensure_wikichat_data_link` ne remplace pas un dossier
+non vide). Aujourd'hui la mémoire et les messages sont sur le volume, dans
+`~/work/wikichat/src/.wikichat/` ; W2 les met sous `~/.wikichat`. Sans ce
+prérequis, W2 **déplacerait des données du volume vers la couche éphémère**.
+
+Service arrêté (c'est le seul moment où `~/.wikichat` ne bouge pas) :
+
+1. Sauvegarde :
+   ```sh
+   cd ~ && tar czf ~/work/wikichat/archives-pod/avant-lot-w.tgz .wikichat \
+     -C ~/work/wikichat/src .wikichat sessions projects agents spawn_registry.json
+   ```
+2. Lien durable. `~/work/wikichat` contient des copies anciennes (27/08) :
+   les ranger, puis y verser `~/.wikichat` et poser le lien :
+   ```sh
+   mkdir -p ~/work/wikichat/archives-pod/avant-lien-lot-w
+   cd ~/work/wikichat && mv triggers.json identity-bindings.json hook-cursors process-tokens projects archives-pod/avant-lien-lot-w/
+   cp -a ~/.wikichat/. ~/work/wikichat/
+   mv ~/.wikichat ~/.wikichat.avant-lien && ln -s ~/work/wikichat ~/.wikichat
+   ```
+   Le dépôt (`~/work/wikichat/src`) et `archives-pod/` restent à côté des
+   données ; aucun chemin de wikichat ne les vise.
+3. Code : `cd ~/work/wikichat/src && git fetch origin && git checkout lot-w`
+   (une fois poussée) ; aucune dépendance ajoutée.
+4. Redémarrer wikichat **depuis `~/work/wikichat/src`**. Au démarrage :
+   - migration W2 : `~/work/wikichat/src/{.wikichat/*.json,sessions,projects,agents,spawn_registry.json}`
+     sont **copiés et fusionnés** dans `~/.wikichat/` (journal :
+     `[migration W2] données reprises de …`) ; la source reste intacte ; le
+     témoin `~/.wikichat/migration-w2.json` empêche une seconde reprise ; un
+     fichier présent des deux côtés garde le plus récent, l'autre va dans
+     `~/.wikichat/migration-w2/conflits/` ;
+   - routines d'équipe existantes réparées (pas d'équipe sur le pod : rien).
+5. Vérifier :
+   ```sh
+   cat ~/.wikichat/migration-w2.json
+   curl -s 127.0.0.1:3777/api/knowledge | jq .total
+   curl -s 127.0.0.1:3777/api/cartographie | jq '{n: (.noeuds|length), a: (.aretes|length), l: .limites}'
+   jq 'keys|length' ~/.wikichat/memories.json
+   ```
+   Puis, depuis une conversation : `recall` d'une clé connue, `search_knowledge`,
+   lecture de la ressource `wikichat://kb/<sujet>`.
+6. Après quelques jours sans retour arrière : supprimer `~/.wikichat.avant-lien`
+   et, dans `~/work/wikichat/src`, les anciens `.wikichat/*.json`, `sessions/`,
+   `projects/`, `agents/`, `spawn_registry.json` (ils ne sont plus lus).
+
+**Retour arrière** (service arrêté), **avant** de changer de code :
+
+1. `cd ~/work/wikichat/src && node scripts/migrer-donnees.mjs --retour --source ~/work/wikichat/src`
+   recopie l'état courant de `~/.wikichat` vers le dossier de lancement ; ce qui
+   y est remplacé est gardé dans `~/work/wikichat/src/.avant-retour-w2/`.
+2. `git checkout 7eefe34` et redémarrer depuis `~/work/wikichat/src`.
+3. Le lien `~/.wikichat → ~/work/wikichat` peut rester : l'ancienne version
+   y lit ce qu'elle lisait (registre, triggers, routines, connaissance).
+4. Les routines réparées (`team:job-*`) portent une étape `job` que
+   l'ancienne version ne connaît pas : les réenregistrer avec l'ancienne
+   définition si l'équipe tourne (ce n'est pas le cas sur le pod).
+
+**Sur le poste**, le service tourne depuis le dépôt `Github Repositories/wikichat` :
+au premier démarrage, ses `.wikichat/*.json`, `sessions/`, `projects/`, `agents/`
+et `spawn_registry.json` sont repris dans `C:\Users\Omen\.wikichat` (où
+`sessions/Librarian.json` existe déjà : le plus récent gagne). Les routines
+`team:job-cartography` et `team:job-clustering` sont réparées au même démarrage.
+
+### 11.4 Ce qui reste
+
+- Vérifier en réel sur le pod (§11.3) : non fait, pod en lecture seule.
+- Le cas « lien `settings.json` » est sauté sous Windows ; à lancer sous Linux
+  (CI ou pod) avant de s'y fier.
+- `set_trigger_enabled` reste ouvert aux agents : J-b ne règle que la
+  naissance. Un agent peut encore activer lui-même un trigger ; le fermer est
+  une décision à prendre (coordinateur).
+- L'interface du Pilote ne montre que les agents planifiés (`cron` +
+  `spawn_session`) : un autre trigger créé par un agent s'active par
+  `POST /pilote/api/agent/<id>/toggle`, en attendant l'onglet Automates.
+- Connecteurs par projet : lus dans `<projet>/.mcp.json` (noms seulement).
+  L'Atelier complète `noeud.atelier` à l'assemblage.
+- W8 (capitalisation des conversations) : hors de ce lot.
