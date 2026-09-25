@@ -78,6 +78,14 @@ function copyDir(src, dst) {
 
 copyDir(TEMPLATE_DIR, TARGET_BASE);
 
+// Hooks (SessionStart, UserPromptSubmit, Stop, SessionEnd) : niveau utilisateur
+// seulement, fusionnés sans toucher aux autres hooks. Même code qu'au démarrage
+// du service.
+if (!PROJECT_MODE && !DRY_RUN) {
+  const { ensureHooks } = await import("../src/overlay-installer.mjs");
+  info(`hooks      settings.json : ${ensureHooks(() => {})}`);
+}
+
 console.log("");
 ok(`Overlay installed.`);
 console.log(`   Skills : ${path.join(TARGET_BASE, "skills/wikichat/SKILL.md")}`);

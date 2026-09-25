@@ -20,7 +20,8 @@
     "install-overlay": "node scripts/install-claude-overlay.mjs",
     "memory:sync": "node scripts/sync-memory.mjs",
     "memory:refresh": "node scripts/install-memory-refresh.mjs",
-    "memory:server": "node remote/memory-mcp-server.mjs"
+    "memory:server": "node remote/memory-mcp-server.mjs",
+    "test:hooks": "node --test --test-concurrency=1 src/hooks.test.mjs"
   },
   "keywords": [
     "mcp",

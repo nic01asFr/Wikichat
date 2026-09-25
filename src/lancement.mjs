@@ -261,5 +261,8 @@ export function environnementEnfant(name, extra = {}) {
     NO_COLOR: "1",
     ...extra,
     ...(name ? { WIKICHAT_AGENT: name } : {}),
+    // Les hooks savent ainsi qu'un agent lancé par wikichat ne doit pas poser
+    // de guetteur (il sort à la fin de sa tâche).
+    WIKICHAT_LANCE: "1",
   };
 }

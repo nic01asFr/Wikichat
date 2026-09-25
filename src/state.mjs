@@ -213,13 +213,26 @@ export function resolveAgentName(target) {
 
   const isOnline = (s) => s.availability !== "stale" &&
     (!s.lastSeen || Date.now() - new Date(s.lastSeen).getTime() < 5 * 60 * 1000);
+  const presentParHook = (nom) => nomsPresentsParHook().some(n => n.toLowerCase() === nom.toLowerCase());
 
   // 1) exact case-insensitive match
   for (const s of state.sessions.values()) {
     if (s.name && s.name.toLowerCase() === tl) {
-      return { name: s.name, matched: true, online: isOnline(s) };
+      return { name: s.name, matched: true, online: isOnline(s) || presentParHook(s.name) };
     }
   }
+  // 1b) ancien nom d'une conversation renommée → son nom actuel
+  let actuel = null;
+  try { actuel = _conversations.alias(tl); } catch { /* */ }
+  if (actuel) {
+    const live = [...state.sessions.values()].find(s => s.name?.toLowerCase() === actuel.toLowerCase());
+    return { name: actuel, matched: true, online: (!!live && isOnline(live)) || presentParHook(actuel) };
+  }
+  // 1c) conversation connue par ses hooks, même sans connexion MCP
+  let connus = [];
+  try { connus = _conversations.connus(); } catch { /* */ }
+  const connu = connus.find(n => n.toLowerCase() === tl);
+  if (connu) return { name: connu, matched: true, online: presentParHook(connu) };
   // 2) session-XXXXXX → resolve to that session's current name
   const anon = /^session-([a-f0-9]{6})$/i.exec(tl);
   if (anon) {
@@ -244,6 +257,22 @@ export function resolveAgentName(target) {
   }
   // 5) literal fallback — async DM, delivered when target registers under this name
   return fallback;
+}
+
+/**
+ * Conversations connues par les hooks (src/conversations.mjs), branchées au
+ * démarrage pour éviter une dépendance circulaire : noms présents, noms
+ * connus, alias d'une conversation renommée.
+ */
+const _conversations = { presents: () => [], connus: () => [], alias: () => null };
+export function brancherConversations({ presents, connus, alias }) {
+  if (presents) _conversations.presents = presents;
+  if (connus) _conversations.connus = connus;
+  if (alias) _conversations.alias = alias;
+}
+/** Noms des conversations présentes selon leurs hooks. */
+export function nomsPresentsParHook() {
+  try { return _conversations.presents(); } catch { return []; }
 }
 
 /** Time helpers */

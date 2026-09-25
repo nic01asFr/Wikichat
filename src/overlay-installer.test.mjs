@@ -40,14 +40,14 @@ test("skill installée : guetteur résolu, pas de register au début", () => {
   const skill = fs.readFileSync(SKILL, "utf8");
   assert.ok(!skill.includes("{{GUETTEUR}}"));
   assert.match(skill, /wikichat-attendre-courrier\.mjs/);
-  assert.match(skill, /wikichat:skill-version 2/);
+  assert.match(skill, /wikichat:skill-version 3/);
   assert.ok(!/À faire au début de session/.test(skill));
 });
 
 test("skill d'une version antérieure : remplacée, ancienne gardée en .bak", () => {
   fs.writeFileSync(SKILL, "# vieille skill\n1. register(name=...) au début\n");
   ensureUserOverlay({ log: silencieux });
-  assert.match(fs.readFileSync(SKILL, "utf8"), /wikichat:skill-version 2/);
+  assert.match(fs.readFileSync(SKILL, "utf8"), /wikichat:skill-version 3/);
   assert.match(fs.readFileSync(SKILL + ".bak", "utf8"), /vieille skill/);
 });
 

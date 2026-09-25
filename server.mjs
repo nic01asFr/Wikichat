@@ -39,6 +39,9 @@ import { startDormantWatch, status as dormantStatus, setManualOverride, isActive
 import { scanForChanges } from "./src/snapshot.mjs";
 import { emitEvent } from "./src/events.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
+import { chargerConversations, flushConversations, getConversation, estGenerique, declarerDebut } from "./src/conversations.mjs";
+import { chargerFils, flushFils, marquerLus } from "./src/fils.mjs";
+import { enregistrerRoutesHooks } from "./src/hooks-serveur.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
 import { auditProject, auditMany } from "./src/repo-audit.mjs";
 import { runHarmonizer, formatHarmonizerSummary } from "./src/harmonizer.mjs";
@@ -58,6 +61,8 @@ rebuildChannelCounts(); // Build O(1) channel count cache
 setOnMessagePush(saveMessagesDebounced); // Auto-persist on new messages
 loadProjects();
 loadMemories();   // Restore persistent agent memories (remember/recall)
+chargerConversations(); // Conversations déclarées par les hooks (identité, présence)
+chargerFils();    // Fils de discussion (qui doit répondre à quoi)
 const _spawnGc = gcSpawnRegistry(); // Drop legacy/stale entries from spawn_registry
 if (_spawnGc.dropped || _spawnGc.fixed) {
   console.log(`[boot] spawn_registry GC : dropped=${_spawnGc.dropped} fixed=${_spawnGc.fixed} kept=${_spawnGc.total}`);
@@ -198,6 +203,8 @@ function gracefulShutdown(signal) {
   try { saveMessagesDebounced.flush?.(); } catch { /* */ }
   try { flushSpawnRegistry(); } catch { /* */ }
   try { flushMemories(); } catch { /* */ }
+  try { flushConversations(); } catch { /* */ }
+  try { flushFils(); } catch { /* */ }
   try { shutdownTriggers(); } catch { /* */ }
   try { shutdownDaemons(); } catch { /* */ }
 
@@ -503,7 +510,10 @@ app.get("/sse", async (req, res) => {
   const nonSubstitue = (v) => !v || /^\$\{.*\}$/.test(v) || v.includes("${");
   const brutAgent = (req.query.agent || "").trim();
   const brutToken = (req.query.token || "").trim();
-  const directName = nonSubstitue(brutAgent) ? null : brutAgent;
+  // `atelier` (identité commune écrite dans les .mcp.json) ne désigne
+  // personne : il ne fait pas foi. La conversation Claude, portée par le pont
+  // stdio (?claude_session=) ou par l'en-tête du headersHelper, désigne quelqu'un.
+  const directName = nonSubstitue(brutAgent) || estGenerique(brutAgent) ? null : brutAgent;
   const jetonUrl = nonSubstitue(brutToken) ? null : brutToken;
   const bindToken = directName
     || jetonUrl
@@ -546,12 +556,19 @@ app.get("/sse", async (req, res) => {
   // authoritative). This is what makes "register once, recognised forever" work:
   // the agent never has to re-register after a reconnect.
   let claimName = null, claimRole = null, provisoire = false;
+  const convIdConnexion = (req.query.claude_session || "").toString().trim()
+    || (req.headers["x-wikichat-claude-session"] || "").toString().trim() || null;
+  session.claude_session = convIdConnexion;
+  const convDeclaree = convIdConnexion ? getConversation(convIdConnexion) : null;
   if (directName) {
     claimName = directName; // authoritative on every connect
   } else if (bindToken) {
     const ident = getIdentityBinding(bindToken);
     if (ident) { claimName = ident.name; claimRole = ident.role; }
   }
+  // La conversation a été déclarée par son hook SessionStart : son nom prime
+  // sur une liaison de jeton (qui peut dater d'un ancien register).
+  if (!directName && convDeclaree?.nom) { claimName = convDeclaree.nom; claimRole = null; }
 
   // Aucune liaison : la conversation ne s'est jamais declaree. On lui donne
   // quand meme un nom, derive de son projet et de son jeton.
@@ -888,11 +905,16 @@ function conversationIsHot(agent) {
     if (m.from === "system") continue;
     const mine = (m.fromName || "").toLowerCase() === lc;
     const forMe = (m.content || "").toLowerCase().includes(`@${lc}`)
-      || (m.isDM && isAgentInDMChannel(agent, m.channel));
+      || (m.isDM && isAgentInDMChannel(m.channel, agent));
     if (mine || forMe) return true;
   }
   return false;
 }
+
+// Hooks Claude Code (SessionStart, UserPromptSubmit, Stop, guetteur, SessionEnd)
+// et lectures pour l'Atelier : conversations, fils, état de projet.
+// Conception : docs/hooks-et-dialogue.md.
+enregistrerRoutesHooks(app);
 
 app.get("/api/inbox", async (req, res) => {
   const agent = (req.query.agent || "").toString().trim();
@@ -927,6 +949,7 @@ app.get("/api/inbox", async (req, res) => {
   // Advance the shared cursor to the newest id we just accounted for (covers
   // resync/baseline too — arm at the head without replaying history).
   if (result.lastId) remember(agent, "__inbox_cursor", result.lastId);
+  try { marquerLus(result.messages, agent); } catch { /* */ }
 
   const messages = result.messages.map(m => ({
     id: m.id, from: m.fromName, channel: m.isDM ? "DM" : m.channel, isDM: !!m.isDM,
@@ -957,6 +980,9 @@ app.post("/api/identity", express.json(), (req, res) => {
     if (found) { const live = state.sessions.get(found.id); if (live) live.claude_session_id = claude_session_id; }
   }
   if (cwd) remember(name, "__cwd", cwd);
+  if (claude_session_id && !String(name).startsWith("session-")) {
+    try { declarerDebut({ session_id: claude_session_id, cwd: cwd || null, agent: name }); } catch { /* */ }
+  }
   res.json({ ok: true, name });
 });
 

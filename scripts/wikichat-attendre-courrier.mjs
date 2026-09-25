@@ -32,14 +32,21 @@ const DUREE_MAX_MS = parseInt(process.env.WIKICHAT_WATCH_MAX_MS || "1800000"); /
 /** Longueur d'une tranche d'attente côté serveur (plafonné à 60 s par /api/inbox). */
 const TRANCHE_MS = 55000;
 
-function nomAgent() {
+async function nomAgent() {
   const argv = process.argv.slice(2);
   const i = argv.indexOf("--agent");
   if (i >= 0 && argv[i + 1]) return argv[i + 1].trim();
   const env = (process.env.WIKICHAT_AGENT || "").trim();
-  if (env) return env;
-  // Dernier recours : le nom mis en cache par le hook pour cette session Claude.
-  const sid = (process.env.CLAUDE_SESSION_ID || "").trim();
+  if (env && env.toLowerCase() !== "atelier" && !env.includes("${")) return env;
+  // La conversation, déclarée par le hook SessionStart : son nom fait foi.
+  const sid = (process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || "").trim();
+  if (sid) {
+    try {
+      const r = await fetch(`${BASE}/api/conversations/${encodeURIComponent(sid)}`, { signal: AbortSignal.timeout(3000) });
+      if (r.ok) { const c = await r.json(); if (c?.nom) return c.nom; }
+    } catch { /* serveur absent : cache local */ }
+  }
+  // Dernier recours : le nom mis en cache par l'ancien hook pour cette session Claude.
   if (sid) {
     const cache = path.join(os.homedir(), ".wikichat", "hook-cursors",
       `sid-${sid.replace(/[^\w.-]/g, "_")}.name`);
@@ -59,7 +66,7 @@ async function releve(agent, attenteMs) {
   } catch { clearTimeout(t); return null; }
 }
 
-const agent = nomAgent();
+const agent = await nomAgent();
 if (!agent) {
   console.log("Guetteur non posé : identité inconnue. Lance register(name=…) d'abord, " +
     "ou passe --agent <nom>.");

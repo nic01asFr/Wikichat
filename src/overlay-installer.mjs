@@ -26,6 +26,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
+import { execFileSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = path.resolve(__dirname, "..", "templates", ".claude-overlay");
@@ -54,17 +55,18 @@ ${BLOCK_START}
 
 Si des outils \`mcp__wikichat__*\` sont présents, WikiChat (coordinateur multi-agents local) est attaché.
 
-- **Identité** : elle est portée par la connexion (\`WIKICHAT_AGENT\`, ou nom dérivé de la conversation). N'appelle pas \`register\` pour te présenter ; seulement si \`get_briefing()\` te montre anonyme (\`session-…\`) et qu'un nom t'a été donné.
+- **Identité** : celle de la conversation, établie par le hook de démarrage (\`WIKICHAT_AGENT\`, sinon \`<projet>-<conversation>\`), la même sur toutes les surfaces. N'appelle pas \`register\` pour te présenter ; seulement si un outil te montre anonyme (\`session-…\`) et qu'un nom t'a été donné.
+- **Contexte** : le hook de démarrage donne l'état du projet (tête d'\`ETAT.md\`, À décider, décisions), le courrier et les fils ouverts ; les messages arrivés ensuite sont joints au prompt suivant. \`project_state()\` pour le détail.
 - **Avant d'implémenter un pattern** (auth, état, widget…) : \`mcp__wikichat__search_knowledge(query=<sujet>)\` — ne redérive pas ce qui est déjà capitalisé.
 
-**Protocole over/standby** — ces champs pilotent la tenue du lien entre deux agents ; le hook de fin de tour les lit :
-- status="over" + expects_reply=true → tu as fini, tu attends une réponse ; le lien reste ouvert
-- status="standby" + eta_seconds=300 → tu pars travailler 5 min ; ton interlocuteur t'attend jusque-là
-- status="done" → tâche terminée, aucune réponse attendue ; le lien se referme
+**Protocole over/standby** — ces champs pilotent le dialogue entre deux agents :
+- status="over" + expects_reply=true → tu as fini, tu attends une réponse : seul ce cas relance (ou réveille) ton interlocuteur
+- status="standby" + eta_seconds=300 → tu pars travailler 5 min ; ne pas t'attendre
+- status="done" → tâche terminée, aucune réponse attendue ; le fil se referme
 
-Annonce toujours un \`eta_seconds\` quand tu pars sur une tâche longue : sans lui, l'autre rend la main au bout de 45 s.
+Un message sans \`expects_reply\` n'interrompt personne : il est remis au prochain tour du destinataire.
 
-Le reste (canaux, guetteur de courrier, clôture de projet, reprise d'équipe, commandes) : skill \`wikichat\`.
+Le reste (fils, canaux, guetteur, clôture de projet, reprise d'équipe, commandes) : skill \`wikichat\`.
 
 Ce bloc est auto-géré par WikiChat. Pour le retirer : supprime entre les balises markers ci-dessus.
 ${BLOCK_END}
@@ -83,54 +85,118 @@ ${BLOCK_END}
 // ── USER-LEVEL : skill + commands + ~/.claude/CLAUDE.md ─────────────────────
 
 /**
- * Installe le Stop hook « boîte mail » dans ~/.claude/settings.json.
+ * Hooks Claude Code de wikichat dans ~/.claude/settings.json.
  *
- * C'est la pièce qui fait qu'un agent en session reçoit ce qu'on lui adresse
- * sans avoir à poller : à la fin de chaque tour, le hook demande au service s'il
- * a du courrier et, le cas échéant, empêche l'arrêt le temps qu'il réponde.
+ * Un seul script (`scripts/wikichat-hook.mjs <événement>`) pour SessionStart,
+ * UserPromptSubmit, Stop (+ guetteur natif en asyncRewake) et SessionEnd.
+ * Conception : docs/hooks-et-dialogue.md.
  *
- * Elle n'était installée nulle part — elle avait été branchée à la main sur la
- * machine de développement, si bien que toute la coordination reposait sur un
- * réglage qu'une installation neuve n'aurait jamais eu.
- *
- * Idempotent, et non destructif : les autres hooks Stop déjà présents sont
- * conservés, et une entrée WikiChat existante est mise à jour plutôt que
- * dupliquée (le chemin du dépôt peut avoir changé).
+ * Fusion idempotente et non destructive : seules les entrées wikichat
+ * (`wikichat-hook.mjs`, et l'ancien `wikichat-mailbox-hook.mjs` qu'elles
+ * remplacent) sont retirées puis reposées ; les autres hooks — dont le
+ * SessionEnd de l'Atelier (`atelier-figer-le-travail.sh`) — restent tels quels,
+ * à leur place. Le fichier n'est réécrit que s'il change.
  */
-function ensureMailboxHook(log = console.log) {
-  const settingsPath = path.join(USER_CLAUDE_DIR, "settings.json");
-  const hookPath = path.resolve(__dirname, "..", "scripts", "wikichat-mailbox-hook.mjs");
-  if (!fs.existsSync(hookPath)) return "no-hook-script";
-  const command = `node "${hookPath.replace(/\\/g, "/")}"`;
+const EST_WIKICHAT = (h) => typeof h?.command === "string"
+  && (h.command.includes("wikichat-hook.mjs") || h.command.includes("wikichat-mailbox-hook"));
 
+/** Version du binaire claude (`[2, 1, 281]`), ou null. */
+export function versionClaude() {
+  const candidats = [
+    process.env.WIKICHAT_CLAUDE_BIN,
+    path.join(os.homedir(), "work", "bin", "claude"),
+    "claude",
+  ].filter(Boolean);
+  for (const c of candidats) {
+    try {
+      const sortie = execFileSync(c, ["--version"], {
+        encoding: "utf8", timeout: 8000, windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"], shell: process.platform === "win32",
+      });
+      const m = /(\d+)\.(\d+)\.(\d+)/.exec(sortie || "");
+      if (m) return [+m[1], +m[2], +m[3]];
+    } catch { /* candidat suivant */ }
+  }
+  return null;
+}
+
+/** Première version où l'on compte sur `asyncRewake` (documenté en 2.1.2xx). */
+const VERSION_REVEIL = [2, 1, 250];
+function auMoins(v, min) {
+  for (let i = 0; i < 3; i++) { if (v[i] !== min[i]) return v[i] > min[i]; }
+  return true;
+}
+
+/** Le guetteur natif (asyncRewake) est-il installable ? */
+export function reveilDisponible() {
+  const env = process.env.WIKICHAT_HOOK_REVEIL;
+  if (env === "1") return true;
+  if (env === "0") return false;
+  const v = versionClaude();
+  return !!v && auMoins(v, VERSION_REVEIL);
+}
+
+/** Les groupes de hooks voulus, par événement. */
+export function hooksVoulus(scriptHook, { reveil = false } = {}) {
+  const c = (ev) => `node "${scriptHook.replace(/\\/g, "/")}" ${ev}`;
+  return {
+    SessionStart: [{ type: "command", command: c("session-start"), timeout: 10 }],
+    UserPromptSubmit: [{ type: "command", command: c("prompt"), timeout: 5 }],
+    Stop: [
+      { type: "command", command: c("stop"), timeout: 10 },
+      ...(reveil ? [{ type: "command", command: c("guetter"), asyncRewake: true, timeout: 1800 }] : []),
+    ],
+    // Pas de timeout déclaré : il relèverait le budget de 1,5 s que SessionEnd
+    // partage avec le hook de l'Atelier.
+    SessionEnd: [{ type: "command", command: c("session-end") }],
+  };
+}
+
+/**
+ * Fusionne les hooks wikichat dans un objet de réglages (en place).
+ * @returns {boolean} vrai si quelque chose a changé
+ */
+export function fusionnerHooks(settings, voulus) {
+  const avant = JSON.stringify(settings.hooks || {});
+  settings.hooks = settings.hooks && typeof settings.hooks === "object" ? settings.hooks : {};
+  const evenements = new Set([...Object.keys(settings.hooks), ...Object.keys(voulus)]);
+  for (const ev of evenements) {
+    const groupes = Array.isArray(settings.hooks[ev]) ? settings.hooks[ev] : [];
+    const gardes = [];
+    for (const g of groupes) {
+      if (!g || !Array.isArray(g.hooks)) { gardes.push(g); continue; }
+      const autres = g.hooks.filter(h => !EST_WIKICHAT(h));
+      if (autres.length === g.hooks.length) { gardes.push(g); continue; }
+      if (autres.length) gardes.push({ ...g, hooks: autres });
+    }
+    if (voulus[ev]?.length) gardes.push({ matcher: "", hooks: voulus[ev] });
+    if (gardes.length) settings.hooks[ev] = gardes;
+    else delete settings.hooks[ev];
+  }
+  return JSON.stringify(settings.hooks) !== avant;
+}
+
+export function ensureHooks(log = console.log) {
+  const settingsPath = path.join(USER_CLAUDE_DIR, "settings.json");
+  const scriptHook = path.resolve(__dirname, "..", "scripts", "wikichat-hook.mjs");
+  if (!fs.existsSync(scriptHook)) return "no-hook-script";
   try {
     let settings = {};
     if (fs.existsSync(settingsPath)) {
-      settings = JSON.parse(fs.readFileSync(settingsPath, "utf8") || "{}");
+      const brut = fs.readFileSync(settingsPath, "utf8");
+      settings = brut.trim() ? JSON.parse(brut) : {};
     }
-    settings.hooks = settings.hooks || {};
-    const stops = Array.isArray(settings.hooks.Stop) ? settings.hooks.Stop : [];
-
-    const estLeNotre = h => typeof h?.command === "string" && h.command.includes("wikichat-mailbox-hook");
-    for (const groupe of stops) {
-      const entree = (groupe.hooks || []).find(estLeNotre);
-      if (entree) {
-        if (entree.command === command) return "already-present";
-        entree.command = command; // dépôt déplacé : on recale le chemin
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-        log("[overlay] Stop hook boîte mail : chemin mis à jour");
-        return "updated";
-      }
-    }
-
-    stops.push({ matcher: "", hooks: [{ type: "command", command }] });
-    settings.hooks.Stop = stops;
+    const reveil = reveilDisponible();
+    if (!fusionnerHooks(settings, hooksVoulus(scriptHook, { reveil }))) return "already-present";
     fs.mkdirSync(USER_CLAUDE_DIR, { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-    log("[overlay] Stop hook boîte mail installé — les agents reçoivent leur courrier en fin de tour");
+    const tmp = settingsPath + ".wikichat-tmp";
+    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2));
+    fs.renameSync(tmp, settingsPath);
+    log(`[overlay] hooks wikichat posés (SessionStart, UserPromptSubmit, Stop${reveil ? " + guetteur" : ""}, SessionEnd)`);
     return "installed";
   } catch (err) {
-    log(`[overlay] Stop hook non installé : ${err.message}`);
+    // Réglages illisibles : on ne les écrase jamais.
+    log(`[overlay] hooks non installés : ${err.message}`);
     return "failed";
   }
 }
@@ -244,8 +310,8 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
     log(`[overlay] CLAUDE.md update failed: ${err.message}`);
   }
 
-  // 3. Stop hook "boîte mail" dans ~/.claude/settings.json
-  result.hookAction = ensureMailboxHook(log);
+  // 3. Hooks wikichat dans ~/.claude/settings.json
+  result.hookAction = process.env.WIKICHAT_NO_HOOKS_INSTALL === "1" ? "disabled" : ensureHooks(log);
 
   // 4. Marker file
   try { fs.writeFileSync(MARKER_FILE, new Date().toISOString()); } catch { /* */ }

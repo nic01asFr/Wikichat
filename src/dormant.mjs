@@ -24,7 +24,7 @@
  *   WIKICHAT_PRINCIPAL_AGENT        → name of the strict-mode principal (default "Claude-Code")
  */
 
-import { state } from "./state.mjs";
+import { state, nomsPresentsParHook } from "./state.mjs";
 
 const PRINCIPAL_NAME = process.env.WIKICHAT_PRINCIPAL_AGENT || "Claude-Code";
 // Mode "any-named" (défaut depuis 2026-05) : tout session non-anonyme registered
@@ -53,6 +53,12 @@ export function principalIsLive() {
       continue;
     }
     // any-named mode : any registered, non-anonymous session counts.
+    _principalLastSeen = Date.now();
+    return true;
+  }
+  // Une conversation déclarée par son hook SessionStart est une présence, même
+  // sans connexion MCP nommée (VS Code, terminal).
+  if (PRINCIPAL_GATE_MODE !== "strict" && nomsPresentsParHook().length > 0) {
     _principalLastSeen = Date.now();
     return true;
   }

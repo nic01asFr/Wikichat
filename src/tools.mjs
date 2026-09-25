@@ -36,12 +36,48 @@ import { runClustering } from "./jobs/clustering.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, searchIdeas, ideaStats, deleteIdea } from "./ideas.mjs";
 import { auditProject, auditMany } from "./repo-audit.mjs";
 import { runHarmonizer, formatHarmonizerSummary } from "./harmonizer.mjs";
+import { rattacherMessage, marquerLus, filsDe, resumerFil } from "./fils.mjs";
+import { lireProjet, racineProjetsAtelier, slugifier } from "./projet-fichiers.mjs";
+import { vueProjet, texteVueProjet } from "./hooks-serveur.mjs";
+import { conversationParNom } from "./conversations.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function txt(text) { return { content: [{ type: "text", text }] }; }
+
+/**
+ * Dossier d'un projet connu par son nom : registre, puis racine des projets
+ * de l'Atelier, puis dossier de la conversation de l'appelant. null si inconnu.
+ */
+function racineDuProjet(nomProjet, nomAgent = null) {
+  const n = String(nomProjet || "").toLowerCase();
+  const slug = slugifier(nomProjet);
+  try {
+    for (const p of loadRegistry().projects || []) {
+      if (!p.path) continue;
+      if ((p.name && p.name.toLowerCase() === n) || (p.slug && p.slug.toLowerCase() === n) || (p.slug && p.slug.toLowerCase() === slug)) return p.path;
+    }
+  } catch { /* */ }
+  if (slug) {
+    const sousAtelier = path.join(racineProjetsAtelier(), slug);
+    if (fs.existsSync(sousAtelier)) return sousAtelier;
+  }
+  if (nomAgent) {
+    const c = conversationParNom(nomAgent);
+    if (c?.racine && (c.projet === slug || !nomProjet)) return c.racine;
+  }
+  return null;
+}
+
+/** Vue d'un projet tirée de ses fichiers, ou null s'il n'en a pas. */
+function projetParFichiers(nomProjet, nomAgent = null) {
+  const racine = racineDuProjet(nomProjet, nomAgent);
+  if (!racine) return null;
+  const v = lireProjet(racine);
+  return v?.aDesFichiers ? v : null;
+}
 
 function notify(channel, excludeId) {
   notifyWaiters(channel, excludeId);
@@ -345,11 +381,19 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   // Workflow hint
   sections.push(
     `💡 send_message pour parler, poll() pour relever — ton hook livre le reste\n` +
-    `   en fin de tour, tu n'as pas de boucle à tenir.\n` +
+    `   au début de ton prochain tour, tu n'as pas de boucle à tenir.\n` +
     `   remember(clé, valeur) / recall(clé) — ce qui te survit d'une session à l'autre.`
   );
 
   return txt(sections.join("\n\n"));
+}
+
+/** L'autre participant d'un canal DM (`dm:a__b`), vu de `moi`. */
+function resolveDMChannelTarget(canal, moi) {
+  const ch = state.channels.get(canal);
+  const m = String(moi || "").toLowerCase();
+  const parts = ch?.participants?.length ? ch.participants : String(canal).replace(/^dm:/, "").split("__");
+  return parts.find(x => x && x !== m) || null;
 }
 
 /** Resolve or create a DM channel, return channel key + resolution info.
@@ -686,8 +730,10 @@ export function registerTools(server, sessionId) {
       eta_seconds: z.number().optional().describe("Temps estimé en secondes avant ton prochain message (ex: 300 = 5 min de travail). Réduit les polls inutiles côté destinataire."),
       status: z.enum(["over", "standby", "done"]).optional().describe("over = j'ai terminé, c'est à toi | standby = je travaille, n'attends pas de réponse immédiate | done = tâche complètement terminée"),
       priority: z.enum(["info", "warning", "urgent"]).optional().describe("Diffuse à TOUTES les sessions au lieu d'un canal. Avec parcimonie : remplace l'ancien outil broadcast."),
+      thread: z.string().optional().describe("Fil de discussion (f-xxxxxx) auquel rattacher le message. Un DM ou un reply_to rattachent déjà au bon fil."),
+      reply_by_seconds: z.number().optional().describe("Avec expects_reply : délai de réponse attendu (s). Passé ce délai, le fil est signalé en retard à l'expéditeur."),
     },
-    async ({ content, channel: rawChannel, reply_to, expects_reply, eta_seconds, status, priority }) => {
+    async ({ content, channel: rawChannel, reply_to, expects_reply, eta_seconds, status, priority, thread, reply_by_seconds }) => {
       // priority transforme l'envoi en diffusion générale : c'est l'ancien outil
       // broadcast, absorbé ici. Un outil de moins, même canal __broadcast__, et
       // les champs de coordination (status, expects_reply) deviennent disponibles
@@ -763,6 +809,19 @@ export function registerTools(server, sessionId) {
         ? `\n⏰ Rappel cron actif → CronDelete("${sender.cron_job_id}") pour l'annuler.` : "";
       if (sender) { sender.eta = null; sender.etaReason = null; }
 
+      // Fil : un DM, un reply_to ou un thread explicite rattachent le message
+      // à un fil (qui doit répondre, échéance, lectures).
+      let filNote = "";
+      try {
+        const mentions = [...String(content || "").matchAll(/@([\w.-]{2,})/g)].map(x => resolveAgentName(x[1]).name);
+        const destinataires = isDM ? [msg.channel && resolveDMChannelTarget(msg.channel, senderName)] : mentions;
+        const fil = rattacherMessage(msg, {
+          expediteur: senderName, destinataires: destinataires.filter(Boolean),
+          thread, replyTo: reply_to, expectsReply: !!expects_reply, status, replyBySeconds: reply_by_seconds,
+        });
+        if (fil) filNote = `\n🧵 Fil ${fil.id} — ${fil.statut === "clos" ? "clos" : fil.attend.length ? `réponse attendue de ${fil.attend.join(", ")}` : "rien d'attendu"}`;
+      } catch { /* un fil manqué ne doit pas faire échouer l'envoi */ }
+
       // Un message posté sur un canal que seules des sessions anonymes occupent
       // n'atteint personne de durable : un identifiant "session-xxxx" change à
       // chaque reconnexion, et rien ne le rattache à une identité. Le dire, plutôt
@@ -789,7 +848,7 @@ export function registerTools(server, sessionId) {
       // sens que signé. C'est là que l'anonymat fait échouer l'intention.
       const interpelle = /@[\w.-]{2,}/.test(content || "");
       const anonyme = (interpelle || expects_reply || isDM) ? hintAnonyme(sessionId) : "";
-      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${cronHint}${audienceHint}\n\n⚡ Relève avec poll() — le hook te livre aussi les réponses en fin de tour.${guetteur}${anonyme}`);
+      return txt(`${entete}${autoCreated ? " (canal créé)" : ""}\n🆔 ${msg.id.slice(0, 8)} ⏱️ ${new Date().toLocaleTimeString("fr-FR")}${dmHint}${filNote}${cronHint}${audienceHint}\n\n⚡ Les réponses te sont remises par tes hooks (début de tour ; relance si elles attendent une réponse) — poll() pour relever tout de suite.${guetteur}${anonyme}`);
     }
   );
 
@@ -1015,6 +1074,7 @@ export function registerTools(server, sessionId) {
       const first = !cursor;
       const res = inboxFor(myName, { sinceId: cursor, sinceMinutes: first ? 10 : 0 });
       if (res.lastId) remember(myName, "__inbox_cursor", res.lastId);
+      marquerLus(res.messages, myName);
       if (res.messages.length > 0) {
         const out = formatMsgList(res.messages);
         // Curseur évincé : l'agent doit savoir que ce qu'il reçoit est un
@@ -1042,6 +1102,7 @@ export function registerTools(server, sessionId) {
         const cur = recall(myName, "__inbox_cursor");
         const r = inboxFor(myName, { sinceId: cur, sinceMinutes: 0 });
         if (r.lastId) remember(myName, "__inbox_cursor", r.lastId);
+        marquerLus(r.messages, myName);
         if (r.messages.length > 0) return formatMsgList(r.messages);
       }
       return txt(`⏰ Rien de neuf (timeout ${timeout / 1000}s). Ta boîte est à jour — rends la main, le hook t'apportera la suite.`);
@@ -1503,6 +1564,33 @@ export function registerTools(server, sessionId) {
     async ({ project, content, type }) => {
       const name = getSessionName(sessionId);
       const date = `[${new Date().toLocaleDateString("fr-FR")}]`;
+
+      // Projet qui se décrit dans ses fichiers (ETAT.md, docs/decisions/,
+      // .atelier/projet.json) : la trace durable y vit, pas ici. La note devient
+      // de la coordination du moment, visible dans project_state, et la
+      // réponse dit où écrire la trace.
+      const vueFichiers = projetParFichiers(project, name);
+      if (vueFichiers) {
+        const canal = vueFichiers.slug;
+        if (!state.channels.has(canal)) {
+          state.channels.set(canal, { name: canal, description: `Canal dédié au projet ${project}`, createdBy: name, createdAt: new Date() });
+        }
+        const emojiE = { decision: "✅", blocker: "🔴", question: "❓", note: "📌" }[type];
+        pushMessage({
+          id: randomUUID(), from: sessionId, fromName: name, channel: canal,
+          content: `${emojiE} [${type.toUpperCase()}] ${content}`, timestamp: new Date(),
+          note_projet: type,
+        });
+        notify(canal, sessionId);
+        const ou = {
+          decision: `docs/decisions/NNNN-<titre>.md (contexte, décision, conséquences, Statut : …)`,
+          question: `${vueFichiers.etat?.chemin || "ETAT.md"} § « À décider »`,
+          blocker: `${vueFichiers.etat?.chemin || "ETAT.md"} (écarts / prochaine étape)`,
+          note: `${vueFichiers.etat?.chemin || "ETAT.md"} ou docs/journal/`,
+        }[type];
+        return txt(`${emojiE} Note de coordination postée sur #${canal} [${type}] — visible dans project_state("${project}").\n` +
+          `📁 Ce projet tient son état dans ses fichiers (${vueFichiers.racine}) : la trace durable s'écrit dans ${ou}, que wikichat relit. Rien n'est ajouté à project-state.json.`);
+      }
       let proj = state.projects.get(project);
       if (!proj) {
         // Auto-create project if it doesn't exist yet — avoids friction
@@ -1542,12 +1630,41 @@ export function registerTools(server, sessionId) {
     }
   );
 
+  server.tool(
+    "project_state",
+    "État d'un projet lu dans SES fichiers (ETAT.md : tête, À décider, Demandé à l'Atelier ; docs/decisions/ ; .atelier/projet.json) " +
+    "plus la coordination du moment (conversations présentes, fils ouverts, notes éphémères). Sans argument : le projet de ta conversation. " +
+    "wikichat lit ces fichiers et ne les écrit jamais.",
+    { project: z.string().optional().describe("Nom ou slug du projet ; défaut : celui de ta conversation") },
+    async ({ project }) => {
+      const moi = getSessionName(sessionId);
+      let racine = project ? racineDuProjet(project, moi) : null;
+      if (!racine) racine = conversationParNom(moi)?.racine || null;
+      if (!racine) return txt(`❓ Projet ${project ? `"${project}" ` : ""}introuvable (ni au registre, ni sous ${racineProjetsAtelier()}, ni dans ta conversation).`);
+      return txt(texteVueProjet(vueProjet(racine)));
+    }
+  );
+
+  server.tool(
+    "list_threads",
+    "Tes fils de discussion : avec qui, qui doit répondre, échéance, lu ou non. Un DM, un reply_to ou send_message(thread=…) alimentent les fils ; status=\"done\" en clôt un.",
+    { include_closed: z.boolean().optional().describe("Inclure les fils clos (défaut : non)") },
+    async ({ include_closed }) => {
+      const moi = getSessionName(sessionId);
+      const fils = filsDe(moi, { statut: include_closed ? "tous" : "ouvert", limite: 30 });
+      if (!fils.length) return txt(`🧵 Aucun fil ${include_closed ? "" : "ouvert "}pour ${moi}.`);
+      return txt(`🧵 ${fils.length} fil(s) pour ${moi} :\n${fils.map(f => `- ${resumerFil(f, moi)}${f.statut === "clos" ? " [clos]" : ""}`).join("\n")}`);
+    }
+  );
+
   server.tool("list_projects", "Lister tous les projets — affiche meta de régie (lifecycle, axes, publish) si présentes.", {}, async () => {
     if (!state.projects.size) return txt("📭 Aucun projet.\n💡 declare_project() pour en créer un.");
     const lifecycleEmoji = {
       ideation: "💡", mvp: "🌱", active: "🟢", maintenance: "🔧", archived: "📦", closed: "🏁",
     };
-    const lines = [...state.projects.values()].map(p => {
+    const lines = [...state.projects.values()].map(p0 => {
+      const vf = projetParFichiers(p0.name);
+      const p = vf ? { ...p0, description: vf.description || vf.etat?.tete?.[0] || p0.description, titre: vf.titre } : p0;
       const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
       const active = [...p.tasks.values()].filter(t => t.status === "active").length;
       const closedFlag = p.closure ? " | 🏁 closed" : "";
@@ -1564,7 +1681,7 @@ export function registerTools(server, sessionId) {
       if (p.publish?.deployed?.url) pubBits.push(`🚀${p.publish.deployed.env || "deployed"}`);
       const pubFlag = pubBits.length ? ` | 📡 ${pubBits.join(" ")}` : "";
       const purposeLine = p.purpose ? `\n    🎯 ${p.purpose}` : "";
-      return `  • **${p.name}** — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${lifecycleFlag}${axesFlag}${pubFlag}${closedFlag}${purposeLine}${p.status && !p.lifecycle ? `\n    📊 ${p.status}` : ""}`;
+      return `  • **${p.name}**${p.titre && p.titre !== p.name ? ` (${p.titre})` : ""} — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${lifecycleFlag}${axesFlag}${pubFlag}${closedFlag}${purposeLine}${p.status && !p.lifecycle ? `\n    📊 ${p.status}` : ""}`;
     });
     return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail · set_project_meta() pour enrichir un projet`);
   });
@@ -2418,6 +2535,9 @@ export function registerTools(server, sessionId) {
           expects_reply: expects_reply ?? true, status: "over",
         });
         notify(targetHome, sessionId);
+        try {
+          rattacherMessage(msg, { expediteur: senderName, destinataires: [name], expectsReply: expects_reply ?? true, status: "over", forcer: true });
+        } catch { /* */ }
 
         // Optionally wake an offline agent so it answers now instead of at its
         // next human-driven turn. Opt-in (wake=true) so we never silently spawn a

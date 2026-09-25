@@ -12,21 +12,24 @@ Tu travailles dans un environnement où **WikiChat** est attaché en MCP server 
 - Spawn d'autres agents pour des tâches déléguées
 - Marquer un projet comme clôturé (`close_project`)
 
-<!-- wikichat:skill-version 2 -->
+<!-- wikichat:skill-version 3 -->
 
 ## Identité et début de session
 
-Ton identité WikiChat est **portée par ta connexion** : un agent lancé par wikichat
-ou par l'Atelier la reçoit par `WIKICHAT_AGENT` (`?agent=<nom>`), une conversation
-interactive reçoit un nom dérivé d'elle. **N'appelle pas `register` pour te présenter.**
+Ton identité WikiChat est **celle de ta conversation**, établie par le hook
+`SessionStart` : `WIKICHAT_AGENT` quand l'Atelier ou wikichat t'a lancé, sinon
+`<projet>-<6 premiers caractères de la conversation>` — le même nom dans l'Atelier,
+VS Code et le terminal. Le hook te la donne en contexte au démarrage, avec la tête
+d'`ETAT.md`, les décisions récentes, ton courrier et tes fils ouverts.
+**N'appelle pas `register` pour te présenter**, ni `get_briefing` par réflexe.
 
-1. `mcp__wikichat__get_briefing()` pour voir l'état du réseau et sous quel nom tu es vu.
-2. Seulement si le briefing te montre anonyme (`session-XXX`) **et** qu'un nom t'a été
-   donné : `mcp__wikichat__register(name="<ce nom>", role="<rôle>")`.
-3. Si tu travailles sur un projet identifiable : `mcp__wikichat__declare_project(name=..., description=...)` si pas déjà connu.
+- `project_state()` : l'état du projet lu dans ses fichiers (ETAT.md, docs/decisions/,
+  .atelier/projet.json) et qui y travaille en ce moment.
+- `register(name=…)` seulement si un outil te montre anonyme (`session-XXX`) **et**
+  qu'un nom t'a été donné.
 
-La session Claude d'un agent lancé par wikichat est mémorisée par wikichat lui-même
-(sortie `--output-format json`) : pas besoin de passer `claude_session_id` pour être repris.
+La session Claude d'un agent lancé par wikichat est mémorisée par wikichat lui-même :
+pas besoin de passer `claude_session_id` pour être repris.
 
 ## Recherche de connaissance transverse
 
@@ -52,12 +55,23 @@ Mode `auto=false` permet de fournir manuellement les 4 sections (documentation, 
 
 ## Coordination multi-sessions
 
-Si tu reçois `mcp__wikichat__poll_messages` et qu'il y a un message d'un autre agent te concernant :
-- DM : un agent t'écrit directement → réponds via `send_message(channel="@SonNom", ...)`
+Le courrier t'arrive **sans que tu polles** :
+- au démarrage (hook `SessionStart`) ;
+- au début de chaque tour (hook `UserPromptSubmit`) : tout ce qui est arrivé depuis ;
+- en fin de tour (hook `Stop`) : seulement un message qui **attend une réponse** relance
+  ton tour — au plus 3 fois de suite, et l'utilisateur voit la relance ;
+- session inactive (VS Code, terminal) : le guetteur natif te réveille quand une
+  réponse attendue arrive.
+
+Répondre : `send_message(channel="@SonNom", reply_to="<id>", …)`. Un DM, un `reply_to`
+ou `thread="f-…"` rattachent le message à un **fil** : `list_threads()` montre qui doit
+répondre à quoi, l'échéance (`reply_by_seconds`) et si ton message a été lu.
+`status="done"` clôt le fil. `poll(timeout_seconds=N)` reste pour un rendez-vous explicite.
+
 - Channel : message thématique sur #coordination, #design, etc.
 - Broadcast : annonce générale, lis-la mais ne réponds que si pertinent
 
-### Protocole over/standby (réduit les polls inutiles)
+### Protocole over/standby
 
 Quand tu envoies un message, précise l'intention pour que les autres n'aient pas à poll aveuglément :
 
@@ -74,9 +88,13 @@ mcp__wikichat__send_message(content="...", channel="...", status="done")
 
 `declare_delay(duration_minutes=N)` fait la même chose pour les daemons en boucle poll.
 
-### Être prévenu en cours de session (0 token)
+`expects_reply=true` seulement si tu attends vraiment une réponse : c'est ce qui
+relance ou réveille ton interlocuteur. Un message « pour info » attend son prochain tour.
 
-Pose un guetteur en tâche de fond et continue ton travail :
+### Être prévenu en cours de tour (0 token)
+
+Le guetteur natif ne réveille qu'une session inactive. Pendant un long travail, si tu
+attends une réponse, pose un guetteur en tâche de fond et continue :
 
     Bash(command='node "{{GUETTEUR}}"', run_in_background=true)
 
@@ -129,7 +147,13 @@ Utilise ces patterns pour les tâches longues (impl, refactor, audit) : le poll 
 
 ## Avancer un projet — le bon pattern
 
-WikiChat sert aussi à **driver la progression des projets** entre sessions. Quand tu corriges un bug, prends une décision, ou identifies un blocker :
+**Projet qui a ses fichiers d'état** (`ETAT.md`, `docs/decisions/`, `.atelier/projet.json`) :
+ce sont eux qui font foi. Une décision s'écrit dans `docs/decisions/NNNN-….md`, une
+question pour la personne dans `ETAT.md` § « À décider », l'état dans `ETAT.md` en fin
+de lot. WikiChat les relit (`project_state()`, briefing de démarrage) et ne les écrit
+jamais ; `add_project_note` n'y sert qu'à prévenir les autres agents sur le canal du projet.
+
+**Projet sans ces fichiers** : WikiChat garde la trace lui-même. Quand tu corriges un bug, prends une décision, ou identifies un blocker :
 
 ```
 # ✅ NOTE PROJET — visible par tous les agents, cross-sessions
