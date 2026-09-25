@@ -38,49 +38,33 @@ const GUETTEUR = path.resolve(__dirname, "..", "scripts", "wikichat-attendre-cou
 const BLOCK_START = "<!-- wikichat:auto-injected:start -->";
 const BLOCK_END = "<!-- wikichat:auto-injected:end -->";
 
+/**
+ * Le bloc de ~/.claude/CLAUDE.md ne dit que ce qui est vrai sur TOUTES les
+ * surfaces (Atelier, VS Code, terminal, processus lancés par wikichat).
+ *
+ * Il exigeait un `register` au début de chaque session : faux pour un agent
+ * lancé par wikichat, dont l'identité voyage avec la connexion (WIKICHAT_AGENT
+ * → `?agent=`), et contradictoire avec l'Atelier, qui dit de ne pas l'appeler.
+ * Il citait aussi un chemin de guetteur et des commandes propres à une machine.
+ * Le détail vit dans la skill `wikichat`, chargée quand les outils sont là.
+ */
 const USER_CLAUDE_MD_BLOCK = `
 ${BLOCK_START}
 ## WikiChat — coordination locale (auto-injected)
 
-Si tu vois des tools \`mcp__wikichat__*\` disponibles dans cette session, WikiChat est attaché.
-C'est un coordinateur local multi-agents qui te donne accès à :
+Si des outils \`mcp__wikichat__*\` sont présents, WikiChat (coordinateur multi-agents local) est attaché.
 
-- **Mémoire transverse** des projets passés (\`mcp__wikichat__search_knowledge\`)
-- **Coordination** avec d'autres sessions Claude Code actives (channels, DMs)
-- **Spawn de sous-agents** headless pour déléguer des tâches bornées
-- **Persistance** : tasks, decisions, closures par projet
+- **Identité** : elle est portée par la connexion (\`WIKICHAT_AGENT\`, ou nom dérivé de la conversation). N'appelle pas \`register\` pour te présenter ; seulement si \`get_briefing()\` te montre anonyme (\`session-…\`) et qu'un nom t'a été donné.
+- **Avant d'implémenter un pattern** (auth, état, widget…) : \`mcp__wikichat__search_knowledge(query=<sujet>)\` — ne redérive pas ce qui est déjà capitalisé.
 
-**Réflexes attendus** :
-1. Au début de session : \`mcp__wikichat__register(name=<nom>, role=<rôle>, claude_session_id="$CLAUDE_SESSION_ID")\` puis \`mcp__wikichat__get_briefing()\`. Le name doit être non-anonyme pour activer la dormant gate. Passer \`claude_session_id\` permet \`respawn_project_agents(mode="resume_only")\` plus tard.
-2. Avant d'implémenter un pattern (auth, state, widget, etc.) : \`mcp__wikichat__search_knowledge(query=<topic>)\`. Évite de re-dériver ce qui existe déjà dans \`~/.wikichat/knowledge/<topic>-axis.md\`.
-3. À la clôture du projet : \`mcp__wikichat__close_project(project=<name>, auto=true)\` — produit une closure structurée + capitalisation auto dans la KB transverse.
-4. Reprendre une équipe sur un projet : \`mcp__wikichat__list_project_agents(project=...)\` pour voir qui a contribué, puis \`mcp__wikichat__respawn_project_agents(project=..., mode="resume_only", max=3)\` pour ré-éveiller les resumables.
-
-**Protocole over/standby** — ces champs ne sont pas décoratifs : ils pilotent la
-tenue du lien entre deux agents. Le hook de fin de tour les lit et décide s'il te
-relance ou te laisse t'arrêter.
+**Protocole over/standby** — ces champs pilotent la tenue du lien entre deux agents ; le hook de fin de tour les lit :
 - status="over" + expects_reply=true → tu as fini, tu attends une réponse ; le lien reste ouvert
-- status="standby" + eta_seconds=300 → tu pars travailler 5 min ; ton interlocuteur t'attend jusque-là au lieu de raccrocher
+- status="standby" + eta_seconds=300 → tu pars travailler 5 min ; ton interlocuteur t'attend jusque-là
 - status="done" → tâche terminée, aucune réponse attendue ; le lien se referme
 
-Annonce toujours un \`eta_seconds\` quand tu pars sur une tâche longue : sans lui,
-l'autre rend la main au bout de 45 s et l'échange se perd.
+Annonce toujours un \`eta_seconds\` quand tu pars sur une tâche longue : sans lui, l'autre rend la main au bout de 45 s.
 
-**Être prévenu en cours de session, sans attendre la fin de ton tour** — pose un
-guetteur en tâche de fond et continue ton travail :
-
-    Bash(command='node "${GUETTEUR}"', run_in_background=true)
-
-Il dort sur une connexion HTTP jusqu'à ce qu'un message te soit adressé, puis
-sort en te le remettant. L'attente ne coûte **aucun token** : c'est un processus
-Node, pas un agent — rien n'est envoyé au modèle tant que rien n'arrive. À poser
-quand tu attends une réponse et que tu as autre chose à faire entre-temps ;
-inutile pour un agent qui exécute une tâche puis sort.
-
-**Lire les messages sans poll MCP bloquant** (bash, 0 tokens) :
-curl -s "http://localhost:3777/api/messages?channel=<ch>&since_minutes=5"
-
-**Slash commands disponibles** : \`/wikichat-init\` (auto-onboarding), \`/sk <query>\` (search rapide), \`/close-project\`, \`/wikichat-status\`.
+Le reste (canaux, guetteur de courrier, clôture de projet, reprise d'équipe, commandes) : skill \`wikichat\`.
 
 Ce bloc est auto-géré par WikiChat. Pour le retirer : supprime entre les balises markers ci-dessus.
 ${BLOCK_END}
@@ -91,7 +75,7 @@ ${BLOCK_START}
 ## WikiChat (coordinator local attaché)
 
 Ce projet a un overlay \`.wikichat/\` géré. Tools \`mcp__wikichat__*\` disponibles si serveur lancé.
-Réflexes : \`register\` au début, \`search_knowledge\` avant de coder un pattern, \`close_project\` à la fin.
+Identité portée par la connexion (pas de \`register\` à faire) ; \`search_knowledge\` avant de coder un pattern, \`close_project\` à la fin.
 Détails dans \`~/.claude/CLAUDE.md\` ou via le skill \`wikichat\` auto-loadé.
 ${BLOCK_END}
 `.trimStart();
@@ -151,6 +135,49 @@ function ensureMailboxHook(log = console.log) {
   }
 }
 
+/** Copie un modèle en y remplaçant les chemins propres à cette installation. */
+function ecrireModele(src, dst) {
+  if (!/\.md$/i.test(src)) { fs.copyFileSync(src, dst); return; }
+  const texte = fs.readFileSync(src, "utf8").split("{{GUETTEUR}}").join(GUETTEUR);
+  fs.writeFileSync(dst, texte);
+}
+
+const VERSION_RE = /<!-- wikichat:skill-version (\d+) -->/;
+function versionDe(texte) {
+  const m = String(texte || "").match(VERSION_RE);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * Remplace un fichier installé quand son modèle porte une version plus
+ * récente (`<!-- wikichat:skill-version N -->`). La copie initiale ne touchait
+ * jamais un fichier existant : la skill qui disait « register au début »
+ * restait donc en place pour toujours. L'ancienne version est gardée en `.bak`.
+ */
+export function rafraichirVersionnes(src, dst, log = console.log) {
+  let n = 0;
+  if (!fs.existsSync(src)) return n;
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dst, entry.name);
+    if (entry.isDirectory()) { n += rafraichirVersionnes(s, d, log); continue; }
+    if (!entry.isFile() || !/\.md$/i.test(entry.name) || !fs.existsSync(d)) continue;
+    try {
+      const voulue = versionDe(fs.readFileSync(s, "utf8"));
+      if (!voulue) continue;
+      const installee = fs.readFileSync(d, "utf8");
+      if (versionDe(installee) >= voulue) continue;
+      fs.writeFileSync(d + ".bak", installee);
+      ecrireModele(s, d);
+      log(`[overlay] ${path.relative(dst, d) || entry.name} mis à jour (version ${voulue}), ancienne gardée en .bak`);
+      n++;
+    } catch (err) {
+      log(`[overlay] ${entry.name} non rafraîchi : ${err.message}`);
+    }
+  }
+  return n;
+}
+
 export function ensureUserOverlay({ force = false, log = console.log } = {}) {
   if (process.env.WIKICHAT_NO_OVERLAY_INSTALL === "1") return { skipped: "disabled" };
   if (!fs.existsSync(TEMPLATE_DIR)) return { skipped: "no-templates" };
@@ -167,7 +194,7 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
         if (entry.isDirectory()) {
           copyDir(srcPath, dstPath);
         } else if (entry.isFile() && !fs.existsSync(dstPath)) {
-          fs.copyFileSync(srcPath, dstPath);
+          ecrireModele(srcPath, dstPath);
           result.filesAdded++;
         }
       }
@@ -179,6 +206,10 @@ export function ensureUserOverlay({ force = false, log = console.log } = {}) {
       return { error: err.message };
     }
   }
+
+  // 1b. Fichiers versionnés (skill wikichat) : rafraîchis même sur une
+  // installation existante, sinon une consigne corrigée n'y arrive jamais.
+  result.refreshed = rafraichirVersionnes(TEMPLATE_DIR, USER_CLAUDE_DIR, log);
 
   // 2. Append to ~/.claude/CLAUDE.md (or create) — only if our marker isn't already there
   try {

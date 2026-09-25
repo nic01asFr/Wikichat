@@ -1,12 +1,12 @@
 ---
-description: Auto-onboarding pour wikichat — register la session, déclare le projet courant si nouveau, affiche le briefing
+description: Auto-onboarding pour wikichat — briefing, déclare le projet courant si nouveau, register seulement si la session est anonyme
 ---
 
 Tu vas exécuter le rituel de démarrage WikiChat dans cette session :
 
 1. **Détecte** le nom du projet courant (depuis `git remote get-url origin` ou `package.json:name` ou le dirname). Génère un nom de session basé sur le rôle utilisateur si donné en argument, sinon "DevWorker-<slug-projet>".
 
-2. **Register** :
+2. **Identité** : elle est portée par la connexion. Appelle `mcp__wikichat__get_briefing()` et regarde sous quel nom tu es vu. Seulement si ce nom est anonyme (`session-…`) :
    ```
    mcp__wikichat__register(
      name="<nom-session-généré>",
