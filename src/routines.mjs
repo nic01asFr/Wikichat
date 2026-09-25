@@ -16,6 +16,10 @@
  *   - wait      : { tickets:[...], timeout_s? }                         → resolved when all complete
  *   - summarize : { artifacts:[...], target?, title? }                  → broadcast a summary
  *   - sleep     : { seconds }                                           → simple delay
+ *   - job       : { job, args? }                                        → appelle une fonction JS
+ *                 du catalogue (src/jobs/index.mjs) : run_cartography, run_clustering,
+ *                 harmonize_ideas, audit_all_projects, scan_changes, absorb_closures.
+ *                 Aucun agent, aucun modèle.
  *
  * Steps support param interpolation via `{paramName}` and outputs of
  * previous steps via `{stepN.field}` (e.g. `{step0.ticket}`).
@@ -29,6 +33,21 @@ import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
 import { writeAtomicJSON } from "./persistence.mjs";
+import { executerJob, nomDuJob } from "./jobs/index.mjs";
+
+/** Actions qu'une étape peut porter. Une action inconnue est refusée à l'enregistrement. */
+export const ACTIONS_ETAPE = Object.freeze(["spawn", "broadcast", "wait", "summarize", "sleep", "job"]);
+/** Actions qui ne lancent aucun agent : du code. */
+const ACTIONS_CODE = new Set(["broadcast", "wait", "summarize", "sleep", "job"]);
+
+/**
+ * Vrai si la routine ne lance aucun agent (toutes ses étapes sont du code).
+ * Décision J-c : la porte dormante ne s'applique qu'à ce qui lance un agent.
+ */
+export function routineEstDuCode(idOuDef) {
+  const def = typeof idOuDef === "string" ? _routines.get(idOuDef) : idOuDef;
+  return !!def && Array.isArray(def.steps) && def.steps.length > 0 && def.steps.every(st => ACTIONS_CODE.has(st?.action));
+}
 
 const ROUTINES_FILE = path.join(os.homedir(), ".wikichat", "routines.json");
 const RUNS_FILE = path.join(os.homedir(), ".wikichat", "routine-runs.jsonl");
@@ -81,6 +100,17 @@ export function registerRoutine(spec) {
   if (!Array.isArray(spec.steps) || spec.steps.length === 0) {
     throw new Error("routine.steps must be a non-empty array");
   }
+  // Une étape d'action inconnue échouait à chaque exécution, jamais à
+  // l'enregistrement (vécu sur le pod : 35 échecs « unknown action:
+  // send_message »). On le dit tout de suite.
+  spec.steps.forEach((st, i) => {
+    if (!ACTIONS_ETAPE.includes(st?.action)) {
+      throw new Error(`étape ${i} : action "${st?.action}" inconnue (connues : ${ACTIONS_ETAPE.join(", ")})`);
+    }
+    if (st.action === "job" && !nomDuJob(st.params?.job ?? st.params?.name)) {
+      throw new Error(`étape ${i} : job "${st.params?.job ?? st.params?.name}" inconnu`);
+    }
+  });
   const existing = _routines.get(spec.id);
   const def = {
     id: spec.id,
@@ -266,6 +296,10 @@ async function _executeStep(step, opts) {
         content,
       });
       return { id: out?.id || null };
+    }
+    case "job": {
+      // Appel direct d'une fonction JS : le résultat est un résumé JSON.
+      return await executerJob(p.job ?? p.name, p.args || {});
     }
     case "sleep": {
       const ms = (p.seconds ?? 1) * 1000;

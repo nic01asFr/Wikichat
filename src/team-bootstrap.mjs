@@ -22,7 +22,7 @@
  */
 
 import { registerTrigger, listTriggers } from "./triggers.mjs";
-import { registerRoutine } from "./routines.mjs";
+import { getRoutine, registerRoutine } from "./routines.mjs";
 
 const TEAM_TRIGGER_PREFIX = "team-";
 const TEAM_ROUTINE_PREFIX = "team:";
@@ -107,8 +107,12 @@ const KNOWLEDGE_ROUTINES = [
   },
   {
     id: "team:knowledge-absorb-closure",
-    description: "Spawne un Librarian-Absorber qui ingère un artifact de closure dans l'axe pertinent",
+    description: "Range les clôtures en fiches (code), puis un Librarian-Absorber les intègre dans l'axe pertinent",
     steps: [
+      // Lot W5 : la part déterministe d'abord — chaque clôture devient une
+      // fiche de connaissance retrouvée par search_knowledge, même si l'agent
+      // qui suit échoue ou n'est pas lancé (porte dormante, budget).
+      { action: "job", params: { job: "absorb_closures" } },
       {
         action: "spawn",
         params: {
@@ -212,19 +216,11 @@ const RECURRING_JOBS = [
     description: "Cartography refresh every 6h",
     schedule: "0 */6 * * *",
     routine: "team:job-cartography",
+    // Lot W3 : la fonction est appelée directement. Avant, un agent headless
+    // (« Cartographer ») était lancé pour appeler l'outil run_cartography.
     routineDef: {
-      description: "Spawn a Cartographer headless agent that runs run_cartography",
-      steps: [
-        {
-          action: "spawn",
-          params: {
-            name: "Cartographer-{ts}",
-            role: "cartographer",
-            mode: "headless",
-            task: "register(name='Cartographer', role='cartographer', agent_type='headless'). Appelle run_cartography(). Termine.",
-          },
-        },
-      ],
+      description: "Cartographie : scan, instantanés, carte (job direct, sans agent)",
+      steps: [{ action: "job", params: { job: "run_cartography" } }],
     },
   },
   {
@@ -232,19 +228,20 @@ const RECURRING_JOBS = [
     description: "Cross-project clustering Sunday 03:00",
     schedule: "0 3 * * 0",
     routine: "team:job-clustering",
+    // Lot W3 : appel direct de runClustering (était un agent « Matchmaker »).
     routineDef: {
-      description: "Spawn a Matchmaker headless agent that runs run_clustering",
-      steps: [
-        {
-          action: "spawn",
-          params: {
-            name: "Matchmaker-{ts}",
-            role: "matchmaker",
-            mode: "headless",
-            task: "register(name='Matchmaker', role='matchmaker', agent_type='headless'). Appelle run_clustering(). Termine.",
-          },
-        },
-      ],
+      description: "Proximité entre projets par dépendances (job direct, sans agent)",
+      steps: [{ action: "job", params: { job: "run_clustering" } }],
+    },
+  },
+  {
+    id: "team-cron-audits",
+    description: "Santé des dépôts du registre, chaque nuit à 04:00 (job direct)",
+    schedule: "0 4 * * *",
+    routine: "team:job-audits",
+    routineDef: {
+      description: "Audits des dépôts du registre, gardés dans ~/.wikichat/audits.json (job direct, sans agent)",
+      steps: [{ action: "job", params: { job: "audit_all_projects" } }],
     },
   },
   {
@@ -266,6 +263,31 @@ const RECURRING_JOBS = [
     },
   },
 ];
+
+/**
+ * Lot W3 : répare, à chaque démarrage et même sans WIKICHAT_AUTONOMOUS_TEAM,
+ * les routines de l'équipe DÉJÀ enregistrées dont la définition a changé
+ * (Cartographer et Matchmaker devenus des jobs, absorption des clôtures
+ * précédée de sa part en code). N'en crée aucune, ne touche à aucun trigger :
+ * une installation qui a provisionné l'équipe autrefois garde ses triggers,
+ * mais ils n'appellent plus un agent pour exécuter une fonction JS.
+ * @returns {string[]} identifiants réparés
+ */
+export function reparerRoutinesEquipe() {
+  const voulues = [
+    ...RECURRING_JOBS.filter(j => j.routineDef).map(j => ({ id: j.routine, ...j.routineDef })),
+    ...KNOWLEDGE_ROUTINES,
+  ];
+  const reparees = [];
+  for (const v of voulues) {
+    const existante = getRoutine(v.id);
+    if (!existante) continue;
+    if (JSON.stringify(existante.steps) === JSON.stringify(v.steps)) continue;
+    registerRoutine({ ...v, enabled: existante.enabled !== false });
+    reparees.push(v.id);
+  }
+  return reparees;
+}
 
 export function bootstrapAutonomousTeam() {
   if (process.env.WIKICHAT_AUTONOMOUS_TEAM !== "1") return { skipped: true };

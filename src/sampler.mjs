@@ -20,6 +20,7 @@
  *         temporary file outside the project (see src/lancement.mjs).
  */
 
+import { CHEMINS, DEPOT } from "./chemins.mjs";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -428,8 +429,8 @@ function loadRole(projectPath, roleName) {
   // Try project-local roles first, then server roles
   for (const base of [
     path.join(projectPath, ".wikichat", "roles"),    // project override
-    path.join(process.cwd(), ".wikichat", "roles"), // server local override
-    path.join(process.cwd(), "docs", "roles"),       // shipped templates
+    CHEMINS.roles,                                   // surcharges locales du service
+    path.join(DEPOT, "docs", "roles"),               // modèles livrés avec wikichat
   ]) {
     const rolePath = path.join(base, `${slug}.md`);
     try {

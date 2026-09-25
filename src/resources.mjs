@@ -6,7 +6,7 @@
  *   wikichat://role/{name}       — role definition from .wikichat/roles/
  *   wikichat://identity/{name}   — agent identity (memories, skills, last state)
  *   wikichat://decisions         — recent decisions from #decisions channel
- *   wikichat://kb/{topic}        — knowledge base entry
+ *   wikichat://kb/{topic}        — fiche de connaissance (~/.wikichat/knowledge/<topic>.md)
  *
  * Resources complement tools: tools are for actions, resources for context.
  * IDEs display resources in panels — the user sees agent state without opening a UI.
@@ -21,17 +21,17 @@ import {
 import { recall } from "./identity.mjs";
 import { loadSnapshot } from "./persistence.mjs";
 import { status as dormantStatus } from "./dormant.mjs";
+import { CHEMINS, DEPOT } from "./chemins.mjs";
+import { listerFiches, lireFiche } from "./connaissance.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ROLES_DIRS = [
-  path.join(process.cwd(), ".wikichat", "roles"), // local override
-  path.join(process.cwd(), "docs", "roles"),       // shipped templates
+  CHEMINS.roles,                     // surcharges locales (~/.wikichat/roles)
+  path.join(DEPOT, "docs", "roles"), // modèles livrés avec wikichat
 ];
-
-const KB_DIR = path.join(process.cwd(), ".wikichat", "knowledge");
 
 function listRoleFiles() {
   const roles = [];
@@ -46,11 +46,9 @@ function listRoleFiles() {
   return roles;
 }
 
+/** Sujets de la connaissance centrale : le même lecteur que search_knowledge. */
 function listKBFiles() {
-  try {
-    if (!fs.existsSync(KB_DIR)) return [];
-    return fs.readdirSync(KB_DIR).filter(f => f.endsWith(".md")).map(f => f.replace(".md", ""));
-  } catch { return []; }
+  try { return listerFiches({ portee: "central" }).map(f => f.sujet); } catch { return []; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,11 +146,13 @@ export function registerResources(server, sessionId) {
   server.resource(
     "role",
     new ResourceTemplate("wikichat://role/{name}", { list: () => {
-      return listRoleFiles().map(r => ({
+      // Le SDK attend { resources: [...] } : un tableau nu faisait échouer
+      // resources/list tout entier (« result.resources is not iterable »).
+      return { resources: listRoleFiles().map(r => ({
         uri: `wikichat://role/${r.name}`,
         name: `Role: ${r.name}`,
         description: `Définition du rôle ${r.name}`,
-      }));
+      })) };
     }}),
     { description: "Définition d'un rôle agent depuis .wikichat/roles/" },
     async (uri, { name }) => {
@@ -179,11 +179,11 @@ export function registerResources(server, sessionId) {
       for (const s of state.sessions.values()) {
         if (!s.name.startsWith("session-")) names.add(s.name);
       }
-      return [...names].map(n => ({
+      return { resources: [...names].map(n => ({
         uri: `wikichat://identity/${n}`,
         name: `Identity: ${n}`,
         description: `État et mémoires de l'agent ${n}`,
-      }));
+      })) };
     }}),
     { description: "Identité persistante d'un agent : mémoires, skills, dernier état" },
     async (uri, { name }) => {
@@ -239,21 +239,16 @@ export function registerResources(server, sessionId) {
   server.resource(
     "knowledge",
     new ResourceTemplate("wikichat://kb/{topic}", { list: () => {
-      return listKBFiles().map(t => ({
+      return { resources: listKBFiles().map(t => ({
         uri: `wikichat://kb/${t}`,
         name: `KB: ${t}`,
-        description: `Article de la knowledge base: ${t}`,
-      }));
+        description: `Fiche de connaissance : ${t}`,
+      })) };
     }}),
     { description: "Article de la Knowledge Base WikiChat" },
     async (uri, { topic }) => {
-      const filePath = path.join(KB_DIR, `${topic}.md`);
-      try {
-        if (fs.existsSync(filePath)) {
-          const text = fs.readFileSync(filePath, "utf8");
-          return { contents: [{ uri: uri.href, text, mimeType: "text/markdown" }] };
-        }
-      } catch { /* ignore */ }
+      const fiche = lireFiche(decodeURIComponent(String(topic)));
+      if (fiche) return { contents: [{ uri: uri.href, text: fiche.texte, mimeType: "text/markdown" }] };
       const available = listKBFiles();
       return {
         contents: [{

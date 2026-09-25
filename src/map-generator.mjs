@@ -180,7 +180,11 @@ function generateRivers(islands) {
 
 // ── Main generator ────────────────────────────────────────────────────────
 
-export function generateMap(projects) {
+/**
+ * @param {object[]} projects entrées du registre
+ * @param {{ aretes?: object[] }} [o] arêtes de cartographie.mjs (ponts entre îles)
+ */
+export function generateMap(projects, { aretes = [] } = {}) {
   // 1. Group projects by theme
   const grouped = {};
   for (const project of projects) {
@@ -270,28 +274,37 @@ export function generateMap(projects) {
     });
   }
 
-  // 4. Cross-island bridges (for projects with shared keywords — simplified)
-  // Only add if 2+ islands share a likely dependency
-  for (let i = 1; i < islands.length; i++) {
-    for (let j = i + 1; j < islands.length; j++) {
-      const a = islands[i];
-      const b = islands[j];
-      // ai-agents ↔ data-public often linked
-      const linked = (
-        (a.theme === "ai-agents" && b.theme === "data-public") ||
-        (a.theme === "web-apps" && b.theme === "infrastructure") ||
-        (a.theme === "games" && b.theme === "creative-tools")
-      );
-      if (linked) {
-        bridges.push({
-          id: `bridge-${a.id}-${b.id}`,
-          from: a.id,
-          to: b.id,
-          type: "affinity",
-          label: "affinité thématique",
-        });
-      }
-    }
+  // 4. Ponts entre îles : les VRAIS liens entre projets (lot W4) — relations
+  //    déclarées, proximité par dépendances, connecteurs partagés — tels que
+  //    les calcule cartographie.mjs. Une arête entre deux projets d'îles
+  //    différentes fait un pont ; les ponts sont agrégés par paire d'îles.
+  //    Remplace trois paires de thèmes codées en dur (« affinité thématique »).
+  const ileDuProjet = new Map();
+  for (const themeId of finalThemes) {
+    for (const p of grouped[themeId] || []) if (p.slug) ileDuProjet.set(p.slug, `island-${themeId}`);
+  }
+  const parPaire = new Map();
+  for (const a of aretes) {
+    const ia = ileDuProjet.get(String(a.de).replace(/~\d+$/, ""));
+    const ib = ileDuProjet.get(String(a.vers).replace(/~\d+$/, ""));
+    if (!ia || !ib || ia === ib) continue;
+    const [from, to] = ia < ib ? [ia, ib] : [ib, ia];
+    const k = `${from}|${to}`;
+    if (!parPaire.has(k)) parPaire.set(k, { from, to, types: {}, liens: [] });
+    const e = parPaire.get(k);
+    e.types[a.type] = (e.types[a.type] || 0) + 1;
+    if (e.liens.length < 20) e.liens.push({ de: a.de, vers: a.vers, type: a.type });
+  }
+  for (const { from, to, types, liens } of parPaire.values()) {
+    const total = Object.values(types).reduce((s, x) => s + x, 0);
+    bridges.push({
+      id: `bridge-${from}-${to}`,
+      from, to,
+      type: "liens",
+      label: Object.entries(types).map(([t, n]) => `${n} ${t}`).join(", "),
+      weight: total,
+      links: liens,
+    });
   }
 
   // 5. Rivers

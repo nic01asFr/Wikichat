@@ -13,8 +13,9 @@ import path from "path";
 import { state, getSessionName } from "./state.mjs";
 import { writeAtomicJSON, AGENTS_DIR } from "./persistence.mjs";
 import { emitEvent } from "./events.mjs";
+import { CHEMINS } from "./chemins.mjs";
 
-const CRON_REGISTRY = path.join(process.cwd(), "crons.json");
+const CRON_REGISTRY = CHEMINS.crons;
 
 // ── Cron persistence ──────────────────────────────────────────────────────────
 

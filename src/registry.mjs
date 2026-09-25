@@ -8,7 +8,8 @@ import path from "path";
 import os from "os";
 import { writeAtomicJSON } from "./persistence.mjs";
 
-export const WIKICHAT_HOME = path.join(os.homedir(), ".wikichat");
+export { WIKICHAT_HOME } from "./chemins.mjs";
+import { WIKICHAT_HOME } from "./chemins.mjs";
 export const REGISTRY_PATH = path.join(WIKICHAT_HOME, "registry.json");
 export const CONFIG_PATH = path.join(WIKICHAT_HOME, "config.json");
 

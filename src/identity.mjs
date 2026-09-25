@@ -14,8 +14,9 @@
 import fs from "fs";
 import path from "path";
 import { writeAtomicJSON, loadSnapshot } from "./persistence.mjs";
+import { CHEMINS } from "./chemins.mjs";
 
-const MEMORIES_FILE = path.join(process.cwd(), ".wikichat", "memories.json");
+const MEMORIES_FILE = CHEMINS.memoires;
 
 /** Map<agentName, { [key]: { value, updatedAt } }> */
 const _memories = new Map();

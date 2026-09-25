@@ -12,6 +12,7 @@ import { scanForProjects } from "../scanner.mjs";
 import { loadRegistry, saveRegistry, mergeProjects, loadConfig } from "../registry.mjs";
 import { collectSnapshot, detectChanges, loadSnapshot, saveSnapshot } from "../snapshot.mjs";
 import { generateMap } from "../map-generator.mjs";
+import { calculerCartographie } from "../cartographie.mjs";
 import { writeAtomicJSON } from "../persistence.mjs";
 
 const CARTOGRAPHY_DIR = path.join(os.homedir(), ".wikichat", "cartography");
@@ -67,7 +68,10 @@ export async function runCartography({ log, share }) {
   log(`[Cartography] ${summary.length} project(s) with significant changes`);
 
   // 4. Generate map
-  const map = generateMap(merged);
+  // Les ponts entre îles sont les vrais liens entre projets (cartographie.mjs).
+  let aretes = [];
+  try { aretes = calculerCartographie({ sansCache: true }).aretes; } catch (err) { log(`[Cartography] liens non calculés : ${err.message}`); }
+  const map = generateMap(merged, { aretes });
   fs.mkdirSync(CARTOGRAPHY_DIR, { recursive: true });
   const mapFile = `${new Date().toISOString().split("T")[0]}.json`;
   const mapPath = path.join(CARTOGRAPHY_DIR, mapFile);

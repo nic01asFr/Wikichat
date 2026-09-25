@@ -16,15 +16,16 @@
  *   - un message remis à son destinataire (hook, poll, /api/inbox) est marqué
  *     lu : le fil le montre à l'expéditeur.
  *
- * Persisté dans `.wikichat/fils.json` (dossier du service), à côté des messages.
+ * Persisté dans `~/.wikichat/fils.json`, à côté des messages.
  */
 
 import fs from "fs";
 import path from "path";
 import { randomBytes } from "crypto";
 import { state } from "./state.mjs";
+import { CHEMINS } from "./chemins.mjs";
 
-const FICHIER = path.join(process.cwd(), ".wikichat", "fils.json");
+const FICHIER = CHEMINS.fils;
 const MAX_FILS = 2000;
 const MAX_MESSAGES_PAR_FIL = 50;
 /** Un DM sans fil désigné rejoint le fil ouvert entre les mêmes personnes s'il a bougé depuis moins de… */

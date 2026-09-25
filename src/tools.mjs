@@ -22,11 +22,11 @@ import { notifyWaiters, registerWaiter } from "./notifier.mjs";
 import {
   saveSnapshot, loadSnapshot, saveProject, loadSpawnRegistry,
   upsertSpawnRegistry, getAgentStoragePath, writeAgentFile,
-  SESSION_STORE, saveIdentityBinding, getIdentityBinding,
+  SESSION_STORE, AGENTS_DIR, saveIdentityBinding, getIdentityBinding,
 } from "./persistence.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
-import { resoudreModePermission, argumentsMcp } from "./lancement.mjs";
+import { resoudreModePermission, argumentsMcp, OUTILS_DE_BASE } from "./lancement.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
@@ -40,6 +40,8 @@ import { rattacherMessage, marquerLus, filsDe, resumerFil } from "./fils.mjs";
 import { lireProjet, racineProjetsAtelier, slugifier } from "./projet-fichiers.mjs";
 import { vueProjet, texteVueProjet } from "./hooks-serveur.mjs";
 import { conversationParNom } from "./conversations.mjs";
+import { absorberCloture, ficheDeCloture, promptCloser } from "./closures.mjs";
+import { chercher as chercherConnaissance, dossierCentral as dossierConnaissance } from "./connaissance.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -566,7 +568,7 @@ export function registerTools(server, sessionId) {
       if (entry?.storage_path) {
         session.storage_path = entry.storage_path;
       } else if (!session.storage_path) {
-        const fallback = path.join(process.cwd(), "agents", name);
+        const fallback = path.join(AGENTS_DIR, name);
         session.storage_path = fallback;
         upsertSpawnRegistry({ name, type: "peer", storage_path: fallback, registered_at: new Date().toISOString() });
       }
@@ -1206,8 +1208,7 @@ export function registerTools(server, sessionId) {
         }
 
         // 2. KB axes: agents mentioned in axis files for this topic
-        const _home = process.env.USERPROFILE || process.env.HOME || "";
-        const KB_DIR = path.join(_home, ".wikichat", "knowledge");
+        const KB_DIR = dossierConnaissance();
         try {
           const matchedAxes = (await import("fs")).default
             .readdirSync(KB_DIR).filter(f => f.replace(/-axis\.md$/, "").includes(tl));
@@ -1683,16 +1684,17 @@ export function registerTools(server, sessionId) {
       const purposeLine = p.purpose ? `\n    🎯 ${p.purpose}` : "";
       return `  • **${p.name}**${p.titre && p.titre !== p.name ? ` (${p.titre})` : ""} — ${p.description}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${active ? ` | 📋 ${active} tâche(s)` : ""}${lifecycleFlag}${axesFlag}${pubFlag}${closedFlag}${purposeLine}${p.status && !p.lifecycle ? `\n    📊 ${p.status}` : ""}`;
     });
-    return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 what_is(projet) pour le détail · set_project_meta() pour enrichir un projet`);
+    return txt(`🗺️ ${state.projects.size} projet(s):\n\n${lines.join("\n\n")}\n\n💡 project_state(projet) pour le détail · set_project_meta() pour enrichir un projet`);
   });
 
   server.tool(
     "close_project",
-    "Clôturer un projet : capture documentation/livrables/rétro/capitalisation, marque status='closed', broadcast un artifact de clôture sur #library pour absorption par le Librarian. " +
-    "Si auto=true (défaut), spawne un agent Closer headless qui lit l'état du projet + artefacts et remplit les sections manquantes. " +
+    "Clôturer un projet (déclaré, du registre, ou à fichiers : ETAT.md, docs/decisions/, .atelier/projet.json) : documentation, livrables, rétro, capitalisation ; " +
+    "la clôture est gardée dans l'état du projet, rangée en fiche de connaissance (~/.wikichat/knowledge/closure-<projet>.md, retrouvée par search_knowledge) et publiée sur #library. " +
+    "Si auto=true (défaut), lance un Closer headless dans le dossier du projet, qui lit ses fichiers et rappelle close_project(auto=false). " +
     "Sinon, fournir directement les 4 sections via le paramètre `closure`.",
     {
-      project: z.string().describe("Nom du projet (clé dans state.projects)"),
+      project: z.string().describe("Nom ou slug du projet : déclaré, au registre, ou projet à fichiers (ETAT.md, docs/decisions/, .atelier/projet.json)"),
       auto: z.boolean().default(true).describe("Si true, spawne un agent Closer pour rédiger les sections. Sinon utilise `closure` directement."),
       closure: z.object({
         documentation: z.string().describe("Ce qui est documenté, où le trouver"),
@@ -1700,37 +1702,47 @@ export function registerTools(server, sessionId) {
         retro: z.string().describe("Ce qui a marché, ce qui n'a pas marché, leçons"),
         capitalisation: z.string().describe("Ce qui est réutilisable ailleurs (patterns, snippets, décisions transférables)"),
       }).optional(),
-      repo_path: z.string().optional().describe("Chemin du repo si auto=true (sinon process.cwd())"),
+      repo_path: z.string().optional().describe("Dossier du projet (défaut : registre, puis racine des projets de l'Atelier)"),
     },
     async ({ project, auto, closure, repo_path }) => {
       const name = getSessionName(sessionId);
-      const proj = state.projects.get(project);
-      if (!proj) return txt(`❌ Projet "${project}" introuvable. Liste avec list_projects().`);
-      if (proj.closure) return txt(`⚠️ Projet "${project}" déjà clôturé le ${new Date(proj.closure.closedAt).toLocaleDateString("fr-FR")} par ${proj.closure.closedBy}.\n💡 Pour ré-ouvrir, édite manuellement projects/${project}.json.`);
+      // Projet déclaré (state.projects), sinon projet « à fichiers » ou du
+      // registre : on lui donne une fiche wikichat pour y garder la clôture.
+      let proj = state.projects.get(project)
+        || [...state.projects.values()].find(p => p.slug && p.slug === slugifier(project));
+      let racine = repo_path || null;
+      if (!proj) {
+        racine = racine || racineDuProjet(project, name);
+        if (!racine) return txt(`❌ Projet "${project}" introuvable (ni déclaré, ni au registre, ni sous ${racineProjetsAtelier()}). Liste avec list_projects().`);
+        const vue = lireProjet(racine);
+        const slug = vue?.slug || slugifier(project);
+        proj = state.projects.get(slug) || {
+          name: slug, slug, repo: racine, description: vue?.description || vue?.titre || "",
+          tasks: new Map(), decisions: [], open_questions: [], blockers: [], closure: null,
+          createdBy: name, createdAt: new Date(),
+        };
+        state.projects.set(proj.name, proj);
+      }
+      racine = racine || proj.repo || racineDuProjet(proj.name, name);
+      if (proj.closure) return txt(`⚠️ Projet "${proj.name}" déjà clôturé le ${new Date(proj.closure.closedAt).toLocaleDateString("fr-FR")} par ${proj.closure.closedBy}.\n💡 Fiche : ${proj.closure.fiche || ficheDeCloture(proj)}. Pour rouvrir, retirer « closure » de .wikichat/project-state.json du projet (ou de ~/.wikichat/projects/${proj.name}.json).`);
 
-      // Mode auto : spawn Closer headless qui audite et remplit les 4 sections.
+      // Mode auto : un Closer headless lit le projet et rappelle close_project(auto=false).
       if (auto && !closure) {
-        const repo = repo_path || process.cwd();
-        const closerPrompt =
-          `Tu es Closer, agent de clôture WikiChat. Lis docs/roles/closer.md.\n\n` +
-          `MISSION : produire un artifact de clôture pour le projet "${project}".\n\n` +
-          `BOUCLE :\n` +
-          `1. Ton identité (Closer-${project.slice(0,12)}) est portée par ta connexion : pas de register.\n` +
-          `2. Lis projects/${project}.json (tasks, decisions, blockers, open_questions)\n` +
-          `3. Lis .wikichat/artifacts/ (artefacts produits pendant le projet)\n` +
-          `4. Produis 4 sections dans un seul artifact markdown :\n` +
-          `   ## Documentation\n   ## Livrables\n   ## Rétrospective\n   ## Capitalisation\n` +
-          `5. share_artifact(channel="library", title="Closure: ${project}", artifact_type="text", content=<les 4 sections>)\n` +
-          `6. Appelle close_project(project="${project}", auto=false, closure={ documentation, deliverables, retro, capitalisation })\n` +
-          `7. Sors.`;
+        if (!racine || !fs.existsSync(racine)) return txt(`❌ Dossier du projet "${proj.name}" inconnu : passe repo_path.`);
+        const closerPrompt = promptCloser({ projet: proj.name, racine });
+        const nomCloser = `Closer-${proj.name.slice(0, 12)}`;
         const ticketId = randomUUID().slice(0, 8);
         state.spawnTickets.set(ticketId, {
-          id: ticketId, name: `Closer-${project.slice(0,12)}`, mode: "headless", repo,
+          id: ticketId, name: nomCloser, mode: "headless", repo: racine,
           spawnedBy: name, spawnerId: sessionId,
           status: "running", createdAt: new Date(),
           completedAt: null, result: null,
         });
-        spawnHeadless(repo, closerPrompt, { name: `Closer-${project.slice(0,12)}`, role: "closer", spawnedBy: name }).then(res => {
+        spawnHeadless(racine, closerPrompt, {
+          name: nomCloser, role: "closer", spawnedBy: name,
+          // Lecture du projet et de son historique ; aucune écriture hors .wikichat/.
+          allowedTools: [...OUTILS_DE_BASE, "Read", "Glob", "Grep", "Bash(git log:*)", "Bash(git status:*)"],
+        }).then(res => {
           const t = state.spawnTickets.get(ticketId);
           if (t) {
             t.status = res.success ? "completed" : "failed";
@@ -1739,9 +1751,9 @@ export function registerTools(server, sessionId) {
           }
           notify("__tickets__", null);
         }).catch(() => {});
-        sysMsg("coordination", `🏁 ${name} déclenche la clôture de "${project}" — Closer spawné (ticket ${ticketId}).`);
+        sysMsg("coordination", `🏁 ${name} déclenche la clôture de "${proj.name}" — Closer lancé (ticket ${ticketId}).`);
         notify("coordination", sessionId);
-        return txt(`🏁 Clôture lancée pour "${project}".\n🤖 Closer headless spawné (ticket ${ticketId}).\n📋 Le Closer va auditer le projet, produire un artifact sur #library, et rappeler close_project(auto=false) pour persister la clôture.\n💡 Rien à surveiller : la clôture arrive sur #library et ton hook te la livrera.`);
+        return txt(`🏁 Clôture lancée pour "${proj.name}".\n🤖 Closer headless lancé dans ${racine} (ticket ${ticketId}).\n📋 Il lit ETAT.md, docs/decisions/, .wikichat/ et l'historique git, puis rappelle close_project(auto=false) : la clôture est alors gardée, rangée en fiche de connaissance et publiée sur #library.`);
       }
 
       // Mode manuel : closure fournie directement.
@@ -1756,16 +1768,23 @@ export function registerTools(server, sessionId) {
         closedAt: new Date().toISOString(),
       };
       proj.status = "closed";
+      proj.lifecycle = "closed";
+      if (racine && !proj.repo) proj.repo = racine;
       proj.updatedAt = new Date();
       proj.updatedBy = name;
-      trackAgentOnProject(sessionId, project, "close");
+      trackAgentOnProject(sessionId, proj.name, "close");
       saveProject(proj);
+
+      // Absorption par le code : la clôture devient une fiche de connaissance,
+      // retrouvée par search_knowledge sans attendre aucun agent.
+      let fiche = null;
+      try { fiche = absorberCloture(proj); } catch (err) { console.warn(`[close_project] fiche non écrite : ${err.message}`); }
 
       // Capitalisation distante : publie le snapshot mémoire si configuré
       // (WIKICHAT_MEMORY_REPO). Non-bloquant — la clôture n'attend pas le push.
-      triggerMemoryPublish(`close_project:${project}`);
+      triggerMemoryPublish(`close_project:${proj.name}`);
 
-      // Broadcast sur #library pour que le Librarian absorbe la capitalisation.
+      // Publication sur #library : l'intégration dans un axe (Librarian-Absorber) peut s'y brancher.
       if (!state.channels.has("library")) {
         state.channels.set("library", { name: "library", description: "Knowledge base et closures de projets", createdBy: "system", createdAt: new Date() });
       }
@@ -1774,7 +1793,7 @@ export function registerTools(server, sessionId) {
         from: sessionId, fromName: name,
         channel: "library",
         content:
-          `📎 Closure: ${project}\n${"─".repeat(40)}\n` +
+          `📎 Closure: ${proj.name}\n${"─".repeat(40)}\n` +
           `## Documentation\n${closure.documentation}\n\n` +
           `## Livrables\n${closure.deliverables}\n\n` +
           `## Rétrospective\n${closure.retro}\n\n` +
@@ -1785,9 +1804,9 @@ export function registerTools(server, sessionId) {
       });
       notify("library", sessionId);
 
-      sysMsg("coordination", `🏁 ${name} a clôturé le projet "${project}".`);
+      sysMsg("coordination", `🏁 ${name} a clôturé le projet "${proj.name}".`);
       notify("coordination", sessionId);
-      return txt(`🏁 Projet "${project}" clôturé.\n📚 Closure persistée dans projects/${project}.json.\n📡 Artifact partagé sur #library — le Librarian l'absorbera dans la KB transverse au prochain digest.`);
+      return txt(`🏁 Projet "${proj.name}" clôturé.\n📚 Clôture gardée dans l'état du projet (.wikichat/project-state.json, ou ~/.wikichat/projects/ sans dépôt).\n🔖 Fiche de connaissance : ${fiche || "non écrite (voir le journal)"} — retrouvée par search_knowledge.\n📡 Publiée sur #library.`);
     }
   );
 
@@ -2012,92 +2031,22 @@ export function registerTools(server, sessionId) {
       limit: z.number().default(5).describe("Top-K résultats à retourner"),
     },
     async ({ query, scope, limit }) => {
-      const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-      if (terms.length === 0) return txt("⚠️ Query vide ou trop courte.");
-
-      const candidates = [];
-      const seenPaths = new Set(); // dedup by absolute path (e.g. project="home" with path=~ collides with central)
-      const addCandidate = (source, p) => {
-        let abs;
-        try { abs = fs.realpathSync(p); } catch { abs = path.resolve(p); }
-        if (seenPaths.has(abs)) return;
-        seenPaths.add(abs);
-        candidates.push({ source, path: abs });
-      };
-      // 1. Central knowledge dir
-      const homeDir = process.env.USERPROFILE || process.env.HOME || ".";
-      const centralDir = path.join(homeDir, ".wikichat", "knowledge");
-      if (scope === "central" || scope === "all") {
-        try {
-          for (const entry of fs.readdirSync(centralDir, { withFileTypes: true })) {
-            if (entry.isFile() && entry.name.endsWith(".md")) {
-              addCandidate("central", path.join(centralDir, entry.name));
-            }
-          }
-        } catch { /* central dir absent */ }
-      }
-      // 2. Per-project knowledge dirs (via registry)
-      if (scope === "projects" || scope === "all") {
-        try {
-          const reg = loadRegistry();
-          for (const p of reg.projects) {
-            if (!p.path) continue;
-            const projKb = path.join(p.path, ".wikichat", "knowledge");
-            try {
-              for (const entry of fs.readdirSync(projKb, { withFileTypes: true })) {
-                if (entry.isFile() && entry.name.endsWith(".md")) {
-                  addCandidate(p.slug || p.name, path.join(projKb, entry.name));
-                }
-              }
-            } catch { /* project has no knowledge/ */ }
-          }
-        } catch { /* registry empty */ }
-      }
-
-      if (candidates.length === 0) return txt(`📭 Aucun fichier de connaissance trouvé (scope=${scope}).\n💡 Vérifier ~/.wikichat/knowledge/ ou les .wikichat/knowledge/ des projets du registry.`);
-
-      // 3. Score each candidate
-      const results = [];
-      for (const c of candidates) {
-        let content;
-        try { content = fs.readFileSync(c.path, "utf8"); } catch { continue; }
-        const lower = content.toLowerCase();
-        // Extract title (first H1 or filename)
-        const titleMatch = content.match(/^#\s+(.+)$/m);
-        const title = titleMatch ? titleMatch[1].trim() : path.basename(c.path, ".md");
-        // Score
-        let score = 0;
-        const headers = [...content.matchAll(/^#{1,3}\s+(.+)$/gm)].map(m => m[1].toLowerCase());
-        for (const term of terms) {
-          // Title weight ×3
-          if (title.toLowerCase().includes(term)) score += 3;
-          // Headers weight ×2
-          for (const h of headers) if (h.includes(term)) score += 2;
-          // Body weight ×1 (count occurrences, capped to 10 per term to avoid spam)
-          const matches = lower.split(term).length - 1;
-          score += Math.min(matches, 10);
-        }
-        if (score === 0) continue;
-        // Build excerpt around first match
-        let excerptStart = -1;
-        for (const term of terms) {
-          const idx = lower.indexOf(term);
-          if (idx >= 0 && (excerptStart < 0 || idx < excerptStart)) excerptStart = idx;
-        }
-        const excerptFrom = Math.max(0, excerptStart - 80);
-        const excerpt = content.slice(excerptFrom, excerptFrom + 280).replace(/\s+/g, " ").trim();
-        results.push({ source: c.source, path: c.path, title, score, excerpt });
-      }
-
-      results.sort((a, b) => b.score - a.score);
-      const top = results.slice(0, limit);
-
-      if (top.length === 0) return txt(`🔍 Aucun match pour "${query}" (scope=${scope}, ${candidates.length} fichier(s) scannés).`);
-
-      const lines = top.map((r, i) =>
-        `**${i + 1}. ${r.title}** (score=${r.score})\n   📁 [${r.source}] ${r.path}\n   📄 …${r.excerpt}…`
+      // Un seul lecteur (connaissance.mjs), le même que GET /api/knowledge et
+      // la ressource wikichat://kb/{topic}.
+      if (query.toLowerCase().split(/\s+/).filter(t => t.length > 1).length === 0) return txt("⚠️ Query vide ou trop courte.");
+      const r = chercherConnaissance(query, { portee: scope, limite: limit });
+      if (r.fichiers === 0) return txt(`📭 Aucun fichier de connaissance trouvé (scope=${scope}).
+💡 Vérifier ~/.wikichat/knowledge/ ou les .wikichat/knowledge/ des projets du registry.`);
+      if (r.resultats.length === 0) return txt(`🔍 Aucun match pour "${query}" (scope=${scope}, ${r.fichiers} fichier(s) scannés).`);
+      const lines = r.resultats.map((x, i) =>
+        `**${i + 1}. ${x.titre}** (score=${x.score})
+   📁 [${x.source}] ${x.chemin}
+   🔖 wikichat://kb/${x.sujet}
+   📄 …${x.extrait}…`
       );
-      return txt(`🔍 ${top.length}/${results.length} match(s) pour "${query}" (${candidates.length} fichier(s) KB scannés) :\n\n${lines.join("\n\n")}`);
+      return txt(`🔍 ${r.resultats.length}/${r.total} match(s) pour "${query}" (${r.fichiers} fichier(s) KB scannés) :
+
+${lines.join("\n\n")}`);
     }
   );
 
@@ -3036,11 +2985,16 @@ export function registerTools(server, sessionId) {
     }
   );
 
+  /** Adresse du Pilote, là où la personne arme un trigger. */
+  function urlPilote() { return `http://127.0.0.1:${process.env.PORT || 3777}/pilote`; }
+
   // ══ ROUTINES (Phase 6) ══════════════════════════════════════════════════════
 
   server.tool(
     "register_routine",
-    "Enregistre un workflow nommé multi-étapes (spawn, broadcast, wait, summarize, sleep). Idempotent par run_key. Persisté.",
+    "Enregistre un workflow nommé multi-étapes (spawn, broadcast, wait, summarize, sleep, job). " +
+    "L'étape job appelle directement une fonction JS, sans agent : {action:\"job\", params:{job:\"run_cartography\"|\"run_clustering\"|\"harmonize_ideas\"|\"audit_all_projects\"|\"scan_changes\"|\"absorb_closures\", args?}}. " +
+    "Une action inconnue est refusée. Idempotent par run_key. Persisté.",
     {
       id: z.string().describe("Identifiant stable de la routine"),
       description: z.string().optional(),
@@ -3114,22 +3068,28 @@ export function registerTools(server, sessionId) {
     "Enregistre un trigger qui exécutera une action quand son événement survient. " +
     "Types : cron (schedule cron), lifecycle (au boot), file_watch (chokidar sur paths), " +
     "mention (@Name dans message), channel_match (regex sur message d'un canal), webhook (POST endpoint). " +
-    "Actions : spawn_session, broadcast, run_routine. Persisté dans ~/.wikichat/triggers.json.",
+    "Actions : spawn_session, broadcast, run_routine, job (fonction JS sans agent : run_cartography, run_clustering, harmonize_ideas, audit_all_projects, scan_changes, absorb_closures). " +
+    "Persisté dans ~/.wikichat/triggers.json. Un trigger créé ici naît DÉSACTIVÉ (décision J-b) : la personne l'active depuis le Pilote. Plafond par défaut : 24 actions par jour.",
     {
       id: z.string().optional().describe("ID stable (sinon UUID auto)"),
       type: z.enum(["cron", "lifecycle", "file_watch", "mention", "channel_match", "webhook"]).describe("Type d'événement"),
       config: z.any().optional().describe("Config spécifique : cron→{schedule}, file_watch→{paths,debounce_ms,depth}, mention→{target_name}, channel_match→{channel,pattern,flags}"),
-      action_type: z.enum(["spawn_session", "broadcast", "run_routine"]).describe("Type d'action à exécuter"),
-      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast, {id} pour run_routine)"),
+      action_type: z.enum(["spawn_session", "broadcast", "run_routine", "job"]).describe("Type d'action à exécuter"),
+      action_params: z.any().optional().describe("Paramètres de l'action (ex: {channel, content} pour broadcast, {id} pour run_routine, {job, args?} pour job)"),
       cooldown_s: z.number().optional().describe("Délai minimum entre 2 fires (défaut 30s)"),
-      max_per_day: z.number().optional().describe("Cap quotidien (défaut 100)"),
+      max_per_day: z.number().optional().describe("Cap quotidien d'actions abouties (défaut 24)"),
       description: z.string().optional(),
     },
     async ({ action_type, action_params, ...rest }) => {
       try {
-        const spec = { ...rest, action: { type: action_type, params: action_params || {} } };
+        // Décision J-b : une tâche automatique créée par un agent naît
+        // désactivée — y compris quand elle en remplace une active. Seule la
+        // personne l'arme (Pilote) ; le code du service (réveil, équipe) et
+        // le Pilote passent par registerTrigger directement, pas par cet outil.
+        const spec = { ...rest, enabled: false, action: { type: action_type, params: action_params || {} } };
         const t = registerTrigger(spec);
-        return txt(`✅ Trigger "${t.id}" enregistré (${t.type}, ${t.enabled ? "actif" : "inactif"}).`);
+        return txt(`✅ Trigger "${t.id}" enregistré (${t.type}), DÉSACTIVÉ : un trigger créé par un agent naît désactivé (décision J-b).\n` +
+          `👉 Pour l'activer : Pilote, ${urlPilote()} (bouton de l'agent, ou POST /pilote/api/agent/${t.id}/toggle). Plafond : ${t.max_per_day} action(s) abouties par jour.`);
       } catch (err) {
         return txt(`❌ Échec: ${err.message}`);
       }
@@ -3144,7 +3104,7 @@ export function registerTools(server, sessionId) {
       const ts = listTriggers();
       if (ts.length === 0) return txt("(aucun trigger enregistré)");
       const lines = ts.map(t => {
-        const cap = t.max_per_day ?? 100;
+        const cap = t.max_per_day ?? 24;
         const aboutis = t.success_count ?? 0;
         // Un trigger au plafond ne fait plus rien, et rien ne le disait : il
         // affichait seulement son nombre de tirs, en vert, comme un trigger

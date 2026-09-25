@@ -7,6 +7,7 @@
  * d'approbation (lit .wikichat/proposed-actions.json déposé par les agents).
  */
 
+import { DEPOT } from "./chemins.mjs";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -21,7 +22,7 @@ import { spawnHeadless } from "./sampler.mjs";
 // ── Page ────────────────────────────────────────────────────────────────────
 export function handlePilotePage(_req, res) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(readFileSync(join(process.cwd(), "public", "pilote.html")));
+  res.end(readFileSync(join(DEPOT, "public", "pilote.html")));
 }
 
 // Espace de travail neutre de l'architecte (évite de polluer le repo courant).
@@ -456,7 +457,9 @@ export function handlePiloteToggle(req, res) {
   const t = getTrigger(id);
   if (!t) return res.status(404).json({ ok: false, error: "trigger introuvable" });
   const ok = setEnabled(id, !(t.enabled !== false));
-  res.json({ ok, enabled: !(t.enabled !== false) });
+  // État APRÈS bascule (setEnabled a déjà mis t.enabled à jour ; la réponse
+  // donnait l'état inverse).
+  res.json({ ok, enabled: t.enabled !== false });
 }
 
 export async function handlePiloteFire(req, res) {

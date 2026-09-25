@@ -148,15 +148,20 @@ section("Triggers");
 const TRIG = `__e2e_trig_${SUFFIX}`;
 // Bug réel : register_trigger stockait la config en chaîne JSON sans la parser,
 // donc config.pattern valait undefined et un channel_match matchait TOUT.
-await alice.call("register_trigger", {
+const reponseTrig = await alice.call("register_trigger", {
   id: TRIG, type: "channel_match",
   config: { channel: `e2e-${SUFFIX}`, pattern: "MOTIF_UNIQUE_E2E", flags: "i" },
   action_type: "broadcast",
   action_params: { channel: `e2e-${SUFFIX}`, content: "trigger e2e déclenché" },
   cooldown_s: 0, max_per_day: 10,
 });
+// Décision J-b : un trigger créé par un agent naît désactivé, et la réponse
+// dit où l'activer. C'est la personne qui l'arme, depuis le Pilote.
+const listeInactif = await alice.call("list_triggers", {});
+check("un trigger créé par un agent naît désactivé", new RegExp(`⚫ ${TRIG}`).test(listeInactif) && /DÉSACTIVÉ/.test(reponseTrig) && /pilote/i.test(reponseTrig), reponseTrig.slice(0, 120));
+await fetch(`${SERVER_URL}/pilote/api/agent/${encodeURIComponent(TRIG)}/toggle`, { method: "POST" });
 const listeTrig = await alice.call("list_triggers", {});
-check("le trigger est enregistré et actif", new RegExp(`🟢 ${TRIG}`).test(listeTrig));
+check("le trigger est actif une fois armé depuis le Pilote", new RegExp(`🟢 ${TRIG}`).test(listeTrig));
 
 await alice.call("send_message", { channel: `e2e-${SUFFIX}`, content: "ceci contient MOTIF_UNIQUE_E2E" });
 await new Promise(r => setTimeout(r, 1500));

@@ -5,6 +5,9 @@
  * an action (typically spawn_session). Triggers are persisted to
  * ~/.wikichat/triggers.json and survive restarts.
  *
+ * Actions : spawn_session, broadcast, run_routine, job (fonction JS du
+ * catalogue src/jobs/index.mjs, sans agent).
+ *
  * Supported types in this initial cut:
  *   - cron       : node-cron schedule
  *   - lifecycle  : fires once at server boot if condition met
@@ -14,7 +17,7 @@
  *
  * Safety contract:
  *   - cooldown_s prevents rapid re-firing
- *   - max_per_day caps fires within 24h window
+ *   - max_per_day caps fires within 24h window (défaut 24, décision J-b)
  *   - pre-flight checkBudget() refuses spawns when over WIKICHAT_MAX_SESSIONS
  *   - idempotent spawn: refuses if a session with the same name is alive
  *   - WIKICHAT_TRIGGERS_DISABLED=1 disables the whole engine
@@ -30,6 +33,13 @@ import { writeAtomicJSON } from "./persistence.mjs";
 import { state, sysMsg, pushMessage } from "./state.mjs";
 import { isActive, onWake } from "./dormant.mjs";
 import { recall, knownAgentNames } from "./identity.mjs";
+import { executerJob, nomDuJob } from "./jobs/index.mjs";
+
+/**
+ * Plafond quotidien par défaut (décision J-b) : 24 actions abouties par jour.
+ * Un trigger sans plafond déclaré en avait 100.
+ */
+export const MAX_PAR_JOUR_DEFAUT = 24;
 
 const TRIGGERS_FILE = path.join(os.homedir(), ".wikichat", "triggers.json");
 
@@ -49,6 +59,8 @@ let _spawnFn = null;
 let _budgetCheckFn = null;
 /** Optional routine runner — set by configureTriggers if available. */
 let _routineFn = null;
+/** Optional predicate: does this routine only run code (no agent)? */
+let _routineEstDuCodeFn = null;
 
 let _saveTimer = null;
 function _saveDebounced() {
@@ -72,10 +84,25 @@ function _isDisabled() {
  *   spawnFn: (params) => Promise<{ success, ... }>  — handles spawn_session action
  *   budgetCheckFn: () => null | { error, current, max }
  */
-export function configureTriggers({ spawnFn, budgetCheckFn, routineFn }) {
+export function configureTriggers({ spawnFn, budgetCheckFn, routineFn, routineEstDuCodeFn }) {
   _spawnFn = spawnFn || null;
   _budgetCheckFn = budgetCheckFn || null;
   _routineFn = routineFn || null;
+  _routineEstDuCodeFn = routineEstDuCodeFn || null;
+}
+
+/**
+ * Vrai si l'action du trigger ne lance aucun agent : un job, un message, ou une
+ * routine faite seulement de code. Décision J-c : la porte dormante ne vaut que
+ * pour ce qui lance un agent ; les contrôles en code tournent même la nuit.
+ */
+export function actionEstDuCode(t) {
+  const type = t?.action?.type;
+  if (type === "job" || type === "broadcast") return true;
+  if (type === "run_routine" && _routineEstDuCodeFn) {
+    try { return !!_routineEstDuCodeFn(t.action.params?.id); } catch { return false; }
+  }
+  return false;
 }
 
 // ── Rattrapage des crons manqués pendant le sommeil ──────────────────────────
@@ -213,6 +240,9 @@ function _asObject(v) {
 export function registerTrigger(spec) {
   const id = spec.id || randomUUID().slice(0, 8);
   const action = spec.action ? { ...spec.action, params: _asObject(spec.action.params) } : spec.action;
+  if (action?.type === "job" && !nomDuJob(action.params?.job ?? action.params?.name)) {
+    throw new Error(`job "${action.params?.job ?? action.params?.name}" inconnu`);
+  }
   const trigger = {
     id,
     type: spec.type,
@@ -220,7 +250,7 @@ export function registerTrigger(spec) {
     action,
     enabled: spec.enabled !== false,
     cooldown_s: spec.cooldown_s ?? 30,
-    max_per_day: spec.max_per_day ?? 100,
+    max_per_day: spec.max_per_day ?? MAX_PAR_JOUR_DEFAUT,
     last_fired: null,
     fire_count: 0,
     created_at: new Date().toISOString(),
@@ -294,15 +324,25 @@ export async function fireTrigger(id, { force = false, source = "manual", messag
   const t = _triggers.get(id);
   if (!t) return { ok: false, reason: "not_found" };
   if (!force && _isDisabled()) return { ok: false, reason: "engine_disabled" };
-  if (!force && !isActive()) return { ok: false, reason: "dormant" };
+  if (!force && !isActive() && !actionEstDuCode(t)) return { ok: false, reason: "dormant" };
   if (!force && !_quotaOk(t)) return { ok: false, reason: "quota" };
   if (!force && _onCooldown(t)) return { ok: false, reason: "cooldown" };
 
   const result = await _runAction(t, source, message);
   t.last_fired = new Date().toISOString();
   t.fire_count = (t.fire_count || 0) + 1;
-  if (result.ok) t.success_count = (t.success_count ?? 0) + 1;
-  else t.last_refusal = result.reason || "inconnue";
+  if (result.ok) {
+    t.success_count = (t.success_count ?? 0) + 1;
+    // Un refus d'hier ne doit pas rester affiché sur un trigger qui marche
+    // (inventaire W6 : « dernier refus : inconnue » sur des agents sains).
+    delete t.last_refusal;
+    delete t.last_refusal_detail;
+  } else {
+    t.last_refusal = result.reason || (result.detail?.stderr ? "echec_lancement" : "inconnue");
+    const detail = typeof result.detail === "string" ? result.detail : (result.detail?.stderr || result.detail?.error || "");
+    if (detail) t.last_refusal_detail = String(detail).slice(0, 300);
+  }
+  t.last_ok = !!result.ok;
   _saveDebounced();
   return { ok: result.ok, reason: result.reason, detail: result.detail };
 }
@@ -470,7 +510,7 @@ function _onCooldown(t) {
  */
 function _quotaOk(t) {
   if (!t.last_fired) return true;
-  const cap = t.max_per_day ?? 100;
+  const cap = t.max_per_day ?? MAX_PAR_JOUR_DEFAUT;
   const aboutis = t.success_count ?? 0;
   if (aboutis >= cap) {
     // Fenêtre glissante : 24 h après le dernier tir, le compteur repart.
@@ -507,13 +547,24 @@ async function _runAction(t, source, message = null) {
     });
     return { ok: true };
   }
+  if (action.type === "job") {
+    // Appel direct d'une fonction JS (cartographie, clustering, audits…) : ni
+    // agent, ni budget de sessions.
+    try {
+      const res = await executerJob(action.params?.job ?? action.params?.name, action.params?.args || {});
+      return { ok: true, detail: res };
+    } catch (err) {
+      return { ok: false, reason: "job_echoue", detail: err.message };
+    }
+  }
   if (action.type === "run_routine") {
     if (!_routineFn) return { ok: false, reason: "routine_runner_not_configured" };
     try {
       const res = await _routineFn(action.params?.id, action.params?.params || {}, {
         spawnedBy: `trigger:${t.id}:${source}`,
       });
-      return { ok: !res.error && res.status !== "failed", detail: res };
+      const ok = !res.error && res.status !== "failed";
+      return ok ? { ok, detail: res } : { ok, reason: "routine_echouee", detail: res.error || "échec" };
     } catch (err) {
       return { ok: false, reason: "routine_threw", detail: err.message };
     }
@@ -631,7 +682,7 @@ async function _runSpawnAction(t, params, source, message = null) {
     const result = await _spawnFn({ ...params, bypassAutorise: true, spawnedBy: `trigger:${t.id}:${source}` });
     sysMsg("coordination",
       `🔔 [trigger ${t.id}] ${result?.success ? "✅" : "❌"} spawn "${params.name}" (${params.mode || "headless"})`);
-    return { ok: !!result?.success, detail: result };
+    return result?.success ? { ok: true, detail: result } : { ok: false, reason: "echec_lancement", detail: result?.stderr || result?.error || "échec" };
   } catch (err) {
     return { ok: false, reason: "spawn_threw", detail: err.message };
   }

@@ -7,16 +7,19 @@ import fs from "fs";
 import path from "path";
 import { state } from "./state.mjs";
 import { getSessionName } from "./state.mjs";
+import { CHEMINS } from "./chemins.mjs";
 
-export const SESSION_STORE = path.join(process.cwd(), "sessions");
-export const PROJECT_STORE = path.join(process.cwd(), "projects");
-export const SPAWN_REGISTRY = path.join(process.cwd(), "spawn_registry.json");
-export const AGENTS_DIR = path.join(process.cwd(), "agents");
-export const CHANNELS_FILE = path.join(process.cwd(), ".wikichat", "channels.json");
-export const MESSAGES_FILE = path.join(process.cwd(), ".wikichat", "messages.json");
+// Toutes les données sous ~/.wikichat (lot W2) : plus rien ne dépend du
+// dossier de lancement. Les anciennes données sont reprises par migration.mjs.
+export const SESSION_STORE = CHEMINS.sessions;
+export const PROJECT_STORE = CHEMINS.projets;
+export const SPAWN_REGISTRY = CHEMINS.registreLancements;
+export const AGENTS_DIR = CHEMINS.agents;
+export const CHANNELS_FILE = CHEMINS.canaux;
+export const MESSAGES_FILE = CHEMINS.messages;
 
 // Ensure dirs exist
-for (const dir of [SESSION_STORE, PROJECT_STORE, AGENTS_DIR, path.join(process.cwd(), ".wikichat")]) {
+for (const dir of [SESSION_STORE, PROJECT_STORE, AGENTS_DIR, CHEMINS.racine]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -252,11 +255,17 @@ export function loadProjects() {
   // 2. Fallback : central PROJECT_STORE for projects without a local file
   //    (legacy data + projects without a real repo path on disk).
   try {
-    for (const f of fs.readdirSync(PROJECT_STORE).filter(f => f.endsWith(".json"))) {
-      const data = JSON.parse(fs.readFileSync(path.join(PROJECT_STORE, f), "utf8"));
-      if (state.projects.has(data.name)) continue; // already loaded from local
-      data.tasks = new Map(Object.entries(data.tasks || {}));
-      state.projects.set(data.name, data);
+    // Le dossier est partagé avec l'injecteur (`projects/<slug>/wikichat.json`) :
+    // seuls les fichiers `<nom>.json` sont des projets, et un fichier abîmé
+    // n'empêche pas de lire les autres.
+    for (const entree of fs.readdirSync(PROJECT_STORE, { withFileTypes: true })) {
+      if (!entree.isFile() || !entree.name.endsWith(".json")) continue;
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(PROJECT_STORE, entree.name), "utf8"));
+        if (!data?.name || state.projects.has(data.name)) continue; // already loaded from local
+        data.tasks = new Map(Object.entries(data.tasks || {}));
+        state.projects.set(data.name, data);
+      } catch { /* fichier illisible : ignoré */ }
     }
   } catch { /* ignore */ }
 }

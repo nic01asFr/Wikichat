@@ -32,11 +32,11 @@ import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/reg
 import { injectProject, pickupQueue, readLocalArtifacts } from "./src/injector.mjs";
 import { spawnHeadless, spawnDaemon, sampleSession, triggerProjectAgent, currentLoad, checkBudget, quotaSnapshot, getMaxSpawnDepth } from "./src/sampler.mjs";
 import { configureTriggers, loadTriggers, ensureWakeTrigger, runLifecycleTriggers, shutdownTriggers, notifyMessageForTriggers, fireWebhook, startCronCatchup } from "./src/triggers.mjs";
-import { configureRoutines, loadRoutines, runRoutine } from "./src/routines.mjs";
-import { bootstrapAutonomousTeam } from "./src/team-bootstrap.mjs";
+import { configureRoutines, loadRoutines, runRoutine, routineEstDuCode } from "./src/routines.mjs";
+import { bootstrapAutonomousTeam, reparerRoutinesEquipe } from "./src/team-bootstrap.mjs";
 import { reconcileDaemonsAtBoot, shutdownDaemons, fullCleanup } from "./src/daemon-lifecycle.mjs";
 import { startDormantWatch, status as dormantStatus, setManualOverride, isActive, onWake, onSleep } from "./src/dormant.mjs";
-import { scanForChanges } from "./src/snapshot.mjs";
+import { executerJob } from "./src/jobs/index.mjs";
 import { emitEvent } from "./src/events.mjs";
 import { ensureUserOverlay } from "./src/overlay-installer.mjs";
 import { chargerConversations, flushConversations, getConversation, estGenerique, declarerDebut } from "./src/conversations.mjs";
@@ -45,6 +45,10 @@ import { enregistrerRoutesHooks } from "./src/hooks-serveur.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
 import { auditProject, auditMany } from "./src/repo-audit.mjs";
 import { runHarmonizer, formatHarmonizerSummary } from "./src/harmonizer.mjs";
+import { migrerDonnees } from "./src/migration.mjs";
+import { calculerCartographie, TYPES_ARETES } from "./src/cartographie.mjs";
+import { chercher as chercherConnaissance, indexFiches, lireFiche } from "./src/connaissance.mjs";
+import { DEPOT } from "./src/chemins.mjs";
 
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -54,6 +58,11 @@ import { runHarmonizer, formatHarmonizerSummary } from "./src/harmonizer.mjs";
 // naturally. Idempotent — skips if already installed. Disable via
 // WIKICHAT_NO_OVERLAY_INSTALL=1.
 ensureUserOverlay();
+
+// Lot W2 : les données vivent sous ~/.wikichat. Celles qu'une version
+// antérieure a laissées sous le dossier de lancement (ou le dépôt) sont
+// reprises une fois, par copie et fusion — rien n'est effacé à la source.
+migrerDonnees({ sources: [process.cwd(), DEPOT] });
 
 loadChannels();   // Restore persisted channels
 loadMessages();   // Restore recent messages
@@ -154,6 +163,7 @@ configureTriggers({
   },
   budgetCheckFn: checkBudget,
   routineFn: (id, params, opts) => runRoutine(id, params, opts),
+  routineEstDuCodeFn: (id) => routineEstDuCode(id),
 });
 
 // Phase 6 PR6 — start dormant gate watcher + wire wake/sleep callbacks.
@@ -173,6 +183,9 @@ onSleep(() => {
 startPiloteCatchup();
 startDormantWatch();
 
+// Lot W3 : les routines d'équipe déjà enregistrées passent aux jobs directs.
+const _routinesReparees = reparerRoutinesEquipe();
+if (_routinesReparees.length) console.log(`[WikiChat] Routines d'équipe mises à jour (jobs sans agent) : ${_routinesReparees.join(", ")}`);
 const teamResult = bootstrapAutonomousTeam();
 if (teamResult.provisioned > 0) {
   console.log(`[WikiChat] Autonomous team: ${teamResult.provisioned}/${teamResult.total} triggers provisioned`);
@@ -354,26 +367,11 @@ setInterval(async () => {
     }
   } catch { /* */ }
 
-  // Project change detection — scan all projects for git/file changes (0 tokens)
+  // Project change detection — scan all projects for git/file changes (0 tokens).
+  // Même fonction que le job « scan_changes » (src/jobs/index.mjs).
   try {
-    const registry = loadRegistry();
-    const projects = (registry.projects || []).filter(p => p.status !== "missing" && p.path);
-    const changed = await scanForChanges(projects);
-    if (changed.length > 0) {
-      // Un événement par changement, pas un message par projet : les triggers
-      // matchent sur un type précis (`[event:commits`), pas sur un résumé
-      // multi-lignes où plusieurs types se mélangeraient.
-      for (const { project, changes } of changed) {
-        if (changes.type === "new") {
-          emitEvent("new-project", `${project.name} — premier snapshot`, { project: project.name });
-          continue;
-        }
-        for (const c of (changes.changes || [])) {
-          emitEvent(c.type, `${project.name} — ${c.detail}`, { project: project.name });
-        }
-      }
-      console.log(`[WikiChat] Change detection: ${changed.length} project(s) changed`);
-    }
+    const r = await executerJob("scan_changes");
+    if (r.projets_changes > 0) console.log(`[WikiChat] Change detection: ${r.projets_changes} project(s) changed`);
   } catch (e) {
     console.error("[WikiChat] Change detection error:", e.message);
   }
@@ -1122,48 +1120,49 @@ app.get("/api/projects/:slug/wikichat/context", async (req, res) => {
   }
 });
 
-// List knowledge bases (global ~/.wikichat/knowledge/)
-app.get("/api/knowledge", async (_req, res) => {
+// Graphe des projets (lot W4) — contrat : docs/cartographie-contrat.md.
+// Consommé par l'Atelier pour assembler la carte (/api/carte).
+app.get("/api/cartographie", (req, res) => {
   try {
-    const dir = join(GLOBAL_WIKICHAT, "knowledge");
-    const topics = await readdir(dir).catch(() => []);
-    const bases = await Promise.all(topics.map(async (topic) => {
-      const topicDir = join(dir, topic);
-      const s = await stat(topicDir).catch(() => null);
-      if (!s?.isDirectory()) return null;
-
-      const files = await readdir(topicDir).catch(() => []);
-      let summary = "";
-      if (files.includes("kb.md")) {
-        const kbPath = join(topicDir, "kb.md");
-        const content = await readFile(kbPath, "utf8").catch(() => "");
-        summary = content.split("\n").slice(0, 3).join(" ").slice(0, 200);
-      }
-      return { topic, files, summary, path: topicDir, modified: s.mtime };
-    }));
-    res.json({ knowledgeBases: bases.filter(Boolean) });
+    const liens = req.query.liens
+      ? String(req.query.liens).split(",").map(s => s.trim()).filter(t => TYPES_ARETES.includes(t))
+      : TYPES_ARETES;
+    const seuil = req.query.seuil !== undefined && !isNaN(parseFloat(req.query.seuil)) ? parseFloat(req.query.seuil) : 0.2;
+    res.json(calculerCartographie({ absents: req.query.absents === "1", liens, seuil }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Read a specific knowledge base file
-app.get("/api/knowledge/:topic/:file", async (req, res) => {
+// Connaissance : le même lecteur que search_knowledge et wikichat://kb/{topic}
+// (src/connaissance.mjs). Fiches à plat dans ~/.wikichat/knowledge/*.md et
+// <projet>/.wikichat/knowledge/*.md.
+//   GET /api/knowledge                 index { fiches: [{ sujet, source, titre, resume, modifie, taille }] }
+//   GET /api/knowledge?q=…&limite=5    recherche { resultats: [...] }
+//   GET /api/knowledge/:sujet          une fiche centrale (texte markdown)
+//   GET /api/knowledge/:projet/:nom    une fiche de projet
+app.get("/api/knowledge", (req, res) => {
   try {
-    const fp = join(GLOBAL_WIKICHAT, "knowledge", req.params.topic, req.params.file);
-    // Guard against path traversal
-    const base = join(GLOBAL_WIKICHAT, "knowledge");
-    if (!fp.startsWith(base)) return res.status(403).json({ error: "Forbidden" });
-
-    const content = await readFile(fp, "utf8");
-    if (extname(req.params.file) === ".json") {
-      try { return res.json(JSON.parse(content)); } catch { /* fall through */ }
+    const portee = ["central", "projects", "all"].includes(req.query.portee) ? req.query.portee : "all";
+    if (req.query.q) {
+      const r = chercherConnaissance(String(req.query.q), { portee, limite: Math.min(parseInt(req.query.limite) || 5, 50) });
+      return res.json({ requete: String(req.query.q), portee, fichiers: r.fichiers, total: r.total, resultats: r.resultats });
     }
-    res.type("text/plain").send(content);
+    const fiches = indexFiches({ portee });
+    res.json({ portee, total: fiches.length, fiches });
   } catch (e) {
-    res.status(404).json({ error: "File not found" });
+    res.status(500).json({ error: e.message });
   }
 });
+
+function envoyerFiche(res, sujet) {
+  const f = lireFiche(sujet);
+  if (!f) return res.status(404).json({ error: `Fiche "${sujet}" introuvable` });
+  res.set("X-Wikichat-Source", f.source);
+  res.type("text/markdown").send(f.texte);
+}
+app.get("/api/knowledge/:sujet", (req, res) => envoyerFiche(res, req.params.sujet));
+app.get("/api/knowledge/:projet/:nom", (req, res) => envoyerFiche(res, `${req.params.projet}/${req.params.nom}`));
 
 
 // Global artifacts (wikichat project itself)
