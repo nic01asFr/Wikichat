@@ -176,6 +176,22 @@ export function fusionnerHooks(settings, voulus) {
   return JSON.stringify(settings.hooks) !== avant;
 }
 
+/**
+ * Fichier réellement écrit pour `p` : sa cible si `p` est un lien (même
+ * pendant, cible pas encore créée), sinon `p`. Suit une chaîne de liens.
+ */
+export function cibleReelle(p) {
+  try { return fs.realpathSync(p); } catch { /* absent, ou lien pendant */ }
+  let courant = p;
+  for (let i = 0; i < 20; i++) {
+    let st;
+    try { st = fs.lstatSync(courant); } catch { return courant; }
+    if (!st.isSymbolicLink()) return courant;
+    courant = path.resolve(path.dirname(courant), fs.readlinkSync(courant));
+  }
+  return courant;
+}
+
 export function ensureHooks(log = console.log) {
   const settingsPath = path.join(USER_CLAUDE_DIR, "settings.json");
   const scriptHook = path.resolve(__dirname, "..", "scripts", "wikichat-hook.mjs");
@@ -189,9 +205,15 @@ export function ensureHooks(log = console.log) {
     const reveil = reveilDisponible();
     if (!fusionnerHooks(settings, hooksVoulus(scriptHook, { reveil }))) return "already-present";
     fs.mkdirSync(USER_CLAUDE_DIR, { recursive: true });
-    const tmp = settingsPath + ".wikichat-tmp";
+    // Écriture À TRAVERS le lien : sur le pod, ~/.claude/settings.json est un
+    // lien vers ~/work/.claude/settings.json (volume durable). Renommer le
+    // temporaire sur le lien le remplaçait par un fichier ordinaire, sur la
+    // couche éphémère : les réglages suivants n'atteignaient plus le volume.
+    const cible = cibleReelle(settingsPath);
+    fs.mkdirSync(path.dirname(cible), { recursive: true });
+    const tmp = cible + ".wikichat-tmp";
     fs.writeFileSync(tmp, JSON.stringify(settings, null, 2));
-    fs.renameSync(tmp, settingsPath);
+    fs.renameSync(tmp, cible);
     log(`[overlay] hooks wikichat posés (SessionStart, UserPromptSubmit, Stop${reveil ? " + guetteur" : ""}, SessionEnd)`);
     return "installed";
   } catch (err) {
