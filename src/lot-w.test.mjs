@@ -450,7 +450,13 @@ test("serveur J-b : register_trigger par un agent — désactivé, où l'activer
   const r = await c.appel("register_trigger", { id: "jb-test", type: "cron", config: { schedule: "0 3 * * *" }, action_type: "job", action_params: { job: "run_clustering" } });
   assert.match(r, /DÉSACTIVÉ/);
   assert.match(r, /\/pilote/);
-  const t = lire(path.join(WS, "triggers.json"))["jb-test"] ?? (await attendre(1500), lire(path.join(WS, "triggers.json"))["jb-test"]);
+  // triggers.json est écrit avec une seconde de délai : on l'attend (3 s au plus).
+  let t = null;
+  for (let i = 0; i < 30 && !t; i++) {
+    try { t = lire(path.join(WS, "triggers.json"))["jb-test"] || null; } catch { /* pas encore écrit */ }
+    if (!t) await attendre(100);
+  }
+  assert.ok(t, "triggers.json ne contient pas jb-test après 3 s");
   assert.equal(t.enabled, false);
   assert.equal(t.max_per_day, 24);
   // La personne l'arme depuis le Pilote.
