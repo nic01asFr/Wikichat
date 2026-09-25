@@ -205,8 +205,9 @@ Garde-fous :
 - pas dans un agent lancé par wikichat en `-p` (inutile : tué à la fin) ;
 - installé seulement si le binaire connaît `asyncRewake`
   (`claude --version` ≥ 2.1.250, ou `WIKICHAT_HOOK_REVEIL=1`) : une version
-  ancienne l'ignorerait ou refuserait le réglage. **À vérifier sur le pod
-  (2.1.281) avant de s'y fier** ;
+  ancienne l'ignorerait ou refuserait le réglage. Le binaire du pod (2.1.281)
+  contient bien le champ (9 occurrences dans le binaire) ; le **réveil réel
+  d'une session VS Code inactive reste à constater** sur le pod (§10) ;
 - désactivable : `WIKICHAT_HOOK_REVEIL=0`.
 
 ### 4.5 SessionEnd
@@ -338,5 +339,43 @@ Lecture mise en cache par date de modification ; aucune écriture.
 
 ## 10. Implémentation et mesures
 
-Voir `docs/atelier-coherence.md` §10 (implémentation, tests, mesures) et §8
-(mise à jour du pod).
+| Fichier | Rôle |
+|---|---|
+| `scripts/wikichat-hook.mjs` | le hook, un seul script, mince (transmet, imprime, se tait en cas d'échec) |
+| `scripts/wikichat-mailbox-hook.mjs` | ancien hook Stop : délègue à `wikichat-hook.mjs stop` (réglages non migrés) |
+| `src/hooks-serveur.mjs` | décisions des hooks, routes `/api/hooks/*`, `/api/conversations`, `/api/fils`, `/api/projets/etat` |
+| `src/conversations.mjs` | identité par conversation, alias, présence, rattachement des connexions MCP |
+| `src/fils.mjs` | fils, débiteur, échéance, accusés de lecture (`.wikichat/fils.json`) |
+| `src/projet-fichiers.mjs` | lecture de `projet.json`, `ETAT.md`, `docs/decisions/` (cache par date) |
+| `src/overlay-installer.mjs` | fusion des hooks dans `~/.claude/settings.json` ; bloc CLAUDE.md et skill v3 |
+| `src/tools.mjs` | `send_message(thread, reply_by_seconds)`, `list_threads`, `project_state`, `add_project_note` éphémère, `list_projects` dérivé |
+| `server.mjs` | `?agent=atelier` ne fait plus foi ; `?claude_session=` / `x-wikichat-claude-session` → nom de la conversation |
+| `src/faux-claude.mjs`, `src/hooks.test.mjs` | faux Claude Code qui lance les hooks installés ; 16 cas bout en bout |
+
+Mesures (`npm run test:hooks`, poste Windows, node 22, serveur isolé) :
+
+| Cas | Hook | Latence totale | Injecté |
+|---|---|---|---|
+| VS Code, démarrage (projet avec ETAT.md et 2 décisions) | SessionStart | 140-165 ms (580 ms au tout premier lancement de node, cache froid) | 538 car. |
+| Terminal, démarrage (+ présents) | SessionStart | 119-139 ms | 611 car. |
+| Tour de l'Atelier, reprise sans nouveauté | SessionStart | 125-146 ms | **0** |
+| Compaction | SessionStart | 132-141 ms | 658 car. |
+| Prompt, un message reçu | UserPromptSubmit | 131-160 ms | 218 car. |
+| Prompt, rien de neuf | UserPromptSubmit | 119-143 ms | **0** |
+| Prompt, ETAT.md modifié par un autre | UserPromptSubmit | 128-146 ms | 95 car. |
+| Fin de tour, message pour info | Stop | 143-161 ms | **0** (pas de relance) |
+| Fin de tour, réponse attendue | Stop | 126-167 ms | 438 car. + `systemMessage` |
+| Réveil par le guetteur après envoi | Stop asyncRewake | 21-23 ms entre l'envoi et la sortie en code 2 | 336 car. |
+| Fin de session | SessionEnd | 136-172 ms | 0 |
+| Serveur absent | UserPromptSubmit | 106-139 ms, code 0, rien | 0 |
+| Traitement serveur seul | session-start / prompt / stop | 2,4 / 3,7 / 0,1 ms (5-8 ms aller-retour HTTP) | — |
+
+Presque toute la latence est le démarrage de node (~100-130 ms) ; le travail
+de wikichat est de l'ordre de la milliseconde. Sur le pod (node 18, Linux), le
+démarrage est comparable ; à mesurer au déploiement.
+
+Reste à constater sur le pod, avec le vrai binaire : SessionStart dans
+l'extension VS Code, `systemMessage` d'une relance `Stop` dans le flux
+stream-json d'un tour de l'Atelier, réveil d'une session VS Code inactive par
+le guetteur (`asyncRewake`), et `CLAUDE_CODE_SESSION_ID` reçu par le pont stdio.
+Déploiement : `docs/atelier-coherence.md` §8.

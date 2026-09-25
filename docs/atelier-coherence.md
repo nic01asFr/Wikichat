@@ -189,6 +189,50 @@ Aucune valeur n'est journalisée.
    du §4) dans l'environnement du service, une fois le point du §4 réglé côté
    Atelier.
 
+### 8 bis. Hooks, suivi de projet, fils (§10)
+
+Constaté le 25/09 : `~/work/wikichat/src` est déjà sur `atelier-coherence`
+(`9138bd0`), node 18.19, `claude` 2.1.281 (le binaire contient
+`asyncRewake`) ; `~/.claude/settings.json` porte `Stop` =
+`wikichat-mailbox-hook.mjs` et `SessionEnd` = `atelier-figer-le-travail.sh`.
+
+1. `cd ~/work/wikichat/src && git pull --ff-only origin atelier-coherence`
+   (aucune dépendance ajoutée : `npm ci` inutile).
+2. Redémarrer wikichat **depuis `~/work/wikichat/src`**. Au démarrage,
+   l'installateur fusionne les hooks dans `~/.claude/settings.json` :
+   `SessionStart`, `UserPromptSubmit`, `Stop` (+ guetteur `asyncRewake`,
+   la version ≥ 2.1.250 étant détectée par `~/work/bin/claude --version`),
+   `SessionEnd` ; l'entrée `wikichat-mailbox-hook.mjs` est retirée,
+   `atelier-figer-le-travail.sh` reste en tête de `SessionEnd`. La skill passe
+   en version 3 (ancienne en `.bak`), le bloc de `~/.claude/CLAUDE.md` est
+   rafraîchi. Sans redémarrage, `node scripts/install-claude-overlay.mjs` fait
+   la même chose. Si l'Atelier réécrit `settings.json` ensuite, il doit garder
+   ces entrées (contrat, `hooks-et-dialogue.md` §8).
+3. Vérifier `jq .hooks ~/.claude/settings.json` : une entrée
+   `wikichat-hook.mjs` par événement, rien d'autre de modifié.
+4. Constater sur le vrai binaire (non vérifiable hors du pod) :
+   - VS Code : ouvrir une conversation dans `~/work/projects/<projet>` →
+     `curl -s 127.0.0.1:3777/api/conversations/<session>` donne
+     `<slug>-<id6>`, `surface: vscode` ; le premier tour voit l'identité ;
+   - même conversation dans l'Atelier → **même nom** ;
+   - un tour de l'Atelier qui reçoit un message `expects_reply` : la relance
+     est accompagnée d'un `systemMessage` dans le flux stream-json (l'Atelier
+     doit l'afficher) ; `WIKICHAT_STOP_ATELIER=jamais` dans l'environnement du
+     service interdit ces relances ;
+   - une session VS Code inactive reçoit un message `expects_reply` → elle se
+     réveille (guetteur). Sinon : `WIKICHAT_HOOK_REVEIL=0` et redémarrage ;
+   - `/api/projets/etat?cwd=~/work/projects/<projet>` pour un projet doté
+     d'`ETAT.md`.
+5. Variables utiles (environnement du service) : `WIKICHAT_HOOK_MAX_RELAYS`
+   (3), `WIKICHAT_HOOK_WAIT_MS` (0 ; l'ancienne attente de 45 s si on la
+   remet), `WIKICHAT_HOOK_REVEIL` (détection), `WIKICHAT_REVEIL_ATELIER`
+   (0), `WIKICHAT_STOP_ATELIER`, `WIKICHAT_NOMS_GENERIQUES` (`atelier`),
+   `WIKICHAT_ATELIER_PROJETS` (`~/work/projects`),
+   `WIKICHAT_FIL_SUITE_MS` (30 min).
+6. Retour arrière : `git checkout 9138bd0`, redémarrer, puis remettre à la
+   main l'entrée `Stop` = `wikichat-mailbox-hook.mjs` (qui, dans la nouvelle
+   version, délègue de toute façon au hook unifié).
+
 ## 9. Points ouverts
 
 - **Priorité entre deux `wikichat` de même nom** (portée utilisateur
@@ -203,3 +247,28 @@ Aucune valeur n'est journalisée.
 - Le mode `interactive` de `spawn_session` (Windows) écrit encore
   `.claude/settings.local.json` et `.claude/CLAUDE.md` dans le projet ; hors
   du périmètre de ce lot, à reprendre au lot E.
+
+## 10. Hooks, suivi de projet et dialogue direct
+
+Conception, contrat avec l'Atelier et mesures : `docs/hooks-et-dialogue.md`.
+En bref :
+
+- un script de hook (`scripts/wikichat-hook.mjs`) pour `SessionStart`,
+  `UserPromptSubmit`, `Stop` (+ guetteur `asyncRewake`), `SessionEnd` ; les
+  décisions sont côté serveur (`src/hooks-serveur.mjs`) ; rien d'injecté quand
+  rien n'est neuf ; échec silencieux ;
+- **identité par conversation** (`src/conversations.mjs`) : `WIKICHAT_AGENT`,
+  sinon `<slug>-<session[:6]>` (formule de l'Atelier) ; `atelier` n'est plus
+  une identité ; alias quand l'Atelier renomme ; une connexion MCP qui porte
+  la conversation (`?claude_session=`, pont stdio) prend ce nom ;
+- `Stop` ne relance que pour une réponse attendue, sans attente, 3 fois au
+  plus, avec `systemMessage` ;
+- **suivi de projet lu dans les fichiers** (`src/projet-fichiers.mjs`) :
+  `project_state`, `/api/projets/etat`, `list_projects` ; `add_project_note`
+  devient de la coordination éphémère dans un projet qui a ses fichiers ;
+- **fils** (`src/fils.mjs`) : débiteur, échéance, lectures ; `list_threads`,
+  `/api/fils`, `send_message(thread, reply_by_seconds)`.
+
+Tests : `npm run test:hooks` (16 cas, dont un faux Claude Code qui lance les
+hooks réellement installés), `npm run test:lancement` (32), `npm test` (32,
+serveur isolé).

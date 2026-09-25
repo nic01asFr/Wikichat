@@ -33,7 +33,7 @@ node scripts/uninstall-service.mjs  # désinstaller
 
 Cycle de vie automatique :
 1. **Allumage machine** → service démarré, dormant (0% CPU, triggers cron schedulés mais ne firent pas)
-2. **Tu ouvres Claude Code** → register de toi-même → `dormant_gate` s'ouvre → les triggers deviennent armés
+2. **Tu ouvres Claude Code** → le hook `SessionStart` déclare la conversation (identité dérivée, voir `docs/hooks-et-dialogue.md`) → `dormant_gate` s'ouvre → les triggers deviennent armés
 3. **Un événement survient** (commit, artefact, mention) → un agent headless est spawné, agit, et sort
 4. **Tu fermes Claude Code** → 5min grace period → idle gate kicks in → 0% CPU
 
