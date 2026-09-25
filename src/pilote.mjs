@@ -259,30 +259,50 @@ function triggerToAgent(t, registry, now) {
   // On affiche la sélection lisible (serveurs), pas les dizaines de tokens granulaires.
   const scopeSel = (Array.isArray(p.servers) && p.servers.length) ? p.servers
     : (Array.isArray(p.allowedTools) ? p.allowedTools : []);
-  const scoped = Array.isArray(p.servers) && p.servers.length; // créé avec le split lecture/écriture
+  // Le libellé disait « lecture seule » de tout outil MCP dès qu'un agent
+  // avait une sélection — y compris de `remember` ou `add_project_note`, qui
+  // écrivent. Une fausse assurance à l'écran est pire que pas d'indication :
+  // on dit maintenant ce que la sélection garantit vraiment.
+  const permission = (n) => {
+    if (n.indexOf("mcp__") !== 0) return "intégré";
+    if (MCP_TOOL_SCOPES[n]) return "lecture seule";
+    // mcp__serveur__outil : l'agent n'a que cet outil-là, quoi qu'il fasse.
+    return n.split("__").length >= 3 ? "outil nommé" : "accès complet";
+  };
   const tools = scopeSel.length
     ? scopeSel.map((n) => ({
         name: n.indexOf("mcp__") === 0 ? n.replace(/^mcp__/, "").replace(/^claude_ai_/, "") : n,
-        perm: n.indexOf("mcp__") === 0 ? (scoped ? "lecture seule" : "accès complet") : "intégré"
+        perm: permission(n)
       }))
     : [{ name: "hérités du dossier", perm: ".mcp.json" }];
 
+  // Vingt lignes suffisaient à l'affichage — mais le formulaire d'édition se
+  // remplit depuis ce même champ, et le renvoie tel quel : toute retouche
+  // d'un agent amputait donc sa mission de ce qui dépassait, sans un mot.
+  // La consigne part entière ; le plafond n'est là que contre l'aberration.
   const mission = String(p.initial_task || p.prompt || "(mission définie dans la SOP du dossier)")
-    .split("\n").map((s) => s).slice(0, 20);
+    .split(String.fromCharCode(10)).slice(0, 400);
 
   const history = spawns.slice(0, 6).map((e) => {
     let text = "run · " + (e.status || "?");
     if (e.status === "done") text = "run terminé · OK";
     else if (e.status === "failed") text = "run échoué · exit " + (e.exit_code != null ? e.exit_code : "?");
     else if (e.status === "timeout") text = "run interrompu · timeout";
+    // Un run qui épuise ses tours sort avec le code 0 : il se lisait « OK »
+    // alors qu'il s'était arrêté au milieu, sans avoir rien rapporté.
+    else if (e.status === "max_turns") text = "run coupé · plafond de tours atteint";
     else if (e.status === "error") text = "run en erreur";
     else if (e.status === "starting" || e.status === "running") text = "en cours…";
-    return { date: fmtDate(e.spawned_at), text, err: ((e.exit_code && e.exit_code !== 0) || e.status === "error" || e.status === "timeout") ? 1 : 0 };
+    const rate = e.status === "error" || e.status === "timeout" || e.status === "max_turns";
+    return { date: fmtDate(e.spawned_at), text, err: ((e.exit_code && e.exit_code !== 0) || rate) ? 1 : 0 };
   });
 
   return {
     id: t.id,
     real: true,
+    // Nature de l'agent : "platform" pour ceux qui entretiennent l'Atelier
+    // lui-meme (savoir, cartographie), vide pour un agent de travail.
+    kind: p.kind || "",
     name: p.name || t.description || t.id,
     desc: t.description || (p.role || "Agent planifié"),
     base: running ? "actif" : "veille",
@@ -299,7 +319,10 @@ function triggerToAgent(t, registry, now) {
     scope: {
       dir: dir || "—",
       mode: p.mode || "headless",
-      tools
+      tools,
+      // Sélection brute telle qu'elle a été enregistrée : nécessaire pour
+      // rééditer un agent sans reconstruire ses outils depuis des noms nettoyés.
+      servers: Array.isArray(p.servers) ? p.servers : []
     },
     memory: {
       session: (lastWithSession && (lastWithSession.claude_session_id || lastWithSession.session_id)) || "—",
@@ -339,11 +362,29 @@ export function handlePiloteData(_req, res) {
     });
   } catch { /* */ }
 
+  // Declencheurs que la plateforme installe elle-meme : ils ne se creent pas
+  // depuis l'interface, mais ils agissent. Les taire rendrait leurs effets
+  // inexplicables — une session qui demarre sans qu'on sache pourquoi.
+  let systemAgents = [];
+  try {
+    systemAgents = listTriggers().filter((t) => !isPiloteTrigger(t)).map((t) => ({
+      id: t.id,
+      name: (t.action && t.action.params && t.action.params.name) || t.description || t.id,
+      description: t.description || "",
+      type: t.type || "",
+      enabled: t.enabled !== false,
+      fired: t.fire_count || 0,
+      lastFired: t.last_fired || null,
+      action: (t.action && t.action.type) || ""
+    }));
+  } catch { systemAgents = []; }
+
   const paused = readPause().paused;
   res.json({
     active: safeActive(),
     daemon: { armed, total: agents.length, wake: humanNext(wakeDate, now), wakeAgent, paused },
-    agents
+    agents,
+    system_agents: systemAgents
   });
 }
 
@@ -454,6 +495,7 @@ export function handlePiloteCreate(req, res) {
           repo_path: b.dir || "",
           name,
           role: b.desc || "",
+          kind: String(b.kind || ""),
           mode: "headless",
           model: b.model || "sonnet",
           servers: tools,                // sélection coarse — source pour l'applicateur
@@ -611,6 +653,28 @@ function findSessionFile(sessionId) {
   return null;
 }
 
+// Ce qu'un outil a rendu, tel qu'on peut le montrer.
+//
+// Le fil ne disait que « résultat » : le contenu était jeté ici même, si bien
+// qu'on voyait qu'un agent avait appelé un outil sans jamais savoir ce qu'il
+// en avait obtenu — la seule chose qu'on cherche en relisant son travail.
+//
+// Claude écrit ce retour tantôt d'une pièce, tantôt en blocs. On accepte les
+// deux, et on borne : un fil de discussion n'a pas à porter un dump entier.
+const SORTIE_MAX = 600;
+
+function sortieOutil(bloc) {
+  const c = bloc && bloc.content;
+  let texte = "";
+  if (typeof c === "string") texte = c;
+  else if (Array.isArray(c)) {
+    texte = c.filter((x) => x && x.type === "text" && x.text).map((x) => x.text).join("\n");
+  }
+  texte = String(texte || "").trim();
+  if (!texte) return "résultat";
+  return texte.length > SORTIE_MAX ? texte.slice(0, SORTIE_MAX) + " […]" : texte;
+}
+
 export function handlePiloteTranscript(req, res) {
   const t = getTrigger(req.params.id);
   if (!t) return res.status(404).json({ ok: false, error: "trigger introuvable" });
@@ -636,7 +700,7 @@ export function handlePiloteTranscript(req, res) {
       else if (Array.isArray(c)) {
         text = c.map((b) => b && b.type === "text" ? b.text
           : (b && b.type === "tool_use" ? "→ " + b.name
-          : (b && b.type === "tool_result" ? "← résultat" : ""))).filter(Boolean).join("\n");
+          : (b && b.type === "tool_result" ? "← " + sortieOutil(b) : ""))).filter(Boolean).join("\n");
       }
       text = String(text || "").trim();
       if (text) turns.push({ role, text: text.slice(0, 1200) });
