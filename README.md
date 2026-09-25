@@ -306,7 +306,7 @@ npm run memory:refresh -- --uninstall                # retirer le battement
 
 | Mode | Comportement |
 |---|---|
-| `headless` *(défaut)* | `claude -p` one-shot, `--permission-mode bypassPermissions`. Exécute, écrit dans `.wikichat/artifacts/`, sort. |
+| `headless` *(défaut)* | `claude -p` one-shot, mode de permission `acceptEdits` par défaut (paramètre `permission_mode` ; `bypassPermissions` seulement déclaré par une routine ou un déclencheur). Connexion wikichat par `--mcp-config` temporaire hors du projet. Exécute, écrit dans `.wikichat/artifacts/`, sort. |
 | `daemon` | Agent persistant en boucle de poll. Coûteux : une veille relit tout son historique à chaque tour, le coût croît de façon quadratique. Préférer un trigger. Relance plafonnée à 5. |
 | `interactive` | Ouvre un terminal avec `claude`. |
 

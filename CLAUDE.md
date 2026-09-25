@@ -155,7 +155,7 @@ that woke it.
 
 ## Agent Spawning Modes
 
-- **headless** (default): `claude -p` one-shot with `--mcp-config` + `--permission-mode bypassPermissions`. Executes task, writes to `.wikichat/artifacts/`, exits.
+- **headless** (default): `claude -p` one-shot. `--permission-mode` comes from the routine / trigger / spawn parameter (default `acceptEdits`; `bypassPermissions` only when a routine or trigger definition declares it). wikichat's own connection goes through `--mcp-config` of a temporary file outside the project (never the project's `.mcp.json`, never `--strict-mcp-config`). Secrets are sourced from `~/work/.secrets/claude-env.sh` when present. See `docs/atelier-coherence.md`.
 - **daemon**: Persistent agent looping on poll_messages. Expensive — a poll loop re-reads its whole history each turn, so cost grows quadratically. Prefer a trigger. Auto-respawn capped at 5.
 - **interactive**: Opens a terminal window with `claude` in interactive mode.
 
@@ -201,7 +201,7 @@ exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 
 - **Event-first**: les détecteurs JS publient sur #insights, les triggers spawnent à la demande — aucun agent ne veille
 - **Un mécanisme, pas un par cas**: un seul trigger de réveil pour toutes les identités, un seul curseur de boîte partagé par le hook et `poll`. Chaque fois qu'un mécanisme a été dupliqué par agent, les nouveaux agents n'en ont pas hérité.
-- **MCP-first preamble**: headless agents register() immediately, use MCP tools for all communication, local artifacts as backup
+- **MCP-first preamble**: spawned agents get their identity from the connection (`?agent=`), do not call register(), use MCP tools for all communication, local artifacts as backup
 - **Channel count cache**: O(1) via Map, updated in pushMessage/eviction
 - **Spawn registry**: cached in-memory with 2s debounced disk writes
 - **Atomic writes**: tmp file + rename pattern everywhere
