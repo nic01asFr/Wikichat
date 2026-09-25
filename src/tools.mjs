@@ -26,6 +26,7 @@ import {
 } from "./persistence.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
+import { resoudreModePermission, argumentsMcp } from "./lancement.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
 import { registerRoutine, listRoutines, deleteRoutine, runRoutine } from "./routines.mjs";
@@ -442,7 +443,7 @@ export function registerTools(server, sessionId) {
 
   server.tool(
     "register",
-    "S'enregistrer avec un nom identifiable. Chaque session DOIT s'enregistrer en début de conversation. Si tu connais ton claude_session_id (ex: $CLAUDE_SESSION_ID), passe-le pour permettre une reprise via --resume au prochain spawn daemon.",
+    "Donner un nom à une session ANONYME. L'identité est normalement portée par la connexion (WIKICHAT_AGENT / ?agent=, ou nom dérivé de la conversation) : n'appelle pas register pour te présenter. Seulement si get_briefing te montre anonyme (session-…) et qu'un nom t'a été donné. claude_session_id optionnel : wikichat mémorise déjà la session des agents qu'il lance.",
     {
       name: z.string().describe("Nom d'affichage unique (ex: 'Alice', 'Backend-Dev', 'Reviewer')"),
       role: z.string().optional().describe("Rôle (ex: 'développeur', 'reviewer', 'architecte')"),
@@ -1597,7 +1598,7 @@ export function registerTools(server, sessionId) {
           `Tu es Closer, agent de clôture WikiChat. Lis docs/roles/closer.md.\n\n` +
           `MISSION : produire un artifact de clôture pour le projet "${project}".\n\n` +
           `BOUCLE :\n` +
-          `1. register(name="Closer-${project.slice(0,12)}", role="closer", agent_type="headless")\n` +
+          `1. Ton identité (Closer-${project.slice(0,12)}) est portée par ta connexion : pas de register.\n` +
           `2. Lis projects/${project}.json (tasks, decisions, blockers, open_questions)\n` +
           `3. Lis .wikichat/artifacts/ (artefacts produits pendant le projet)\n` +
           `4. Produis 4 sections dans un seul artifact markdown :\n` +
@@ -1797,8 +1798,8 @@ export function registerTools(server, sessionId) {
           } else {
             // resume_only or fresh : both headless. resume_only passes resumeSessionId.
             const prompt = mode === "resume_only"
-              ? `Tu reprends ta session sur le projet "${project}". register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, relève avec poll() et sors s'il n'y a rien.`
-              : `Tu rejoins le projet "${project}" (déjà contribué auparavant). register(name="${n}"${e.role ? `, role="${e.role}"` : ""}). Brièvement : list_projects() pour récupérer le contexte, poll() pour les messages en attente, puis sors s'il n'y a rien d'urgent.`;
+              ? `Tu reprends ta session sur le projet "${project}" (identité "${n}" portée par ta connexion). Lis #${project.toLowerCase().replace(/\s+/g, "-")} pour les dernières updates. Si tu reprends une tâche en cours, continue. Sinon, relève avec poll() et sors s'il n'y a rien.`
+              : `Tu rejoins le projet "${project}" (déjà contribué auparavant ; identité "${n}" portée par ta connexion). Brièvement : list_projects() pour récupérer le contexte, poll() pour les messages en attente, puis sors s'il n'y a rien d'urgent.`;
             // Fire-and-forget — don't block on the headless spawn
             spawnHeadless(repoPath, prompt, {
               name: n, role: e.role || "agent",
@@ -2377,7 +2378,7 @@ export function registerTools(server, sessionId) {
               || (() => { const e = loadSpawnRegistry().find(x => x.name === pResolved); return stripWk(e?.storage_path); })()
               || (() => { for (const p of state.projects.values()) { const a = p.agents?.[pResolved]; if (a?.repo_path) return a.repo_path; } return null; })();
             if (pRepo && fs.existsSync(pRepo)) {
-              const spawnPrompt = `📨 ${senderName} t'invite sur #${channelSlug} :\n\n${message}\n\nregister(name="${pResolved}") puis poste sur #${channelSlug} via send_message(channel="${channelSlug}", ..., status="over").`;
+              const spawnPrompt = `📨 ${senderName} t'invite sur #${channelSlug} :\n\n${message}\n\nTu es "${pResolved}" (identité portée par ta connexion). Poste sur #${channelSlug} via send_message(channel="${channelSlug}", ..., status="over").`;
               spawnHeadless(pRepo, spawnPrompt, { name: pResolved, role: pLive?.role || "agent", port: parseInt(process.env.PORT || "3777"), spawnedBy: senderName, resumeSessionId: csid || null }).catch(() => {});
               results.push(`  🔁 ${pResolved} (offline) — spawn ${csid ? "--resume" : "frais"}`);
             } else {
@@ -2429,7 +2430,7 @@ export function registerTools(server, sessionId) {
             || stripWk0(live?.storage_path)
             || (() => { const e = loadSpawnRegistry().find(x => x.name === name); return stripWk0(e?.storage_path); })();
           if (repo0 && fs.existsSync(repo0)) {
-            const wakePrompt = `📨 ${senderName} t'a déposé un message dans ta maison #${targetHome} :\n\n${message}\n\nTu es "${name}". ${csid0 ? "Reprends ta session — garde ton contexte. " : ""}register(name="${name}") si besoin, lis via poll(), réponds via send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over").`;
+            const wakePrompt = `📨 ${senderName} t'a déposé un message dans ta maison #${targetHome} :\n\n${message}\n\nTu es "${name}". ${csid0 ? "Reprends ta session — garde ton contexte. " : ""}Lis via poll(), réponds via send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over").`;
             spawnHeadless(repo0, wakePrompt, { name, role: live?.role || "agent", port: parseInt(process.env.PORT || "3777"), spawnedBy: senderName, resumeSessionId: csid0 || null }).catch(() => {});
             wakeNote = `\n🔁 Réveil ${csid0 ? "--resume" : "frais"} lancé (wake=true).`;
           } else {
@@ -2481,7 +2482,7 @@ export function registerTools(server, sessionId) {
       const prompt =
         `📨 Message direct de ${senderName} (via WikiChat) :\n\n${message}\n\n` +
         `Tu es "${name}". ${csid ? "Tu reprends ta session précédente — garde ton contexte. " : ""}` +
-        `register(name="${name}") si tu n'es pas déjà enregistré, puis réponds à ${senderName} via ` +
+        `Ton identité est portée par ta connexion. Réponds à ${senderName} via ` +
         `send_message(channel="@${senderName}"${expects_reply ? ", expects_reply=true" : ""}, status="over"). ` +
         `Si rien à ajouter, send_message(..., status="done").`;
 
@@ -2531,8 +2532,10 @@ export function registerTools(server, sessionId) {
       initial_task: z.string().optional(),
       mode: z.enum(["headless", "daemon", "interactive"]).default("headless")
         .describe("headless = claude -p one-shot; daemon = persistant en background (recommandé pour chat); interactive = fenêtre terminal"),
+      permission_mode: z.enum(["default", "acceptEdits", "plan", "dontAsk"]).optional()
+        .describe("Mode de permission de la session lancée (défaut acceptEdits). bypassPermissions n'est pas proposé ici : seule une routine ou un déclencheur enregistré peut le déclarer."),
     },
-    async ({ repo_path, name, role, initial_task, mode = "headless" }) => {
+    async ({ repo_path, name, role, initial_task, mode = "headless", permission_mode }) => {
       if (!fs.existsSync(repo_path)) return txt(`❌ Répertoire introuvable: "${repo_path}"`);
       const launcherName = getSessionName(sessionId);
       const repoName = path.basename(repo_path);
@@ -2561,6 +2564,7 @@ export function registerTools(server, sessionId) {
           name, role: role ?? "agent",
           port: parseInt(process.env.PORT || "3777"),
           spawnedBy: launcherName,
+          permission_mode,
         }).then(result => {
           const status = result.success ? "✅ terminé" : `❌ échec (exit ${result.exitCode})`;
           ticket.status = result.success ? "completed" : "failed";
@@ -2626,6 +2630,7 @@ export function registerTools(server, sessionId) {
           name, role: role ?? "agent", task: initial_task,
           port: parseInt(process.env.PORT || "3777"),
           spawnedBy: launcherName,
+          permission_mode,
         });
 
         if (result.success) {
@@ -2664,16 +2669,9 @@ export function registerTools(server, sessionId) {
       }
 
       // ── INTERACTIVE MODE ──────────────────────────────────────────────────
-      // .mcp.json
-      const mcpJsonPath = path.join(repo_path, ".mcp.json");
-      if (!fs.existsSync(mcpJsonPath)) {
-        const pont = path
-          .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-mcp-stdio.mjs")
-          .split(path.sep).join("/");
-        writeAgentFile(repo_path, "", ".mcp.json", JSON.stringify({
-          mcpServers: { wikichat: { command: "node", args: [pont] } }
-        }, null, 2));
-      }
+      // Le .mcp.json du projet n'est jamais créé ni modifié : la connexion
+      // wikichat de la fenêtre passe par --mcp-config d'un fichier temporaire
+      // hors du projet (src/lancement.mjs), sans --strict-mcp-config.
 
       // .claude/wikichat/
       const claudeDir = path.join(repo_path, ".claude");
@@ -2744,9 +2742,10 @@ export function registerTools(server, sessionId) {
       }
 
       const winPath = repo_path.replace(/\//g, "\\");
-      const mcpConfigPath = path.join(repo_path, ".mcp.json");
-      const claudeArgs = [`"${claudeBin}"`, `--name`, `"${name}"`];
-      if (fs.existsSync(mcpConfigPath)) claudeArgs.push(`--mcp-config`, `"${mcpConfigPath.replace(/\//g, "\\\\")}"`);
+      const claudeArgs = [`"${claudeBin}"`, `--name`, `"${name}"`, `--permission-mode`, resoudreModePermission({ permission_mode }).mode];
+      // Fichier gardé tant que la fenêtre vit : il est dans le dossier temporaire.
+      const mcpInteractif = argumentsMcp({ name, projectPath: repo_path });
+      if (mcpInteractif.fichier) claudeArgs.push(`--mcp-config`, `"${mcpInteractif.fichier}"`);
 
       try {
         const batFile = path.join(process.env.TEMP ?? "C:\\Windows\\Temp", `wc_${randomUUID().slice(0, 8)}.bat`);
@@ -2928,11 +2927,13 @@ export function registerTools(server, sessionId) {
       steps: z.any().describe("Tableau d'étapes [{action, params}], avec interpolation {param} et {stepN.field}"),
       params: z.any().optional().describe("Schéma des paramètres attendus"),
       cache_seconds: z.number().optional(),
+      permission_mode: z.enum(["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"]).optional()
+        .describe("Mode de permission des agents lancés par la routine (défaut acceptEdits). bypassPermissions seulement si la routine l'exige, en connaissance de cause."),
     },
     async (spec) => {
       try {
         const def = registerRoutine(spec);
-        return txt(`✅ Routine "${def.id}" enregistrée (${def.steps.length} step(s)).`);
+        return txt(`✅ Routine "${def.id}" enregistrée (${def.steps.length} step(s), mode ${def.permission_mode || "acceptEdits"}).`);
       } catch (err) {
         return txt(`❌ ${err.message}`);
       }

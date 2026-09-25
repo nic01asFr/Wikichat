@@ -6,7 +6,7 @@
  *  spawnHeadless(projectPath, prompt, options)
  *    → Runs `claude -p "<prompt>"` in non-interactive mode inside projectPath.
  *      The spawned process reads CLAUDE.md + .wikichat/instructions.md,
- *      connects to WikiChat MCP (via .mcp.json injected beforehand),
+ *      connects to WikiChat MCP (via --mcp-config of a temporary file),
  *      executes its task, and exits. stdout is captured and returned.
  *      Best for: cron-triggered audits, one-shot tasks, automated reports.
  *
@@ -15,41 +15,24 @@
  *      Falls back to spawnHeadless if no live session found.
  *      Best for: asking a long-running agent to do something.
  *
- * Safety: this module writes .mcp.json (création, ou bascule SSE→pont stdio
- *         si l'entrée wikichat n'injectait pas d'identité fiable).
- *         It NEVER modifies CLAUDE.md or any existing file.
+ * Safety: this module NEVER writes the project's .mcp.json, .claude/ settings
+ *         or CLAUDE.md. Its own MCP connection goes through `--mcp-config` of a
+ *         temporary file outside the project (see src/lancement.mjs).
  */
 
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { writeAtomicJSON } from "./persistence.mjs";
 import { upsertSpawnRegistry } from "./persistence.mjs";
 import { randomUUID } from "crypto";
 import { state } from "./state.mjs";
-import { recall } from "./identity.mjs";
-import { fileURLToPath } from "url";
+import { recall, remember } from "./identity.mjs";
+import {
+  resoudreModePermission, outilsAutorises, argumentsMcp, supprimerConfigMcp, environnementEnfant,
+} from "./lancement.mjs";
+import { lanceurActif, lancerParAtelier } from "./lanceur-atelier.mjs";
 
-/** Pont stdio → SSE : injecte le jeton dans l'URL (seule voie honorée par Cursor / Claude VS Code). */
-const CHEMIN_STDIO = path
-  .resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "wikichat-mcp-stdio.mjs")
-  .split(path.sep).join("/");
-
-function entreeWikichatMcp() {
-  return {
-    command: "node",
-    args: [CHEMIN_STDIO],
-  };
-}
-
-/** True si l'entrée est l'ancien SSE sans identité fiable (variables vides / pas de pont). */
-function mcpSseSansIdentite(wc) {
-  if (!wc || wc.command) return false;
-  if (wc.type && wc.type !== "sse") return false;
-  const url = String(wc.url || "");
-  return url.includes("/sse");
-}
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
 const MAX_CONCURRENT_RESPAWNS = 3;
@@ -288,49 +271,43 @@ export function buildSpawnArgs(claudeBin, extraArgs) {
   return { cmd: claudeBin, args: extraArgs, resolved: true };
 }
 
-// ── MCP config injection (safe) ───────────────────────────────────────────────
+// ── Connexion MCP ─────────────────────────────────────────────────────────────
+//
+// wikichat créait le `.mcp.json` du projet, ou le « mettait à niveau ». Sur le
+// pod, cette mise à niveau a produit des entrées `{enabled, headersHelper}`
+// sans url ni command, et elle écrivait dans un fichier qui appartient au
+// projet et à la liaison de l'Atelier. C'est fini : voir argumentsMcp() dans
+// src/lancement.mjs — fichier temporaire hors du projet, sans
+// --strict-mcp-config.
 
-/**
- * Ensure .mcp.json exists in projectPath so the headless session connects
- * to WikiChat automatically. Never overwrites an existing file.
- */
-function ensureMcpJson(projectPath, port = 3777) {
-  const mcpPath = path.join(projectPath, ".mcp.json");
+/** Mémorise la session Claude d'un agent pour qu'un prochain réveil la reprenne. */
+function memoriserSession(name, claudeSessionId) {
+  if (!name || !claudeSessionId) return;
+  try { remember(name, "__claude_session_id", claudeSessionId); } catch { /* non bloquant */ }
+}
 
-  // Mise à niveau : l'ancien SSE + headersHelper ne porte pas l'identité sur
-  // Cursor / Claude VS Code (en-têtes ignorés, ${CLAUDE_CODE_SESSION_ID} vide).
-  // On bascule vers le pont stdio qui met le jeton dans l'URL.
-  if (fs.existsSync(mcpPath)) {
+/** Lit `session_id` / `subtype` dans la sortie `--output-format json`. */
+function lireSortieJson(stdout) {
+  const texte = String(stdout || "").trim();
+  if (!texte) return {};
+  // La sortie JSON tient en une ligne ; si le flux porte autre chose avant
+  // (journal d'un daemon), on essaie la dernière ligne qui ouvre un objet.
+  const candidats = [texte, texte.slice(texte.lastIndexOf("\n{") + 1)];
+  for (const c of candidats) {
     try {
-      const conf = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
-      const wc = conf?.mcpServers?.wikichat;
-      if (mcpSseSansIdentite(wc)) {
-        conf.mcpServers.wikichat = entreeWikichatMcp();
-        writeAtomicJSON(mcpPath, conf);
-        console.log(`[Sampler] .mcp.json mis à niveau (pont stdio identité) : ${projectPath}`);
-      } else if (wc && wc.command === "node" && Array.isArray(wc.args) && !wc.args.some((a) => String(a).includes("wikichat-mcp-stdio"))) {
-        // entrée stdio étrangère : ne pas toucher
-      }
-    } catch { /* fichier illisible ou non-JSON : on n'y touche pas */ }
-    return;
+      const j = JSON.parse(c);
+      return { sessionId: j.session_id || j.sessionId || null, sousType: String(j.subtype || "") };
+    } catch { /* suivant */ }
   }
-
-  try {
-    writeAtomicJSON(mcpPath, {
-      mcpServers: {
-        wikichat: entreeWikichatMcp(),
-      },
-    });
-  } catch (err) {
-    console.warn(`[Sampler] Cannot write .mcp.json in ${projectPath}:`, err.message);
-  }
+  return {};
 }
 
 // ── MCP-first preamble — injecté dans TOUS les prompts headless ──────────────
 
 const AGENT_PREAMBLE = `
-PROTOCOLE OBLIGATOIRE — MCP-FIRST:
-1. register() sur WikiChat MCP IMMÉDIATEMENT au démarrage. C'est ta première action.
+PROTOCOLE — MCP-FIRST:
+1. Ton identité WikiChat est portée par ta connexion (WIKICHAT_AGENT) : n'appelle pas register().
+   Seule exception : si get_briefing() te montre anonyme (session-xxxx), register(name=<ton nom>).
 2. Déclare ta présence : declare_capabilities(skills=[...], current_task="<ce que tu fais>", current_project="<projet>", availability="available").
    → Permet aux autres agents de te trouver via list_sessions(topic=...) et de te contacter.
 3. Utilise les tools MCP WikiChat (send_message, share_artifact, etc.) pour TOUTE communication.
@@ -476,7 +453,7 @@ export const PROMPT_TEMPLATES = {
       (roleContent || `Tu es ${name}, agent WikiChat. `) +
       kbContext +
       `Ta mission: ${task}. ` +
-      `register() puis effectue la mission. ` +
+      `Effectue la mission. ` +
       `Partage le résultat via share_artifact sur WikiChat. ` +
       `Écris aussi dans .wikichat/artifacts/ comme backup. Termine.`;
   },
@@ -488,7 +465,7 @@ export const PROMPT_TEMPLATES = {
     AGENT_PREAMBLE +
     `Tu es ${name}, agent audit WikiChat. ` +
     `Fais un audit de l'état du projet "${projectName}": tâches actives, blockers, agents, progression. ` +
-    `register() puis share_artifact le rapport sur #coordination. ` +
+    `share_artifact le rapport sur #coordination. ` +
     `Écris aussi dans .wikichat/artifacts/audit-${projectName}-<timestamp>.md comme backup. Termine.`,
 
   /**
@@ -497,7 +474,7 @@ export const PROMPT_TEMPLATES = {
   queue: (name) =>
     AGENT_PREAMBLE +
     `Tu es ${name}, agent WikiChat. ` +
-    `register() puis lis les fichiers dans .wikichat/queue/ s'ils existent. ` +
+    `Lis les fichiers dans .wikichat/queue/ s'ils existent. ` +
     `Pour chaque fichier: traite l'action décrite via les tools MCP WikiChat. ` +
     `Partage le rapport via share_artifact sur #coordination. ` +
     `Écris aussi dans .wikichat/artifacts/queue-processed-<timestamp>.md comme backup. Termine.`,
@@ -508,7 +485,7 @@ export const PROMPT_TEMPLATES = {
   watchdog: (name) =>
     AGENT_PREAMBLE +
     `Tu es ${name}, agent watchdog WikiChat. ` +
-    `register() puis get_briefing() pour lire l'état du système. ` +
+    `get_briefing() pour lire l'état du système. ` +
     `Identifie les agents stales, les tâches expirées, les anomalies. ` +
     `broadcast() si alertes critiques. share_artifact le rapport sur #coordination. ` +
     `Écris aussi dans .wikichat/artifacts/watchdog-<timestamp>.md comme backup. Termine.`,
@@ -543,9 +520,12 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
   } = options;
   const maxTurns = options.maxTurns ?? options.max_turns ?? null; // --max-turns (bornage contexte)
   const appendSystemPrompt = options.appendSystemPrompt ?? options.append_system_prompt ?? null; // contrat proposeur générique
+  const permission = resoudreModePermission(options);
+  if (permission.avertissement) console.warn(`[spawn] ${name} : ${permission.avertissement}`);
+  const viaAtelier = lanceurActif() === "atelier";
 
-  const claudeBin = findClaudeBin();
-  if (!claudeBin) {
+  const claudeBin = viaAtelier ? null : findClaudeBin();
+  if (!viaAtelier && !claudeBin) {
     return { success: false, stdout: "", stderr: "claude CLI not found", exitCode: -1 };
   }
 
@@ -569,48 +549,50 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
   _claimSlot();
   _claimQuota(spawnedBy);
 
-  // Inject .mcp.json if needed (safe — never overwrites)
-  ensureMcpJson(projectPath, port);
-
-  // Ensure .wikichat/ write permissions in .claude/settings.local.json
-  // Adds Write(.wikichat/**) without touching any other permissions
-  const claudeDir = path.join(projectPath, ".claude");
-  const settingsPath = path.join(claudeDir, "settings.local.json");
-  try {
-    fs.mkdirSync(claudeDir, { recursive: true });
-    let settings = { permissions: { allow: [] } };
-    if (fs.existsSync(settingsPath)) {
-      try { settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch { /* keep default */ }
-    }
-    const allow = settings?.permissions?.allow ?? [];
-    if (!allow.some(r => r.includes(".wikichat"))) {
-      allow.push("Write(.wikichat/**)", "Edit(.wikichat/**)");
-      settings.permissions = { ...settings.permissions, allow };
-      writeAtomicJSON(settingsPath, settings);
-    }
-  } catch { /* non-blocking */ }
-
   // Register in spawn registry
   const spawnEntry = {
     name, role, repo_path: projectPath,
     storage_path: path.join(projectPath, ".wikichat"),
     spawned_by: spawnedBy,
     spawned_at: new Date().toISOString(),
-    mode: "headless",
+    mode: viaAtelier ? "atelier" : "headless",
     status: "starting",
     prompt: prompt.slice(0, 200),
     claude_session_name: name,
+    permission_mode: viaAtelier ? null : permission.mode,
   };
   try { upsertSpawnRegistry(spawnEntry); } catch { /* non-blocking */ }
+
+  // Lot D (inactif par défaut) : le tour est joué par l'Atelier, avec son
+  // harnais, ses secrets et son mode — pas par un `claude -p` de wikichat.
+  if (viaAtelier) {
+    const r = await lancerParAtelier({
+      projectPath, prompt, name, model, timeoutMs,
+      conversation: options.atelierConversation || recall(name, "__atelier_conversation") || null,
+    });
+    if (r.conversationId) { try { remember(name, "__atelier_conversation", r.conversationId); } catch { /* */ } }
+    try {
+      upsertSpawnRegistry({
+        ...spawnEntry,
+        status: r.success ? "done" : (r.bloque ? "awaiting_permission" : "failed"),
+        exit_code: r.exitCode,
+        ...(r.conversationId ? { atelier_conversation: r.conversationId } : {}),
+        ended_at: new Date().toISOString(),
+      });
+    } catch { /* */ }
+    _releaseSlot(); _releaseQuota(spawnedBy);
+    return { ...r, sessionId: null };
+  }
 
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
 
-    const mcpConfigPath = path.join(projectPath, ".mcp.json");
-    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, "--output-format", "json"];
+    const mcp = argumentsMcp({ name, port, projectPath });
+    const baseArgs = ["-p", prompt, "--permission-mode", permission.mode, "--name", name, "--output-format", "json"];
     if (model) baseArgs.push("--model", model);
-    if (allowedTools) baseArgs.push("--allowedTools", Array.isArray(allowedTools) ? allowedTools.join(",") : String(allowedTools));
+    const outils = outilsAutorises(allowedTools, permission.mode);
+    if (outils) baseArgs.push("--allowedTools", outils.join(","));
     if (maxTurns) baseArgs.push("--max-turns", String(maxTurns));
     if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
     // Même garde que pour les daemons : un ID sans transcript fait échouer le CLI.
@@ -624,45 +606,57 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     } else if (resumeSessionId) {
       console.log(`[spawn] ${name} : transcript de ${resumeSessionId} introuvable — démarrage frais.`);
     }
-    if (fs.existsSync(mcpConfigPath)) {
-      baseArgs.push("--mcp-config", mcpConfigPath);
-    }
+    baseArgs.push(...mcp.args);
     const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
 
-    const child = spawn(spawnArgs.cmd, spawnArgs.args, {
-      cwd: projectPath,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
-      windowsHide: true,
-      shell: false,
-    });
+    let child;
+    try {
+      child = spawn(spawnArgs.cmd, spawnArgs.args, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: environnementEnfant(name),
+        windowsHide: true,
+        shell: false,
+      });
+    } catch (err) {
+      supprimerConfigMcp(mcp.fichier);
+      try { upsertSpawnRegistry({ ...spawnEntry, status: "error", error: err.message, ended_at: new Date().toISOString() }); } catch { /* */ }
+      _releaseSlot(); _releaseQuota(spawnedBy);
+      resolve({ success: false, stdout, stderr: err.message, exitCode: -1 });
+      return;
+    }
 
     child.stdout.on("data", d => { stdout += d.toString(); });
     child.stderr.on("data", d => { stderr += d.toString(); });
 
+    let fini = false;
+    const terminer = (resultat) => {
+      if (fini) return;
+      fini = true;
+      supprimerConfigMcp(mcp.fichier);
+      _releaseSlot(); _releaseQuota(spawnedBy);
+      resolve(resultat);
+    };
+
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       try { upsertSpawnRegistry({ ...spawnEntry, status: "timeout", ended_at: new Date().toISOString() }); } catch { /* */ }
-      _releaseSlot(); _releaseQuota(spawnedBy);
-      resolve({ success: false, stdout, stderr: stderr + "\n[timeout]", exitCode: -1 });
+      terminer({ success: false, stdout, stderr: stderr + "\n[timeout]", exitCode: -1 });
     }, timeoutMs);
 
     child.on("close", (code) => {
       clearTimeout(timer);
       const success = code === 0;
       // Capture le session-id Claude depuis la sortie --output-format json (resume ultérieur)
-      let claudeSessionId = null;
-      let sousType = "";
-      try {
-        const j = JSON.parse(stdout);
-        claudeSessionId = j.session_id || j.sessionId || null;
-        sousType = String(j.subtype || "");
-      } catch { /* stdout non-json */ }
+      const { sessionId: claudeSessionId = null, sousType = "" } = lireSortieJson(stdout);
       // Un agent qui epuise ses tours sort avec le code 0. Sans regarder le
       // sous-type, un run coupe au milieu se lit donc comme une reussite :
       // deux agents sur quatre finissaient ainsi, sur un resultat d'outil,
       // sans avoir rien rapporte — et l'ecran affichait « OK ».
       const tronque = sousType === "error_max_turns";
+      // La session est mémorisée ici, plutôt que confiée à un register() que
+      // l'agent n'a plus à appeler : son prochain réveil la reprendra.
+      memoriserSession(name, claudeSessionId);
       try {
         upsertSpawnRegistry({
           ...spawnEntry,
@@ -672,15 +666,13 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
           ended_at: new Date().toISOString(),
         });
       } catch { /* */ }
-      _releaseSlot(); _releaseQuota(spawnedBy);
-      resolve({ success, stdout, stderr, exitCode: code ?? -1, sessionId: claudeSessionId });
+      terminer({ success, stdout, stderr, exitCode: code ?? -1, sessionId: claudeSessionId });
     });
 
     child.on("error", (err) => {
       clearTimeout(timer);
       try { upsertSpawnRegistry({ ...spawnEntry, status: "error", error: err.message, ended_at: new Date().toISOString() }); } catch { /* */ }
-      _releaseSlot(); _releaseQuota(spawnedBy);
-      resolve({ success: false, stdout, stderr: err.message, exitCode: -1 });
+      terminer({ success: false, stdout, stderr: err.message, exitCode: -1 });
     });
   });
 }
@@ -784,6 +776,9 @@ export function spawnDaemon(projectPath, options = {}) {
     spawnedBy = "wikichat-service",
     parentDepth = 0,
   } = options;
+  const permission = resoudreModePermission(options);
+  if (permission.avertissement) console.warn(`[spawn] ${name} : ${permission.avertissement}`);
+  const viaAtelier = lanceurActif() === "atelier";
 
   // Daemon mode is only spawnable by service / residents / principal
   // (not by random subagents — prevents fork-bomb cascades)
@@ -798,8 +793,8 @@ export function spawnDaemon(projectPath, options = {}) {
     return { success: false, pid: null, error: `Le spawn de daemons est réservé au service / résidents / principal. "${spawnedBy}" ne peut spawner que des headless.` };
   }
 
-  const claudeBin = findClaudeBin();
-  if (!claudeBin) {
+  const claudeBin = viaAtelier ? null : findClaudeBin();
+  if (!viaAtelier && !claudeBin) {
     return { success: false, pid: null, error: "claude CLI not found" };
   }
 
@@ -818,31 +813,23 @@ export function spawnDaemon(projectPath, options = {}) {
   _claimSlot();
   _claimQuota(spawnedBy);
 
-  // Ensure .mcp.json
-  ensureMcpJson(projectPath, port);
-
-  const mcpConfigPath = path.join(projectPath, ".mcp.json");
-
   // Le daemon est un claude -p au prompt long. Il relève, agit, et sort quand il
-  // Timeout is set very high (2 hours) to keep the agent alive
+  // n'a plus rien à faire ; la minuterie MAX_DUREE_DAEMON_MS le borne.
   const prompt = [
     AGENT_PREAMBLE,
     `Tu es ${name}${role ? `, ${role}` : ""}.`,
     task ? `Ta mission: ${task}` : "",
     ``,
     `PROTOCOLE :`,
-    `1. register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID")`,
-    `   → claude_session_id est OBLIGATOIRE : sans lui ton transcript devient introuvable`,
-    `     et tes prochains réveils repartent de zéro au lieu de reprendre ce contexte.`,
-    `2. send_message(channel="coordination", content="🟢 ${name} en ligne.")`,
-    `3. poll(timeout_seconds=120) — relève ce qui t'est adressé, sans argument de canal.`,
-    `4. S'il y a quelque chose : traite, réponds via send_message, puis re-poll.`,
-    `5. Si deux relèves consécutives ne rapportent rien : consigne ce qui doit survivre`,
+    `1. send_message(channel="coordination", content="🟢 ${name} en ligne.")`,
+    `2. poll(timeout_seconds=120) — relève ce qui t'est adressé, sans argument de canal.`,
+    `3. S'il y a quelque chose : traite, réponds via send_message, puis re-poll.`,
+    `4. Si deux relèves consécutives ne rapportent rien : consigne ce qui doit survivre`,
     `   (add_project_note / remember) et TERMINE proprement.`,
     ``,
     `Ne boucle pas indéfiniment. Chaque tour d'attente relit tout ton historique :`,
     `attendre coûte plus cher que d'être relancé. Un trigger te réveillera quand il y`,
-    `aura de quoi faire, et tu reprendras cette session avec --resume.`,
+    `aura de quoi faire, et tu reprendras cette session (wikichat la mémorise pour toi).`,
     `Sois concis : 1-2 phrases par réponse, pas de récapitulatif entre les relèves.`,
   ].filter(Boolean).join("\n");
 
@@ -852,11 +839,33 @@ export function spawnDaemon(projectPath, options = {}) {
     storage_path: path.join(projectPath, ".wikichat"),
     spawned_by: spawnedBy,
     spawned_at: new Date().toISOString(),
-    mode: "daemon",
+    mode: viaAtelier ? "atelier" : "daemon",
     status: "running",
     task: task || null,
+    permission_mode: viaAtelier ? null : permission.mode,
   };
   try { upsertSpawnRegistry(spawnEntry); } catch { /* non-blocking */ }
+
+  // Lot D (inactif par défaut) : un tour dans la conversation Atelier de
+  // l'agent. Pas de processus à surveiller ni de respawn : l'Atelier tient le
+  // tour, et le prochain réveil reprendra la même conversation.
+  if (viaAtelier) {
+    lancerParAtelier({
+      projectPath, prompt, name, model: options.model || null, attendreFin: false,
+      conversation: options.atelierConversation || recall(name, "__atelier_conversation") || null,
+    }).then((r) => {
+      if (r.conversationId) { try { remember(name, "__atelier_conversation", r.conversationId); } catch { /* */ } }
+      try {
+        upsertSpawnRegistry({
+          ...spawnEntry,
+          status: r.success ? "delegated" : "error",
+          ...(r.success ? {} : { error: r.stderr }),
+          ...(r.conversationId ? { atelier_conversation: r.conversationId } : {}),
+        });
+      } catch { /* */ }
+    }).catch(() => {}).finally(() => { _releaseSlot(); _releaseQuota(spawnedBy); });
+    return { success: true, pid: null, name, via: "atelier" };
+  }
 
   try {
     const isWindows = process.platform === "win32";
@@ -864,33 +873,49 @@ export function spawnDaemon(projectPath, options = {}) {
     // sur un endpoint tiers — un pod servi par un LLM auto-hébergé le refuse.
     // Sans valeur explicite, on laisse le CLI choisir le sien.
     const model = options.model || null;
-    const baseArgs = ["-p", prompt, "--permission-mode", "bypassPermissions", "--name", name, ...(model ? ["--model", model] : [])];
-    if (fs.existsSync(mcpConfigPath)) {
-      baseArgs.push("--mcp-config", mcpConfigPath);
-    }
+    const outils = outilsAutorises(options.allowedTools || null, permission.mode);
+    const argsCommuns = [
+      "--permission-mode", permission.mode, "--name", name, "--output-format", "json",
+      ...(model ? ["--model", model] : []),
+      ...(outils ? ["--allowedTools", outils.join(",")] : []),
+    ];
+
+    // Une configuration MCP temporaire par processus, supprimée à sa sortie.
+    const lancer = (texte, resumeId) => {
+      const mcp = argumentsMcp({ name, port, projectPath });
+      const args = ["-p", texte, ...argsCommuns, ...mcp.args,
+        ...(resumeId ? ["--resume", resumeId] : []),
+        "--max-turns", String(MAX_TOURS_DAEMON)];
+      const spawnArgs = buildSpawnArgs(claudeBin, args);
+      // detached: false on Windows — keeps the daemon tied to the server's lifetime.
+      // On Windows detached children survive parent death (orphan claude.exe).
+      const enfant = spawn(spawnArgs.cmd, spawnArgs.args, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: environnementEnfant(name),
+        windowsHide: true,
+        detached: !isWindows,
+        shell: false,
+      });
+      // La sortie JSON finale porte le session_id : on garde la fin du flux
+      // pour le mémoriser à la sortie (le prochain réveil reprendra la session).
+      let fin = "";
+      enfant.stdout.on("data", (d) => { fin = (fin + d.toString()).slice(-65536); });
+      enfant.on("exit", () => {
+        supprimerConfigMcp(mcp.fichier);
+        memoriserSession(name, lireSortieJson(fin).sessionId);
+      });
+      return enfant;
+    };
+
     // Reprise de contexte. Résolue ici plutôt que chez l'appelant : routines,
     // triggers, watchdog et outils MCP passent tous par spawnDaemon, et aucun
     // ne transmettait l'ID — les résidents repartaient de zéro à chaque réveil.
     const resume = resolveResumeSession(name, projectPath, options.sessionId);
-    if (resume) {
-      baseArgs.push("--resume", resume.sessionId);
-    } else if (options.sessionId) {
+    if (!resume && options.sessionId) {
       console.log(`[spawn] ${name} : transcript de ${options.sessionId} introuvable — démarrage frais.`);
     }
-    baseArgs.push("--max-turns", String(MAX_TOURS_DAEMON));
-
-    const spawnArgs = buildSpawnArgs(claudeBin, baseArgs);
-
-    // detached: false on Windows — keeps the daemon tied to the server's lifetime.
-    // On Windows detached children survive parent death (orphan claude.exe).
-    const child = spawn(spawnArgs.cmd, spawnArgs.args, {
-      cwd: projectPath,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
-      windowsHide: true,
-      detached: !isWindows,
-      shell: false,
-    });
+    const child = lancer(prompt, resume ? resume.sessionId : null);
 
     // Les sorties étaient jetées, et le respawn rejouait jusqu'à cinq fois : un
     // spawn qui échoue le faisait donc EN BOUCLE ET SANS TRACE. Impossible de
@@ -938,23 +963,13 @@ export function spawnDaemon(projectPath, options = {}) {
           const continuePrompt = [
             AGENT_PREAMBLE,
             `Tu es ${name}${role ? `, ${role}` : ""}. Redémarrage #${respawnCount}.`,
-            `register(name="${name}"${role ? `, role="${role}"` : ""}, claude_session_id="$CLAUDE_SESSION_ID") puis poll().`,
+            `poll() pour relever ce qui t'attend.`,
             `Sois CONCIS. Traite ce qui t'attend, consigne, et termine — ne boucle pas.`,
           ].join("\n");
           // Re-résolu à chaud : l'agent a pu enregistrer un ID plus récent depuis
           // le spawn initial, et le transcript a pu disparaître entre-temps.
           const respawnResume = resolveResumeSession(name, projectPath);
-          const respawnBaseArgs = ["-p", continuePrompt, "--permission-mode", "bypassPermissions", "--name", name,
-            ...(fs.existsSync(mcpConfigPath) ? ["--mcp-config", mcpConfigPath] : []),
-            ...(respawnResume ? ["--resume", respawnResume.sessionId] : []),
-            ...(model ? ["--model", model] : []), "--max-turns", String(MAX_TOURS_DAEMON)];
-          const respawnSpawnArgs = buildSpawnArgs(claudeBin, respawnBaseArgs);
-          const newChild = spawn(respawnSpawnArgs.cmd, respawnSpawnArgs.args, {
-            cwd: projectPath,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", WIKICHAT_AGENT: name },
-            windowsHide: true, detached: !isWindows, shell: false,
-          });
+          const newChild = lancer(continuePrompt, respawnResume ? respawnResume.sessionId : null);
           newChild.stdout.on("data", ecrire("out"));
           newChild.stderr.on("data", ecrire("err"));
           newChild.on("exit", onExit);
@@ -1083,5 +1098,6 @@ export async function triggerProjectAgent(projectPath, taskType, opts = {}) {
     role: taskType,
     port: opts.port,
     spawnedBy: opts.spawnedBy || "wikichat-cron",
+    permission_mode: opts.permission_mode || null,
   });
 }

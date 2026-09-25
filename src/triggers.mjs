@@ -603,8 +603,8 @@ async function _runSpawnAction(t, params, source, message = null) {
       prompt:
         `${message.fromName || "Un agent"} t'appelle et attend une réponse :\n\n` +
         `« ${extrait} »\n\n` +
-        `Tu es "${cible.name}". Tu as été réveillé pour ce message précis. ` +
-        `register(name="${cible.name}", claude_session_id="$CLAUDE_SESSION_ID"), relève avec poll(), ` +
+        `Tu es "${cible.name}" (identité portée par ta connexion wikichat). ` +
+        `Tu as été réveillé pour ce message précis. Relève avec poll(), ` +
         `réponds via send_message(channel="@${message.fromName}", status="over"), ` +
         `consigne ce qui doit survivre (add_project_note / remember), puis termine.`,
     };
@@ -625,7 +625,10 @@ async function _runSpawnAction(t, params, source, message = null) {
   }
 
   try {
-    const result = await _spawnFn({ ...params, spawnedBy: `trigger:${t.id}:${source}` });
+    // Le mode de permission vient de la DÉFINITION du déclencheur (persistée,
+    // visible au Pilote) : c'est la seule source admise pour bypassPermissions.
+    // Sans mode déclaré, sampler retient acceptEdits.
+    const result = await _spawnFn({ ...params, bypassAutorise: true, spawnedBy: `trigger:${t.id}:${source}` });
     sysMsg("coordination",
       `🔔 [trigger ${t.id}] ${result?.success ? "✅" : "❌"} spawn "${params.name}" (${params.mode || "headless"})`);
     return { ok: !!result?.success, detail: result };

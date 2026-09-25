@@ -8,7 +8,10 @@
  * Persisted in ~/.wikichat/routines.json. Run history in ~/.wikichat/routine-runs.jsonl.
  *
  * Step types supported in this initial cut:
- *   - spawn     : { name, repo_path, mode, role?, task?, parentDepth? } → ticket
+ *   - spawn     : { name, repo_path, mode, role?, task?, parentDepth?, permission_mode? } → ticket
+ *
+ * permission_mode (routine ou step) : default | acceptEdits | plan | dontAsk |
+ * bypassPermissions. Absent : acceptEdits. Lu dans la définition seulement.
  *   - broadcast : { channel, content }                                  → message id
  *   - wait      : { tickets:[...], timeout_s? }                         → resolved when all complete
  *   - summarize : { artifacts:[...], target?, title? }                  → broadcast a summary
@@ -85,6 +88,9 @@ export function registerRoutine(spec) {
     params: spec.params || {},
     steps: spec.steps,
     cache_seconds: spec.cache_seconds ?? 300,
+    // Mode de permission des agents que la routine lance. Absent : acceptEdits.
+    // bypassPermissions n'est honoré que s'il est écrit ici ou dans le step.
+    ...(spec.permission_mode ? { permission_mode: String(spec.permission_mode) } : {}),
     enabled: spec.enabled !== false,
     created_at: existing?.created_at || new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -135,7 +141,7 @@ export async function runRoutine(id, params = {}, opts = {}) {
     const step = def.steps[i];
     try {
       const resolved = _resolveStep(step, params, stepResults);
-      const out = await _executeStep(resolved, opts);
+      const out = await _executeStep(resolved, { ...opts, permission: modeDeLaDefinition(def, step) });
       stepResults.push({ step: i, action: step.action, output: out });
     } catch (err) {
       status = "failed";
@@ -207,14 +213,29 @@ function _resolveStep(step, params, prevResults) {
   return interpolated;
 }
 
+/**
+ * Le mode de permission d'un step `spawn`, lu dans la DÉFINITION de la routine
+ * (step brut, puis routine) — jamais dans les paramètres d'exécution. Une
+ * valeur à interpoler (`{mode}`) est ignorée : un appelant de run_routine ne
+ * doit pas pouvoir lever les garde-fous d'une routine qu'il n'a pas écrite.
+ */
+export function modeDeLaDefinition(def, step) {
+  const brut = step?.params?.permission_mode ?? def?.permission_mode ?? null;
+  if (!brut || typeof brut !== "string" || brut.includes("{")) return null;
+  return brut;
+}
+
 async function _executeStep(step, opts) {
   const action = step.action;
   const p = step.params || {};
   switch (action) {
     case "spawn": {
       if (!_ctx.spawn) throw new Error("spawn handler not configured");
+      const { permission_mode: _ignore, permissionMode: _ignore2, bypassAutorise: _ignore3, ...reste } = p;
       const res = await _ctx.spawn({
-        ...p,
+        ...reste,
+        permission_mode: opts.permission || null,
+        bypassAutorise: Boolean(opts.permission),
         spawnedBy: opts.spawnedBy || `routine:${opts.routineId || "?"}`,
         parentDepth: opts.parentDepth ?? 0,
       });

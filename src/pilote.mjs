@@ -501,6 +501,8 @@ export function handlePiloteCreate(req, res) {
           servers: tools,                // sélection coarse — source pour l'applicateur
           allowedTools: readScope.tools, // proposeur : LECTURE SEULE (garantie par permission)
           max_turns: b.max_turns != null ? Number(b.max_turns) : 15,
+          // Absent : acceptEdits. Déclaré ici, il fait partie de la définition.
+          ...(b.permission_mode ? { permission_mode: String(b.permission_mode) } : {}),
           append_system_prompt: PROPOSER_CONTRACT,
           initial_task: b.mission || "",
           prompt: b.mission || ""
@@ -593,6 +595,10 @@ export async function handlePiloteApply(req, res) {
       // Seul l'applicateur obtient les outils d'ÉCRITURE (le proposeur est en lecture seule).
       allowedTools: expandTools(p.servers || p.allowedTools, "write").tools,
       maxTurns: p.max_turns || 15,
+      // Mode lu dans la définition de l'agent (défaut acceptEdits) ; les
+      // outils d'écriture passent par allowedTools, pas par un bypass.
+      permission_mode: p.permission_mode || null,
+      bypassAutorise: true,
       spawnedBy: "trigger:" + t.id + ":apply"
     });
     // Contrôle post-application : ce qui reste "approved" n'a PAS été appliqué.
@@ -630,6 +636,8 @@ export async function handlePiloteContinue(req, res) {
       maxTurns: p.max_turns || 15,
       appendSystemPrompt: p.append_system_prompt || null,
       resumeSessionId: sid,
+      permission_mode: p.permission_mode || null,
+      bypassAutorise: true,
       spawnedBy: "trigger:" + t.id + ":resume"
     });
     res.json({ ok: !!r.success, exitCode: r.exitCode, resumedFrom: sid, sessionId: r.sessionId || null });

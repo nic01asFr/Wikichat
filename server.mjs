@@ -691,10 +691,11 @@ app.get("/api/projects/:slug", (req, res) => {
 // POST /api/spawn/headless — launch a headless agent in a project
 // Body: { projectPath, prompt?, taskType?, name?, role?, timeoutMs? }
 app.post("/api/spawn/headless", async (req, res) => {
-  const { projectPath, prompt, taskType = "task", name, role, timeoutMs } = req.body || {};
+  const { projectPath, prompt, taskType = "task", name, role, timeoutMs, permission_mode } = req.body || {};
   if (!projectPath) return res.status(400).json({ error: "projectPath required" });
   try {
-    const opts = { name, role, timeoutMs, spawnedBy: "wikichat-api", port: PORT };
+    // permission_mode : défaut acceptEdits ; bypassPermissions refusé ici (src/lancement.mjs).
+    const opts = { name, role, timeoutMs, permission_mode, spawnedBy: "wikichat-api", port: PORT };
     const result = taskType && !prompt
       ? await triggerProjectAgent(projectPath, taskType, opts)
       : await spawnHeadless(projectPath, prompt, opts);
@@ -962,10 +963,10 @@ app.post("/api/identity", express.json(), (req, res) => {
 // POST /api/spawn/daemon — launch a persistent background agent
 // Body: { projectPath, name, role?, task? }
 app.post("/api/spawn/daemon", (req, res) => {
-  const { projectPath, name, role, task, model } = req.body || {};
+  const { projectPath, name, role, task, model, permission_mode } = req.body || {};
   if (!projectPath || !name) return res.status(400).json({ error: "projectPath and name required" });
   const result = spawnDaemon(projectPath, {
-    name, role, task, model,
+    name, role, task, model, permission_mode,
     port: PORT,
     spawnedBy: "rest-api",
   });
