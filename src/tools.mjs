@@ -42,12 +42,55 @@ import { vueProjet, texteVueProjet } from "./hooks-serveur.mjs";
 import { conversationParNom } from "./conversations.mjs";
 import { absorberCloture, ficheDeCloture, promptCloser } from "./closures.mjs";
 import { chercher as chercherConnaissance, dossierCentral as dossierConnaissance } from "./connaissance.mjs";
+import { estCode } from "./profils.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function txt(text) { return { content: [{ type: "text", text }] }; }
+
+/** Profil code de la connexion `sessionId` : { projet } ou null (autre profil). */
+function profilCode(sessionId) {
+  const s = state.sessions.get(sessionId);
+  return estCode(s) ? { projet: s.projet || null } : null;
+}
+
+/** Projet d'une session connectée : profil, puis déclaration, puis conversation. */
+function projetDeSession(s) {
+  if (!s) return null;
+  if (s.projet) return s.projet;
+  if (s.current_project) return s.current_project;
+  try { return conversationParNom(s.name)?.projet || null; } catch { return null; }
+}
+
+/** Canaux d'un projet : `proj-<slug>`, `<slug>` (installations antérieures). */
+function canauxDuProjet(projet) {
+  if (!projet) return new Set();
+  const slug = slugifier(projet);
+  return new Set([slug, `proj-${slug}`, String(projet).toLowerCase()]);
+}
+
+/** Motif d'une @mention de `nom`. */
+function motifMention(nom) {
+  return new RegExp(`@${String(nom).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+}
+
+/**
+ * Sessions utiles à un agent code pour joindre quelqu'un : nommées, en ligne,
+ * avec leur projet. Ni tâche, ni statut, ni compétences.
+ */
+function lignesPresentsUtiles(sessionId, { filtre = null } = {}) {
+  const f = filtre ? String(filtre).toLowerCase() : null;
+  const lignes = [];
+  for (const [id, s] of state.sessions) {
+    if (id === sessionId || !s.name || s.name.startsWith("session-")) continue;
+    const projet = projetDeSession(s);
+    if (f && !`${s.name} ${projet || ""} ${s.role || ""}`.toLowerCase().includes(f)) continue;
+    lignes.push(`  • ${s.name}${projet ? ` — projet ${projet}` : ""}${s.role ? ` [${s.role}]` : ""}`);
+  }
+  return lignes;
+}
 
 /**
  * Dossier d'un projet connu par son nom : registre, puis racine des projets
@@ -263,6 +306,11 @@ async function ensureHomeChannel(name) {
 function buildBriefing(sessionId, { since, mission } = {}) {
   const session = state.sessions.get(sessionId);
   const myName = getSessionName(sessionId);
+  // Profil code : son projet, son courrier, les présents utiles — pas la vue
+  // globale des projets ni le flux des canaux des autres projets.
+  const code = profilCode(sessionId);
+  const canauxProjet = code ? canauxDuProjet(code.projet) : null;
+  const deMonProjet = (p) => !!code?.projet && slugifier(p || "") === slugifier(code.projet);
 
   // Resolve the "since" cutoff
   let sinceDate = null;
@@ -281,7 +329,7 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   }
 
   // Sessions list
-  const sl = [...state.sessions.entries()]
+  const sl = code ? lignesPresentsUtiles(sessionId).join("\n") : [...state.sessions.entries()]
     .map(([id, s]) => {
       const me = id === sessionId ? " ← vous" : "";
       const proj = s.current_project ? ` [${s.current_project}]` : "";
@@ -292,11 +340,12 @@ function buildBriefing(sessionId, { since, mission } = {}) {
 
   // Channels
   const cl = [...state.channels.entries()].filter(([n]) => !n.startsWith("dm:"))
+    .filter(([n]) => !code || canauxProjet.has(n) || n === "general")
     .map(([n, info]) => `  #${n}: ${getChannelCount(n)} msg — ${info.description}`)
     .join("\n");
 
   // Projects
-  const pl = [...state.projects.values()].map(p => {
+  const pl = [...state.projects.values()].filter(p => !code || deMonProjet(p.slug || p.name)).map(p => {
     const agents = [...state.sessions.values()].filter(s => s.current_project?.toLowerCase() === p.name.toLowerCase());
     const tasks = [...p.tasks.values()].filter(t => t.status === "active").length;
     return `  📁 ${p.name}${agents.length ? ` | 👥 ${agents.map(a => a.name).join(", ")}` : ""}${tasks ? ` | 📋 ${tasks} tâche(s)` : ""}`;
@@ -309,6 +358,10 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   let msgs = state.messages.filter(m =>
     !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(myNameLc)
   );
+  if (code) {
+    const mention = motifMention(myName);
+    msgs = msgs.filter(m => m.isDM || m.channel === "__broadcast__" || canauxProjet.has(m.channel) || mention.test(m.content || ""));
+  }
 
   // Apply time filter
   if (sinceDate) {
@@ -366,14 +419,21 @@ function buildBriefing(sessionId, { since, mission } = {}) {
   // Active topics (agents with current_task)
   const activeTopics = [...state.sessions.values()]
     .filter(s => s.current_task && s.sessionId !== sessionId)
+    .filter(s => !code || deMonProjet(projetDeSession(s)))
     .map(s => `  📋 ${s.name}: ${s.current_task}`);
   if (activeTopics.length > 0) {
     sections.push(`🔧 En cours (éviter doublons):\n${activeTopics.join("\n")}`);
   }
 
   // Sessions, projects, channels
-  sections.push(`👥 Sessions (${state.sessions.size}):\n${sl || "  (aucune)"}`);
-  sections.push(`🗺️ Projets (${state.projects.size}):\n${pl || "  (aucun)"}`);
+  if (code) {
+    sections.push(`📁 Ton projet : ${code.projet || "(non annoncé)"} — project_state() pour son état. Un autre projet se joint par ses agents (contact_agent).`);
+    sections.push(`👥 Présents (pour joindre un agent) :\n${sl || "  (personne d'autre)"}`);
+    if (pl) sections.push(`🗺️ Projet :\n${pl}`);
+  } else {
+    sections.push(`👥 Sessions (${state.sessions.size}):\n${sl || "  (aucune)"}`);
+    sections.push(`🗺️ Projets (${state.projects.size}):\n${pl || "  (aucun)"}`);
+  }
   sections.push(`📺 Canaux:\n${cl || "  (aucun)"}`);
 
   // Recent messages (lower priority than mentions)
@@ -1173,6 +1233,14 @@ export function registerTools(server, sessionId) {
     { topic: z.string().optional().describe("Filtrer / élargir aux agents travaillant sur ce sujet (online + offline pertinents)") },
     async ({ topic } = {}) => {
       const lines = [];
+
+      // Profil code : les présents utiles pour joindre un agent d'un autre
+      // projet — nom et projet —, sans roster hors ligne ni axes.
+      if (profilCode(sessionId)) {
+        const utiles = lignesPresentsUtiles(sessionId, { filtre: topic });
+        return txt(`📡 ${utiles.length} agent(s) présent(s)${topic ? ` pour "${topic}"` : ""} :\n\n${utiles.join("\n") || "  (personne)"}\n\n` +
+          `💡 contact_agent(target="<nom>", message=…) pour joindre un agent, y compris d'un autre projet.`);
+      }
 
       // ── Online sessions (toujours listées) ──
       if (state.sessions.size === 0) {
@@ -2034,7 +2102,11 @@ export function registerTools(server, sessionId) {
       // Un seul lecteur (connaissance.mjs), le même que GET /api/knowledge et
       // la ressource wikichat://kb/{topic}.
       if (query.toLowerCase().split(/\s+/).filter(t => t.length > 1).length === 0) return txt("⚠️ Query vide ou trop courte.");
-      const r = chercherConnaissance(query, { portee: scope, limite: limit });
+      // Profil code : la connaissance centrale et celle de son projet seulement
+      // (sans projet annoncé : la centrale seule).
+      const code = profilCode(sessionId);
+      const portee = code && !code.projet ? "central" : scope;
+      const r = chercherConnaissance(query, { portee, limite: limit, projet: code ? code.projet : null });
       if (r.fichiers === 0) return txt(`📭 Aucun fichier de connaissance trouvé (scope=${scope}).
 💡 Vérifier ~/.wikichat/knowledge/ ou les .wikichat/knowledge/ des projets du registry.`);
       if (r.resultats.length === 0) return txt(`🔍 Aucun match pour "${query}" (scope=${scope}, ${r.fichiers} fichier(s) scannés).`);
@@ -2435,6 +2507,14 @@ ${lines.join("\n\n")}`);
             pushMessage({ id: randomUUID(), from: sessionId, fromName: senderName, channel: dm.channel, content: invite, timestamp: new Date(), isDM: true, expects_reply: true, status: "over" });
             notify(dm.channel, sessionId);
             results.push(`  📩 ${pResolved} (online) — DM d'invitation envoyé`);
+          } else if (profilCode(sessionId)) {
+            // Profil code : pas de lancement d'agent. L'invitation attend dans
+            // sa maison (ou en DM), il la relèvera à son retour.
+            const maison = homeChannelFor(pResolved);
+            const cible = maison || resolveDMChannel(sessionId, pResolved).channel;
+            pushMessage({ id: randomUUID(), from: sessionId, fromName: senderName, channel: cible, content: maison ? `@${pResolved} ${invite}` : invite, timestamp: new Date(), isDM: !maison, expects_reply: true, status: "over" });
+            notify(cible, sessionId);
+            results.push(`  📬 ${pResolved} (offline) — invitation déposée${maison ? ` dans #${maison}` : " en DM"}, il la verra à son retour`);
           } else {
             // Best-effort offline contact — fire and forget
             const csid = recall(pResolved, "__claude_session_id");

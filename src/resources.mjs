@@ -8,6 +8,11 @@
  *   wikichat://decisions         — recent decisions from #decisions channel
  *   wikichat://kb/{topic}        — fiche de connaissance (~/.wikichat/knowledge/<topic>.md)
  *
+ * Profil code (src/profils.mjs) : `principal` et `decisions` ne sont pas
+ * exposés ; le briefing se limite à son projet et à son courrier ; `identity`
+ * ne montre que la sienne ; `kb` lit la connaissance centrale et celle de son
+ * projet.
+ *
  * Resources complement tools: tools are for actions, resources for context.
  * IDEs display resources in panels — the user sees agent state without opening a UI.
  */
@@ -23,6 +28,8 @@ import { loadSnapshot } from "./persistence.mjs";
 import { status as dormantStatus } from "./dormant.mjs";
 import { CHEMINS, DEPOT } from "./chemins.mjs";
 import { listerFiches, lireFiche } from "./connaissance.mjs";
+import { estCode } from "./profils.mjs";
+import { slugifier } from "./projet-fichiers.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -46,9 +53,16 @@ function listRoleFiles() {
   return roles;
 }
 
-/** Sujets de la connaissance centrale : le même lecteur que search_knowledge. */
-function listKBFiles() {
-  try { return listerFiches({ portee: "central" }).map(f => f.sujet); } catch { return []; }
+/**
+ * Sujets de la connaissance centrale : le même lecteur que search_knowledge.
+ * Avec `projet` (profil code), s'y ajoutent les fiches de ce projet.
+ */
+function listKBFiles(projet = null) {
+  try {
+    const centrale = listerFiches({ portee: "central" }).map(f => f.sujet);
+    if (!projet) return centrale;
+    return [...centrale, ...listerFiches({ portee: "projects", projet }).map(f => f.sujet)];
+  } catch { return []; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +70,11 @@ function listKBFiles() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function registerResources(server, sessionId) {
+  /** Profil code de la connexion : { projet } ou null. */
+  const profilCode = () => {
+    const s = state.sessions.get(sessionId);
+    return estCode(s) ? { projet: s.projet || null } : null;
+  };
 
   // ── wikichat://briefing — session-aware briefing ──────────────────────────
 
@@ -66,10 +85,16 @@ export function registerResources(server, sessionId) {
     async () => {
       const session = state.sessions.get(sessionId);
       const myName = getSessionName(sessionId);
+      const code = profilCode();
+      const slugProjet = code?.projet ? slugifier(code.projet) : null;
+      const canauxProjet = new Set(slugProjet ? [slugProjet, `proj-${slugProjet}`] : []);
 
-      // Sessions
+      // Sessions (profil code : les présents nommés, avec leur projet)
       const sessions = [...state.sessions.entries()]
-        .map(([id, s]) => `${s.name}${s.role ? ` (${s.role})` : ""}${s.current_task ? ` — ${s.current_task}` : ""}${id === sessionId ? " ← vous" : ""}`)
+        .filter(([id, s]) => !code || (id !== sessionId && s.name && !s.name.startsWith("session-")))
+        .map(([id, s]) => code
+          ? `${s.name}${s.projet || s.current_project ? ` — projet ${s.projet || s.current_project}` : ""}`
+          : `${s.name}${s.role ? ` (${s.role})` : ""}${s.current_task ? ` — ${s.current_task}` : ""}${id === sessionId ? " ← vous" : ""}`)
         .join("\n");
 
       // Mentions
@@ -80,6 +105,7 @@ export function registerResources(server, sessionId) {
         !m.isDM || (state.channels.get(m.channel)?.participants ?? []).includes(myNameLc)
       );
       if (sinceDate) msgs = msgs.filter(m => new Date(m.timestamp) > sinceDate);
+      if (code) msgs = msgs.filter(m => m.isDM || m.channel === "__broadcast__" || canauxProjet.has(m.channel) || mentionPattern.test(m.content || ""));
       const mentions = msgs.filter(m => m.from !== sessionId && mentionPattern.test(m.content));
 
       // Recent
@@ -90,6 +116,7 @@ export function registerResources(server, sessionId) {
 
       // Projects
       const projects = [...state.projects.values()]
+        .filter(p => !code || (slugProjet && slugifier(p.slug || p.name) === slugProjet))
         .map(p => `${p.name}${[...state.sessions.values()].some(s => s.current_project?.toLowerCase() === p.name.toLowerCase()) ? " (actif)" : ""}`)
         .join(", ");
 
@@ -104,8 +131,8 @@ export function registerResources(server, sessionId) {
         `## Messages récents`,
         recent || "(aucun)",
         ``,
-        `## Projets`,
-        projects || "(aucun)",
+        code ? `## Ton projet` : `## Projets`,
+        code ? (code.projet || "(non annoncé)") : (projects || "(aucun)"),
       ].filter(Boolean).join("\n");
 
       return { contents: [{ uri: "wikichat://briefing", text, mimeType: "text/markdown" }] };
@@ -179,6 +206,11 @@ export function registerResources(server, sessionId) {
       for (const s of state.sessions.values()) {
         if (!s.name.startsWith("session-")) names.add(s.name);
       }
+      // Profil code : sa propre identité seulement.
+      if (profilCode()) {
+        const moi = getSessionName(sessionId);
+        for (const n of [...names]) if (n !== moi) names.delete(n);
+      }
       return { resources: [...names].map(n => ({
         uri: `wikichat://identity/${n}`,
         name: `Identity: ${n}`,
@@ -187,6 +219,9 @@ export function registerResources(server, sessionId) {
     }}),
     { description: "Identité persistante d'un agent : mémoires, skills, dernier état" },
     async (uri, { name }) => {
+      if (profilCode() && String(name).toLowerCase() !== getSessionName(sessionId).toLowerCase()) {
+        return { contents: [{ uri: uri.href, text: `Refusé : profil code, seule ta propre identité est lisible.`, mimeType: "text/plain" }] };
+      }
       const memories = recall(name) || {};
       const snap = loadSnapshot(name);
       const live = [...state.sessions.values()].find(s => s.name === name);
@@ -239,7 +274,7 @@ export function registerResources(server, sessionId) {
   server.resource(
     "knowledge",
     new ResourceTemplate("wikichat://kb/{topic}", { list: () => {
-      return { resources: listKBFiles().map(t => ({
+      return { resources: listKBFiles(profilCode()?.projet || null).map(t => ({
         uri: `wikichat://kb/${t}`,
         name: `KB: ${t}`,
         description: `Fiche de connaissance : ${t}`,
@@ -247,9 +282,13 @@ export function registerResources(server, sessionId) {
     }}),
     { description: "Article de la Knowledge Base WikiChat" },
     async (uri, { topic }) => {
-      const fiche = lireFiche(decodeURIComponent(String(topic)));
+      const code = profilCode();
+      const sujet = decodeURIComponent(String(topic));
+      // Profil code : une fiche de projet n'est lisible que pour son projet.
+      const fiche = code && sujet.includes("/") && !code.projet ? null
+        : lireFiche(sujet, { projet: code ? code.projet : null });
       if (fiche) return { contents: [{ uri: uri.href, text: fiche.texte, mimeType: "text/markdown" }] };
-      const available = listKBFiles();
+      const available = listKBFiles(code?.projet || null);
       return {
         contents: [{
           uri: uri.href,

@@ -15,6 +15,11 @@
  *
  * Env optionnelles : WIKICHAT_AGENT, PORT / WIKICHAT_PORT, WIKICHAT_HOST,
  * CLAUDE_CODE_SESSION_ID (si présente, le helper la préfère au PPID).
+ *
+ * Profil d'accès (contrat de l'Atelier, docs/vision/profils-acces.md) :
+ * WIKICHAT_PROFIL=code|assistant et WIKICHAT_PROJET=<slug> sont transmis au
+ * serveur (?profil=, ?projet=). Le pont ne filtre rien : c'est le serveur qui
+ * n'expose à un agent code que les outils de son profil, bornés à son projet.
  */
 import { spawnSync } from "child_process";
 import path from "path";
@@ -62,6 +67,12 @@ function lireIdentite() {
   }
 }
 
+/** Variable d'environnement renseignée et développée, sinon chaîne vide. */
+function valeurEnv(nom) {
+  const v = (process.env[nom] || "").trim();
+  return v && !v.includes("${") ? v : "";
+}
+
 function urlAvecIdentite(headers) {
   const url = new URL(`http://${HOST}:${PORT}/sse`);
   const agent = (process.env.WIKICHAT_AGENT || "").trim();
@@ -70,6 +81,10 @@ function urlAvecIdentite(headers) {
   if (token) url.searchParams.set("token", token);
   const conv = (headers["x-wikichat-claude-session"] || "").trim();
   if (conv) url.searchParams.set("claude_session", conv);
+  const profil = valeurEnv("WIKICHAT_PROFIL");
+  if (profil) url.searchParams.set("profil", profil);
+  const projet = valeurEnv("WIKICHAT_PROJET");
+  if (projet) url.searchParams.set("projet", projet);
   return url;
 }
 
@@ -81,6 +96,7 @@ async function main() {
   } else {
     logErr(`→ ${url.origin}${url.pathname}?… token=${url.searchParams.has("token") ? "oui" : "non"} agent=${url.searchParams.get("agent") || "-"}`);
   }
+  logErr(`profil=${url.searchParams.get("profil") || "non annoncé"} projet=${url.searchParams.get("projet") || "-"}`);
 
   const upstream = new Client({ name: "wikichat-stdio-bridge", version: "1.0.0" });
   const sse = new SSEClientTransport(url, {

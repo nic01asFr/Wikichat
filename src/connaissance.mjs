@@ -20,6 +20,7 @@ import fs from "fs";
 import path from "path";
 import { CHEMINS } from "./chemins.mjs";
 import { loadRegistry } from "./registry.mjs";
+import { racineProjetsAtelier, slugifier } from "./projet-fichiers.mjs";
 
 /** Dossier central (calculé à l'appel : les tests changent de HOME par processus). */
 export function dossierCentral() { return CHEMINS.connaissance; }
@@ -28,10 +29,13 @@ function reel(p) { try { return fs.realpathSync(p); } catch { return path.resolv
 
 /**
  * Liste des fiches.
- * @param {{ portee?: "central"|"projects"|"all" }} o
+ * @param {{ portee?: "central"|"projects"|"all", projet?: string|null }} o
+ *   `projet` (slug) : seule la connaissance de ce projet est lue côté projets
+ *   (profil code) — le projet du registre qui porte ce slug, et le dossier
+ *   `<racine des projets de l'Atelier>/<slug>`.
  * @returns {{ sujet: string, source: string, chemin: string, nom: string }[]}
  */
-export function listerFiches({ portee = "all" } = {}) {
+export function listerFiches({ portee = "all", projet = null } = {}) {
   const fiches = [];
   const vus = new Set(); // un projet enregistré sur ~ recouvrirait le dossier central
   const ajouter = (source, dossier, prefixe) => {
@@ -51,11 +55,14 @@ export function listerFiches({ portee = "all" } = {}) {
   if (portee === "projects" || portee === "all") {
     let projets = [];
     try { projets = loadRegistry().projects || []; } catch { /* registre absent */ }
+    const borne = projet ? slugifier(projet) : null;
     for (const p of projets) {
       if (!p?.path || p.status === "missing") continue;
       const slug = p.slug || p.name;
+      if (borne && slugifier(slug) !== borne && slugifier(p.name) !== borne) continue;
       ajouter(slug, path.join(p.path, ".wikichat", "knowledge"), slug);
     }
+    if (borne) ajouter(borne, path.join(racineProjetsAtelier(), borne, ".wikichat", "knowledge"), borne);
   }
   return fiches;
 }
@@ -72,10 +79,11 @@ export function titreDe(texte, nom) {
  * connaissance.
  * @returns {{ sujet, source, chemin, titre, texte, modifie }|null}
  */
-export function lireFiche(sujet) {
+export function lireFiche(sujet, { projet = null } = {}) {
   const s = String(sujet || "").trim().replace(/\.md$/i, "");
   if (!s || s.includes("..") || s.includes("\\")) return null;
-  const fiches = listerFiches({ portee: s.includes("/") ? "projects" : "central" });
+  if (projet && s.includes("/") && slugifier(s.split("/")[0]) !== slugifier(projet)) return null;
+  const fiches = listerFiches({ portee: s.includes("/") ? "projects" : "central", projet });
   const f = fiches.find(x => x.sujet === s) || fiches.find(x => x.sujet === `${s}-axis`)
     || fiches.find(x => x.sujet.toLowerCase() === s.toLowerCase());
   if (!f) return null;
@@ -109,9 +117,9 @@ export function indexFiches({ portee = "all" } = {}) {
  * occurrences dans le corps ×1 (10 au plus par terme).
  * @returns {{ total: number, fichiers: number, resultats: object[] }}
  */
-export function chercher(requete, { portee = "all", limite = 5 } = {}) {
+export function chercher(requete, { portee = "all", limite = 5, projet = null } = {}) {
   const termes = String(requete || "").toLowerCase().split(/\s+/).filter(t => t.length > 1);
-  const fiches = listerFiches({ portee });
+  const fiches = listerFiches({ portee, projet });
   if (!termes.length) return { total: 0, fichiers: fiches.length, resultats: [] };
   const resultats = [];
   for (const f of fiches) {

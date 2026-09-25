@@ -26,6 +26,7 @@ import { startWatchdog, loadCronRegistry } from "./src/resilience.mjs";
 import { clearWaiters, notifyWaiters, registerWaiter } from "./src/notifier.mjs";
 import { registerTools } from "./src/tools.mjs";
 import { registerResources } from "./src/resources.mjs";
+import { lireAnnonce, serveurFiltre, PROFIL_CODE } from "./src/profils.mjs";
 import { handlePilotePage, handlePiloteData, handlePiloteToggle, handlePiloteFire, handlePiloteCreate, handlePiloteDelete, handlePiloteDecide, handlePiloteApply, handlePiloteContinue, handlePiloteArchitect, handlePiloteTools, handlePiloteDaemon, handlePiloteTranscript, startPiloteCatchup } from "./src/pilote.mjs";
 import { scanForProjects } from "./src/scanner.mjs";
 import { loadRegistry, saveRegistry, loadConfig, mergeProjects } from "./src/registry.mjs";
@@ -637,8 +638,35 @@ app.get("/sse", async (req, res) => {
     console.log(`[WikiChat] -session ${name} (total: ${state.sessions.size})`);
   });
 
-  registerTools(mcpServer, sid);
-  registerResources(mcpServer, sid);
+  // Profil d'accès (docs/vision/profils-acces.md de l'Atelier) : annoncé par
+  // l'entrée wikichat, fixé pour toute la connexion, appliqué ici — les outils
+  // hors profil ne sont pas enregistrés sur ce serveur MCP.
+  const annonce = lireAnnonce(req);
+  session.profil = annonce.profil;
+  session.projet = annonce.projet;
+  if (annonce.profil === PROFIL_CODE && !session.projet && convDeclaree?.projet) {
+    session.projet = convDeclaree.projet;
+  }
+  if (!annonce.profil) {
+    console.log(`[WikiChat] profil non annoncé — ${session.name} garde tous les outils (comportement d'avant les profils)`);
+  } else {
+    if (annonce.inconnu) {
+      console.warn(`[WikiChat] profil inconnu "${annonce.annonce}" pour ${session.name} — traité comme "code"`);
+    }
+    if (session.profil === PROFIL_CODE && !session.projet) {
+      console.warn(`[WikiChat] profil code sans projet pour ${session.name} — les outils liés au projet refuseront`);
+    }
+    console.log(`[WikiChat] profil ${session.profil}${session.projet ? ` (projet ${session.projet})` : ""} — ${session.name}`);
+  }
+  const serveurDuProfil = serveurFiltre(mcpServer, session, {
+    projets: () => state.projects,
+    journal: (m) => console.log(`[WikiChat] ${m}`),
+  });
+  registerTools(serveurDuProfil, sid);
+  registerResources(serveurDuProfil, sid);
+  if (serveurDuProfil.outilsCaches?.length) {
+    console.log(`[WikiChat] profil code — ${serveurDuProfil.outilsCaches.length} outil(s) non exposé(s) à ${session.name}`);
+  }
   await mcpServer.connect(transport);
 });
 
@@ -1216,6 +1244,7 @@ app.get("/status", (req, res) => {
       id: id.slice(0, 8), name: s.name, role: s.role, status: s.status,
       availability: s.availability, connectedAt: s.connectedAt, lastSeen: s.lastSeen,
       skills: s.skills, current_task: s.current_task, current_project: s.current_project,
+      profil: s.profil ?? null, projet: s.projet ?? null,
     })),
     channels: [...state.channels.entries()].filter(([n]) => !n.startsWith("dm:"))
       .map(([name, info]) => ({ name, description: info.description, messageCount: getChannelCount(name) })),
