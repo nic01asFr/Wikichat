@@ -3137,12 +3137,19 @@ ${lines.join("\n\n")}`);
 
   server.tool(
     "set_trigger_enabled",
-    "Activer ou désactiver un trigger sans le supprimer.",
+    "Désactiver un trigger sans le supprimer. Un agent ne peut pas en activer un (décision J-b) : l'activation se fait depuis le Pilote.",
     {
       id: z.string(),
       enabled: z.boolean(),
     },
     async ({ id, enabled }) => {
+      // Décision J-b (coordinateur) : un agent peut désactiver, jamais activer.
+      // L'interface du Pilote et son API gardent ce droit ; elles ne passent
+      // pas par cet outil.
+      if (enabled) {
+        return txt(`⛔ Refusé : un agent ne peut pas activer un trigger (décision J-b).\n` +
+          `👉 Pour activer "${id}" : Pilote, ${urlPilote()} (ou POST /pilote/api/agent/${id}/toggle) ; plus tard, l'onglet Automates de l'Atelier.`);
+      }
       const ok = setEnabled(id, enabled);
       return txt(ok ? `${enabled ? "🟢 Activé" : "⚫ Désactivé"}: ${id}` : `❌ Trigger "${id}" introuvable.`);
     }

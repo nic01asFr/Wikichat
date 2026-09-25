@@ -163,6 +163,16 @@ await fetch(`${SERVER_URL}/pilote/api/agent/${encodeURIComponent(TRIG)}/toggle`,
 const listeTrig = await alice.call("list_triggers", {});
 check("le trigger est actif une fois armé depuis le Pilote", new RegExp(`🟢 ${TRIG}`).test(listeTrig));
 
+// Décision J-b : un agent peut désactiver un trigger, jamais l'activer ; le
+// Pilote, lui, garde le droit d'activer.
+const desactive = await alice.call("set_trigger_enabled", { id: TRIG, enabled: false });
+check("un agent peut désactiver un trigger", /Désactivé/.test(desactive) && new RegExp(`⚫ ${TRIG}`).test(await alice.call("list_triggers", {})), desactive.slice(0, 80));
+const tentative = await alice.call("set_trigger_enabled", { id: TRIG, enabled: true });
+check("un agent ne peut pas activer un trigger, et on lui dit où le faire",
+  /Refusé/.test(tentative) && /pilote/i.test(tentative) && new RegExp(`⚫ ${TRIG}`).test(await alice.call("list_triggers", {})), tentative.slice(0, 80));
+const parPilote = await (await fetch(`${SERVER_URL}/pilote/api/agent/${encodeURIComponent(TRIG)}/toggle`, { method: "POST" })).json();
+check("le Pilote peut activer un trigger", parPilote.enabled === true && new RegExp(`🟢 ${TRIG}`).test(await alice.call("list_triggers", {})));
+
 await alice.call("send_message", { channel: `e2e-${SUFFIX}`, content: "ceci contient MOTIF_UNIQUE_E2E" });
 await new Promise(r => setTimeout(r, 1500));
 const apresMatch = await alice.call("list_triggers", {});

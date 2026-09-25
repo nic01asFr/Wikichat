@@ -303,8 +303,8 @@ chaque point répare ou branche une brique existante.
   `close_project` sur un projet à fichiers, trigger créé par un agent. Le cas
   du lien `settings.json` est **sauté sous Windows** (liens symboliques
   interdits sans mode développeur) : il tourne sous Linux.
-- `npm test` (e2e, 33 cas : le cas trigger vérifie désormais la naissance
-  désactivée, puis l'activation par le Pilote), `npm run test:hooks` (16),
+- `npm test` (e2e, 36 cas : naissance désactivée d'un trigger créé par un
+  agent ; un agent désactive mais ne peut pas activer ; le Pilote active), `npm run test:hooks` (16),
   `npm run test:lancement` (32), `npm run test:site` (3).
 
 ### 11.3 Mettre le pod à jour
@@ -379,9 +379,11 @@ et `spawn_registry.json` sont repris dans `C:\Users\Omen\.wikichat` (où
 - Vérifier en réel sur le pod (§11.3) : non fait, pod en lecture seule.
 - Le cas « lien `settings.json` » est sauté sous Windows ; à lancer sous Linux
   (CI ou pod) avant de s'y fier.
-- `set_trigger_enabled` reste ouvert aux agents : J-b ne règle que la
-  naissance. Un agent peut encore activer lui-même un trigger ; le fermer est
-  une décision à prendre (coordinateur).
+- Décidé (coordinateur, J-b) et fait : par `set_trigger_enabled`, un agent
+  peut **désactiver** un trigger, jamais l'**activer** (refus, avec l'adresse du
+  Pilote) ; le Pilote et son API gardent le droit d'activer. Testé en e2e.
+- Question ouverte, sans changement dans ce lot : faut-il la même règle pour
+  `register_routine` et `run_routine` quand la routine consomme du modèle ?
 - L'interface du Pilote ne montre que les agents planifiés (`cron` +
   `spawn_session`) : un autre trigger créé par un agent s'active par
   `POST /pilote/api/agent/<id>/toggle`, en attendant l'onglet Automates.
