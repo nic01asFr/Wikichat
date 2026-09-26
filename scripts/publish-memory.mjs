@@ -56,6 +56,9 @@ const MANAGED = [
   "ideas-index.json",
   "projects",
   "ideas",
+  // W8 : fiches de conversation (S6) et leur index.
+  "conversations",
+  "conversations-index.json",
 ];
 
 // --------------------------------------------------------------------------

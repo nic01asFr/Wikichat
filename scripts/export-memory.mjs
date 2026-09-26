@@ -112,7 +112,7 @@ function sanitizeGithub(github) {
 // --------------------------------------------------------------------------
 
 const report = {
-  collected: { projects: 0, knowledge: 0, ideas: 0, cartography: false },
+  collected: { projects: 0, knowledge: 0, ideas: 0, cartography: false, conversations: 0 },
   filtered: { noisyProjects: 0 },
   redactions: 0,
   warnings: [],
@@ -261,6 +261,57 @@ function collectKnowledge(registry, destDir) {
   });
 }
 
+/**
+ * Les fiches de conversation (W8, décision S6 : l'export assaini inclut les
+ * fiches). Elles sont sous `knowledge/conversations/<projet>/<id>.md`, que
+ * `collectKnowledge` ne lit pas (fichiers à plat seulement) : on les prend
+ * ici, sous `conversations/<projet>/<id>.md`, avec un index léger.
+ *
+ * Ce qui sort : la fiche telle qu'écrite par le code et la routine de nuit
+ * (faits, citations de la personne, sens), chemins machine retirés. Jamais le
+ * transcript, ni la mémoire de la personne (`memoire/`), ni l'état de la
+ * capitalisation. Chaque fiche passe le même scan anti-secret que le
+ * snapshot : un motif trouvé bloque l'export.
+ */
+function collectConversations(destDir) {
+  const racine = path.join(WIKICHAT_DIR, "knowledge", "conversations");
+  const fiches = [];
+  let projets;
+  try {
+    projets = fs.readdirSync(racine, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return fiches;
+  }
+  for (const projet of projets) {
+    let noms;
+    try {
+      noms = fs.readdirSync(path.join(racine, projet)).filter((n) => n.endsWith(".md"));
+    } catch {
+      continue;
+    }
+    for (const nom of noms) {
+      const content = scrubPaths(fs.readFileSync(path.join(racine, projet, nom), "utf8"));
+      for (const h of scanForSecrets(content)) {
+        report.warnings.push(`SECRET POTENTIEL [${h.pattern}] dans la fiche ${projet}/${nom}`);
+      }
+      const titleMatch = content.match(/^#\s+(.+)$/m);
+      const resume = (content.match(/^Résumé : (.+)$/m) || [])[1] || "";
+      const fin = (content.match(/^fin: (.+)$/m) || [])[1] || null;
+      const empreinte = crypto.createHash("sha256").update(content).digest("hex").slice(0, 12);
+      fiches.push({ projet, name: nom, id: nom.replace(/\.md$/, ""), title: titleMatch ? titleMatch[1].trim() : nom, resume, fin, empreinte, content });
+    }
+  }
+  report.collected.conversations = fiches.length;
+  if (!FLAGS.dryRun && fiches.length) {
+    for (const f of fiches) {
+      const dir = path.join(destDir, "conversations", f.projet);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, f.name), f.content);
+    }
+  }
+  return fiches.map(({ content, ...f }) => f);
+}
+
 function collectIdeas() {
   const dir = path.join(WIKICHAT_DIR, "ideas");
   const ideas = [];
@@ -340,6 +391,7 @@ function main() {
   // La knowledge est écrite directement (fichiers .md) si pas dry-run.
   if (!FLAGS.dryRun) fs.mkdirSync(OUT_DIR, { recursive: true });
   const knowledgeIndex = collectKnowledge(registry, OUT_DIR);
+  const conversationsIndex = collectConversations(OUT_DIR);
 
   const snapshot = {
     projects: { projects, generatedFields: "whitelist" },
@@ -361,12 +413,15 @@ function main() {
     counts: {
       projects: projects.length,
       knowledgeFiles: knowledgeIndex.length,
+      conversations: conversationsIndex.length,
       ideas: ideas.length,
       cartography: cartography ? 1 : 0,
     },
     redactions: report.redactions,
     filteredNoisyProjects: report.filtered.noisyProjects,
-    hash: crypto.createHash("sha256").update(serialized).digest("hex").slice(0, 16),
+    // Les fiches entrent dans l'empreinte : une fiche nouvelle ou enrichie par
+    // la nuit doit être publiée même si rien d'autre n'a bougé.
+    hash: crypto.createHash("sha256").update(serialized).update(JSON.stringify(conversationsIndex)).digest("hex").slice(0, 16),
   };
 
   // --- Écriture ---
@@ -386,6 +441,10 @@ function main() {
       JSON.stringify({ files: knowledgeIndex }, null, 2)
     );
     fs.writeFileSync(path.join(OUT_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(
+      path.join(OUT_DIR, "conversations-index.json"),
+      JSON.stringify({ conversations: conversationsIndex }, null, 2)
+    );
 
     // Index légers + fichiers granulaires : une composition GitHub ne sait que
     // lire un fichier ENTIER (pas filtrer du JSON). On pré-découpe donc pour une
@@ -435,6 +494,7 @@ function main() {
   console.log(`  Projets       : ${manifest.counts.projects} retenus, ${report.filtered.noisyProjects} filtrés (bruit)`);
   console.log(`  Knowledge     : ${manifest.counts.knowledgeFiles} fichiers .md`);
   console.log(`  Idées         : ${manifest.counts.ideas}`);
+  console.log(`  Conversations : ${manifest.counts.conversations} fiche(s)`);
   console.log(`  Cartographie  : ${cartography ? "1 (dernière)" : "absente"}`);
   console.log(`  Redactions    : ${report.redactions} champ(s) sensible(s) retiré(s)`);
   console.log(`  Hash snapshot : ${manifest.hash}`);
