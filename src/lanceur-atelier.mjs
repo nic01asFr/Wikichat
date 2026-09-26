@@ -117,6 +117,7 @@ export function demandeDeLancement(p, cfg = configAtelier()) {
   if (p.bypassAutorise === true) corps.mode_de_la_definition = true;
   if (p.model) corps.modele = p.model;
   if (p.conversation) corps.conversation = p.conversation;
+  if (p.branche) corps.branche = p.branche;
   if (Array.isArray(p.allowedTools) && p.allowedTools.length) corps.outils = p.allowedTools.map(String);
   return corps;
 }

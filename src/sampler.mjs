@@ -31,6 +31,7 @@ import { state } from "./state.mjs";
 import { recall, remember } from "./identity.mjs";
 import {
   resoudreModePermission, outilsAutorises, argumentsMcp, supprimerConfigMcp, environnementEnfant,
+  brancheDuLancement,
 } from "./lancement.mjs";
 import { lanceurActif, lancerParAtelier, configAtelier } from "./lanceur-atelier.mjs";
 
@@ -572,6 +573,11 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     claude_session_name: name,
     permission_mode: permission.mode,
   };
+  // J-b3 : un agent planifié qui modifie du code travaille sur une branche.
+  const branche = brancheDuLancement({
+    politique: options.politiqueBranche, planifie: options.planifie === true, spawnedBy, name,
+  });
+  if (branche) spawnEntry.branche = branche;
   try { upsertSpawnRegistry(spawnEntry); } catch { /* non-blocking */ }
 
   // Lot D : le tour est demandé à l'Atelier, qui le joue avec son harnais, le
@@ -581,9 +587,15 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     const r = await lancerParAtelier({
       projectPath, prompt, name, model, timeoutMs, spawnedBy,
       mode: permission.mode, bypassAutorise: options.bypassAutorise === true,
-      allowedTools: listeOutils(allowedTools),
-      conversation: options.atelierConversation || recall(name, "__atelier_conversation") || null,
+      allowedTools: listeOutils(allowedTools), branche,
+      conversation: branche ? null : (options.atelierConversation || recall(name, "__atelier_conversation") || null),
     });
+    // Une branche n'existe qu'avec les gardes de l'Atelier : pas de repli local
+    // qui ferait travailler l'agent directement dans le projet.
+    if (r.injoignable && branche) {
+      r.stderr = `${r.stderr} ; branche ${branche} requise : pas de repli hors de l'Atelier`;
+      r.injoignable = false;
+    }
     if (r.injoignable && configAtelier().repli) {
       claudeBin = findClaudeBin();
       console.warn(`[spawn] ${name} : ${r.stderr} — repli sur claude -p`);
@@ -875,6 +887,10 @@ export function spawnDaemon(projectPath, options = {}) {
     permission_mode: permission.mode,
     ...(options._sansAtelier ? { repli: options._sansAtelier } : {}),
   };
+  const brancheDaemon = brancheDuLancement({
+    politique: options.politiqueBranche, planifie: options.planifie === true, spawnedBy, name,
+  });
+  if (brancheDaemon) spawnEntry.branche = brancheDaemon;
   try { upsertSpawnRegistry(spawnEntry); } catch { /* non-blocking */ }
 
   // Lot D : un tour dans la conversation Atelier de l'agent, avec sa durée
@@ -886,10 +902,10 @@ export function spawnDaemon(projectPath, options = {}) {
       projectPath, prompt, name, model: options.model || null, attendreFin: false, spawnedBy,
       timeoutMs: MAX_DUREE_DAEMON_MS,
       mode: permission.mode, bypassAutorise: options.bypassAutorise === true,
-      allowedTools: listeOutils(options.allowedTools || null),
-      conversation: options.atelierConversation || recall(name, "__atelier_conversation") || null,
+      allowedTools: listeOutils(options.allowedTools || null), branche: brancheDaemon,
+      conversation: brancheDaemon ? null : (options.atelierConversation || recall(name, "__atelier_conversation") || null),
     }).then((r) => {
-      if (r.injoignable && configAtelier().repli) {
+      if (r.injoignable && configAtelier().repli && !brancheDaemon) {
         console.warn(`[spawn] ${name} : ${r.stderr} — repli sur le daemon local`);
         _releaseSlot(); _releaseQuota(spawnedBy);
         const repli = spawnDaemon(projectPath, { ...options, name, _sansAtelier: r.stderr || "Atelier injoignable" });

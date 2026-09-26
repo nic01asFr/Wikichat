@@ -100,6 +100,49 @@ export function outilsAutorises(allowedTools, mode) {
  */
 export const OUTILS_DE_BASE = Object.freeze(["mcp__wikichat", "Write(.wikichat/**)", "Edit(.wikichat/**)"]);
 
+// ── 1 bis. Branche d'un agent lancé (décision J-b3) ─────────────────────────
+
+/**
+ * Où travaille un agent lancé. Un agent qui MODIFIE du code (routine, trigger
+ * planifié) travaille sur une branche `agent/<origine>/<date>-<sujet>`, dans une
+ * copie tenue par l'Atelier, et sa fin de travail attend la personne dans
+ * « À valider ». Un réveil qui répond à un message travaille dans le projet.
+ *
+ * La politique se déclare dans la définition : `branche: auto|toujours|jamais`.
+ * `auto` (défaut) : branche pour une routine ou un trigger planifié (cron),
+ * pas pour un réveil ni pour un appel ad hoc.
+ */
+export const POLITIQUES_BRANCHE = Object.freeze(["auto", "toujours", "jamais"]);
+
+export function politiqueDeBranche(valeur) {
+  if (valeur === undefined || valeur === null || valeur === "") return "auto";
+  const v = String(valeur).trim().toLowerCase();
+  if (!POLITIQUES_BRANCHE.includes(v)) {
+    throw new Error(`branche : « ${valeur} » inconnue (${POLITIQUES_BRANCHE.join(", ")})`);
+  }
+  return v;
+}
+
+function sujet(texte) {
+  const s = String(texte || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s.slice(0, 40).replace(/-+$/g, "") || "agent";
+}
+
+/**
+ * La branche d'un lancement, ou null. `planifie` : lancé par une routine ou un
+ * trigger cron. Une politique illisible (définition ancienne) vaut `auto`.
+ */
+export function brancheDuLancement({ politique, planifie = false, spawnedBy = "", name = "", maintenant = new Date() } = {}) {
+  let p;
+  try { p = politiqueDeBranche(politique); } catch { p = "auto"; }
+  if (p === "jamais") return null;
+  if (p === "auto" && !planifie) return null;
+  const origine = String(spawnedBy || "wikichat").split(":").slice(0, 2).join("-");
+  const jour = maintenant.toISOString().slice(0, 10);
+  return `agent/${sujet(origine)}/${jour}-${sujet(name)}`;
+}
+
 // ── 2. Connexion wikichat ────────────────────────────────────────────────────
 
 /** Une entrée MCP n'est utilisable que si elle dit où se connecter. */

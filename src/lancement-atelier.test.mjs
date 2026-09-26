@@ -224,6 +224,86 @@ test("daemon, Atelier injoignable : repli sur le daemon local", async () => {
   } finally { process.env.WIKICHAT_ATELIER_URL = URL_ATELIER; }
 });
 
+// ── J-b3 : branche pour un travail planifié, pas pour un réveil ─────────────
+
+const { brancheDuLancement, politiqueDeBranche } = await import("./lancement.mjs");
+const { configureTriggers, registerTrigger, fireTrigger } = await import("./triggers.mjs");
+
+test("politique de branche : auto = branche si planifié ; toujours ; jamais", () => {
+  const maintenant = new Date("2026-09-26T10:00:00Z");
+  assert.equal(brancheDuLancement({ planifie: true, spawnedBy: "routine:revue-nuit", name: "Revueur", maintenant }),
+    "agent/routine-revue-nuit/2026-09-26-revueur");
+  assert.equal(brancheDuLancement({ planifie: false, spawnedBy: "trigger:evt-wake-any:mention", name: "x", maintenant }), null);
+  assert.equal(brancheDuLancement({ politique: "toujours", spawnedBy: "Claude-Code", name: "Été", maintenant }),
+    "agent/claude-code/2026-09-26-ete");
+  assert.equal(brancheDuLancement({ politique: "jamais", planifie: true, spawnedBy: "routine:x", name: "x" }), null);
+  assert.equal(brancheDuLancement({ politique: "n'importe", planifie: true, spawnedBy: "routine:x", name: "x" })?.startsWith("agent/"), true);
+  assert.throws(() => politiqueDeBranche("parfois"), /inconnue/);
+});
+
+test("routine en auto : l'agent travaille sur une branche agent/…, sans reprendre une conversation", async () => {
+  registerRoutine({
+    id: "nettoyage", steps: [{ action: "spawn", params: { name: "nettoyeur", repo_path: PROJET, prompt: "Range", timeoutMs: 30_000 } }],
+  });
+  reinitialiser();
+  await runRoutine("nettoyage");
+  const [d] = atelier.demandes;
+  assert.match(d.branche, /^agent\/routine-nettoyage\/\d{4}-\d{2}-\d{2}-nettoyeur$/);
+  assert.equal(d.conversation, undefined);
+  assert.equal(entree("nettoyeur").branche, d.branche);
+});
+
+test("routine en jamais (définition ou étape) : dans le projet", async () => {
+  registerRoutine({
+    id: "lecture", branche: "jamais",
+    steps: [{ action: "spawn", params: { name: "lecteur", repo_path: PROJET, prompt: "Lis", timeoutMs: 30_000 } }],
+  });
+  registerRoutine({
+    id: "lecture-etape",
+    steps: [{ action: "spawn", params: { name: "lecteur2", repo_path: PROJET, prompt: "Lis", branche: "jamais", timeoutMs: 30_000 } }],
+  });
+  reinitialiser();
+  await runRoutine("lecture");
+  await runRoutine("lecture-etape");
+  assert.equal(atelier.demandes.length, 2);
+  assert.ok(atelier.demandes.every((d) => d.branche === undefined));
+  assert.throws(() => registerRoutine({ id: "x", branche: "parfois", steps: [{ action: "wait", params: {} }] }), /inconnue/);
+});
+
+test("trigger cron en auto : branche ; trigger de réveil : pas de branche ; toujours : branche", async () => {
+  configureTriggers({
+    spawnFn: async (params) => spawnHeadless(params.repo_path, params.prompt, params),
+    budgetCheckFn: () => null,
+  });
+  const params = { name: "planifie", repo_path: PROJET, prompt: "Vérifie", timeoutMs: 30_000 };
+  registerTrigger({ id: "t-cron", type: "cron", enabled: false, config: { schedule: "0 4 * * *" }, action: { type: "spawn_session", params } });
+  registerTrigger({ id: "t-mention", type: "mention", enabled: false, config: { target_name: "reveille" },
+    action: { type: "spawn_session", params: { ...params, name: "reveille" } } });
+  registerTrigger({ id: "t-toujours", type: "mention", enabled: false, branche: "toujours", config: { target_name: "code" },
+    action: { type: "spawn_session", params: { ...params, name: "code" } } });
+  assert.throws(() => registerTrigger({ id: "t-faux", type: "cron", branche: "parfois", config: {}, action: { type: "spawn_session", params } }), /inconnue/);
+
+  reinitialiser();
+  await fireTrigger("t-cron", { force: true, source: "cron" });
+  await fireTrigger("t-mention", { force: true, source: "mention:m1" });
+  await fireTrigger("t-toujours", { force: true, source: "mention:m2" });
+  const parNom = Object.fromEntries(atelier.demandes.map((d) => [d.nom, d]));
+  assert.match(parNom.planifie.branche, /^agent\/trigger-t-cron\//);
+  assert.equal(parNom.reveille.branche, undefined, "un réveil travaille dans le projet");
+  assert.match(parNom.code.branche, /^agent\/trigger-t-toujours\//);
+});
+
+test("branche requise et Atelier injoignable : pas de repli dans le projet", async () => {
+  reinitialiser();
+  process.env.WIKICHAT_ATELIER_URL = "http://127.0.0.1:9";
+  try {
+    const r = await spawnHeadless(PROJET, "x", { name: "brancheur", politiqueBranche: "toujours", timeoutMs: 30_000 });
+    assert.equal(r.success, false);
+    assert.match(r.stderr, /pas de repli hors de l'Atelier/);
+    assert.equal(claudeLance(), false);
+  } finally { process.env.WIKICHAT_ATELIER_URL = URL_ATELIER; }
+});
+
 test.after(() => {
   serveur.close();
   process.chdir(os.tmpdir());

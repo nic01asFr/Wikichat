@@ -622,9 +622,21 @@ clé du propriétaire).
 
 `WIKICHAT_ATELIER_CLE_FICHIER` (clé du propriétaire) n'est plus lue.
 
+**Branche (décision J-b3).**
+- Une routine, une étape ou un trigger déclare `branche: auto|toujours|jamais`. Le défaut
+  est `auto`, validé à l'enregistrement, et les outils `register_routine` et
+  `register_trigger` l'exposent.
+- `auto` : un agent lancé par une routine ou par un trigger `cron` travaille sur une
+  branche `agent/<origine>/<AAAA-MM-JJ>-<sujet>`, dans une copie tenue par l'Atelier. Sa
+  fin de travail attend la fusion dans « À valider ». Un réveil (`evt-wake-any`, mention)
+  ou un appel ad hoc travaille dans le projet.
+- Un agent sur branche ne reprend pas de conversation.
+- Il n'a pas de repli `claude -p` : sans l'Atelier, il n'a pas ses gardes.
+- Le registre note `branche`.
+
 ### 13.2 Tests
 
-`npm run test:lancement` compte 42 cas :
+`npm run test:lancement` compte 47 cas :
 
 - `src/lanceur-atelier.test.mjs` (12), contre un faux Atelier :
   - le contrat de la demande ;
@@ -635,7 +647,7 @@ clé du propriétaire).
   - une clé refusée ;
   - un Atelier injoignable ;
   - l'arrêt.
-- `src/lancement-atelier.test.mjs` (9, nouveau), contre un faux Atelier HTTP réel et un
+- `src/lancement-atelier.test.mjs` (14, nouveau), contre un faux Atelier HTTP réel et un
   faux `claude` dans le PATH :
   - un réveil passe par l'Atelier sans `claude` local, et la conversation est reprise ;
   - le mode de la définition d'une routine (`plan`, `bypassPermissions`) est transmis
@@ -646,7 +658,10 @@ clé du propriétaire).
   - si l'Atelier est injoignable, le repli passe par `claude -p`, noté au registre ;
   - avec le repli interdit, l'échec est remonté ;
   - un daemon est demandé à l'Atelier avec une durée de 1 800 s ;
-  - si l'Atelier est injoignable, le daemon se replie en local.
+  - si l'Atelier est injoignable, le daemon se replie en local ;
+  - la politique de branche : une routine et un trigger `cron` en `auto` travaillent sur
+    une branche, un réveil non, et `jamais` et `toujours` sont respectés ;
+  - un agent sur branche ne se replie pas en local.
 
 Les autres suites passent : `npm test` (36 cas, contre un serveur de la branche isolé
 sur `PORT=3791`, avec un `HOME` temporaire), `test:hooks` (16), `test:lot-w` (16, plus
@@ -667,5 +682,3 @@ sur `PORT=3791`, avec un `HOME` temporaire), `test:hooks` (16), `test:lot-w` (16
 
 - Le mode `interactive` de `spawn_session` (un terminal ouvert pour une personne) lance
   toujours `claude` lui-même : c'est une fenêtre humaine, pas un agent lancé.
-- La réparation d'agents dans une branche (`branche` du contrat) n'est pas demandée par
-  wikichat : ses agents travaillent dans le dossier du projet, comme avant.

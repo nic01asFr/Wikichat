@@ -34,6 +34,7 @@ import os from "os";
 import { randomUUID } from "crypto";
 import { writeAtomicJSON } from "./persistence.mjs";
 import { executerJob, nomDuJob } from "./jobs/index.mjs";
+import { politiqueDeBranche } from "./lancement.mjs";
 
 /** Actions qu'une étape peut porter. Une action inconnue est refusée à l'enregistrement. */
 export const ACTIONS_ETAPE = Object.freeze(["spawn", "broadcast", "wait", "summarize", "sleep", "job"]);
@@ -121,6 +122,8 @@ export function registerRoutine(spec) {
     // Mode de permission des agents que la routine lance. Absent : acceptEdits.
     // bypassPermissions n'est honoré que s'il est écrit ici ou dans le step.
     ...(spec.permission_mode ? { permission_mode: String(spec.permission_mode) } : {}),
+    // J-b3 : où travaillent les agents de la routine (auto : sur une branche).
+    ...(spec.branche ? { branche: politiqueDeBranche(spec.branche) } : {}),
     enabled: spec.enabled !== false,
     created_at: existing?.created_at || new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -172,7 +175,7 @@ export async function runRoutine(id, params = {}, opts = {}) {
     try {
       const resolved = _resolveStep(step, params, stepResults);
       // L'origine d'un lancement nomme la routine : l'Atelier plafonne par origine.
-      const out = await _executeStep(resolved, { ...opts, routineId: opts.routineId || id, permission: modeDeLaDefinition(def, step) });
+      const out = await _executeStep(resolved, { ...opts, routineId: opts.routineId || id, permission: modeDeLaDefinition(def, step), politiqueBranche: brancheDeLaDefinition(def, step) });
       stepResults.push({ step: i, action: step.action, output: out });
     } catch (err) {
       status = "failed";
@@ -250,6 +253,12 @@ function _resolveStep(step, params, prevResults) {
  * valeur à interpoler (`{mode}`) est ignorée : un appelant de run_routine ne
  * doit pas pouvoir lever les garde-fous d'une routine qu'il n'a pas écrite.
  */
+export function brancheDeLaDefinition(def, step) {
+  const brut = step?.params?.branche ?? def?.branche ?? "auto";
+  if (typeof brut !== "string" || brut.includes("{")) return "auto";
+  try { return politiqueDeBranche(brut); } catch { return "auto"; }
+}
+
 export function modeDeLaDefinition(def, step) {
   const brut = step?.params?.permission_mode ?? def?.permission_mode ?? null;
   if (!brut || typeof brut !== "string" || brut.includes("{")) return null;
@@ -262,11 +271,14 @@ async function _executeStep(step, opts) {
   switch (action) {
     case "spawn": {
       if (!_ctx.spawn) throw new Error("spawn handler not configured");
-      const { permission_mode: _ignore, permissionMode: _ignore2, bypassAutorise: _ignore3, ...reste } = p;
+      const { permission_mode: _ignore, permissionMode: _ignore2, bypassAutorise: _ignore3, branche: _ignore4, ...reste } = p;
       const res = await _ctx.spawn({
         ...reste,
         permission_mode: opts.permission || null,
         bypassAutorise: Boolean(opts.permission),
+        // Une routine est un travail planifié : en `auto`, sur une branche.
+        politiqueBranche: opts.politiqueBranche || "auto",
+        planifie: true,
         spawnedBy: opts.spawnedBy || `routine:${opts.routineId || "?"}`,
         parentDepth: opts.parentDepth ?? 0,
       });

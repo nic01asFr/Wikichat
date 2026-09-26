@@ -3097,6 +3097,8 @@ ${lines.join("\n\n")}`);
       cache_seconds: z.number().optional(),
       permission_mode: z.enum(["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"]).optional()
         .describe("Mode de permission des agents lancés par la routine (défaut acceptEdits). bypassPermissions seulement si la routine l'exige, en connaissance de cause."),
+      branche: z.enum(["auto", "toujours", "jamais"]).optional()
+        .describe("Où travaillent ses agents : auto (défaut, une branche agent/… dans une copie, fusion par la personne), toujours, jamais (dans le projet)."),
     },
     async (spec) => {
       try {
@@ -3173,6 +3175,8 @@ ${lines.join("\n\n")}`);
       cooldown_s: z.number().optional().describe("Délai minimum entre 2 fires (défaut 30s)"),
       max_per_day: z.number().optional().describe("Cap quotidien d'actions abouties (défaut 24)"),
       description: z.string().optional(),
+      branche: z.enum(["auto", "toujours", "jamais"]).optional()
+        .describe("Où travaille l'agent lancé : auto (défaut : branche pour un cron, pas pour un réveil), toujours, jamais."),
     },
     async ({ action_type, action_params, ...rest }) => {
       try {

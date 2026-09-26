@@ -27,6 +27,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
+import { politiqueDeBranche } from "./lancement.mjs";
 import cron from "node-cron";
 import chokidar from "chokidar";
 import { writeAtomicJSON } from "./persistence.mjs";
@@ -255,6 +256,8 @@ export function registerTrigger(spec) {
     fire_count: 0,
     created_at: new Date().toISOString(),
     description: spec.description || "",
+    // J-b3 : où travaille l'agent lancé (auto : branche pour un cron).
+    ...(spec.branche ? { branche: politiqueDeBranche(spec.branche) } : {}),
   };
   // If replacing an existing trigger, preserve fire stats
   const existing = _triggers.get(id);
@@ -679,7 +682,13 @@ async function _runSpawnAction(t, params, source, message = null) {
     // Le mode de permission vient de la DÉFINITION du déclencheur (persistée,
     // visible au Pilote) : c'est la seule source admise pour bypassPermissions.
     // Sans mode déclaré, sampler retient acceptEdits.
-    const result = await _spawnFn({ ...params, bypassAutorise: true, spawnedBy: `trigger:${t.id}:${source}` });
+    const { branche: brancheDesParams, ...sansBranche } = params;
+    const result = await _spawnFn({
+      ...sansBranche, bypassAutorise: true, spawnedBy: `trigger:${t.id}:${source}`,
+      // J-b3 : un trigger planifié travaille sur une branche (auto) ; un réveil, non.
+      politiqueBranche: t.branche ?? brancheDesParams ?? "auto",
+      planifie: t.type === "cron",
+    });
     sysMsg("coordination",
       `🔔 [trigger ${t.id}] ${result?.success ? "✅" : "❌"} spawn "${params.name}" (${params.mode || "headless"})`);
     return result?.success ? { ok: true, detail: result } : { ok: false, reason: "echec_lancement", detail: result?.stderr || result?.error || "échec" };
