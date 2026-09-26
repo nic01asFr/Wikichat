@@ -8,7 +8,7 @@
  * transcript, le filtre (T10), prépare l'entrée (paroles de la personne et
  * réponse finale de chaque tour, jamais un résultat d'outil), la borne à
  * 58 000 caractères consigne comprise, et appelle le modèle par son relais,
- * sortie plafonnée à 800 jetons. Plus de lancement d'agent (lot D) : ni
+ * sortie plafonnée à 1 200 jetons. Plus de lancement d'agent (lot D) : ni
  * harnais (≈ 21 700 jetons par conversation), ni conversation ouverte dans le
  * projet `default`. Le modèle rend un objet JSON ; c'est le code qui range
  * (étape 3).
@@ -39,7 +39,7 @@ import { triggerMemoryPublish } from "../memory-publish-hook.mjs";
 
 export const PLAFONDS_NUIT = Object.freeze({
   conversations: 20,
-  jetons_sortie: 800,
+  jetons_sortie: 1200,
   echanges_min: 3,
   tentatives_max: 2,
 });
