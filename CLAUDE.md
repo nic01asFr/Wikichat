@@ -123,6 +123,7 @@ src/migration.mjs   — Reprise des données laissées sous le dossier de lancem
 src/connaissance.mjs — Seul lecteur de la connaissance (search_knowledge, /api/knowledge, wikichat://kb)
 src/cartographie.mjs — Graphe des projets, GET /api/cartographie
 src/closures.mjs    — Prompt du Closer, fiches de clôture
+src/memoire/       — Capitalisation des conversations (W8) : extraction, fiches, routine de nuit, mémoire de la personne, routes /api/memoire
 ```
 
 **Event model** — the core mechanism: a JavaScript detector costs nothing while
@@ -197,6 +198,7 @@ exists and is under `WIKICHAT_MAX_RESUME_MB` (5 MB); otherwise they start fresh.
 **Artifacts:** GET /api/projects/:slug/wikichat/artifacts
 **Knowledge:** GET /api/knowledge (?q=), /api/knowledge/:sujet
 **Carte:** GET /api/cartographie (docs/cartographie-contrat.md)
+**Mémoire:** GET /api/memoire/{rappel,fiches,fiches/:id,personne,personne.md,etat} ; écritures avec la clé du lanceur (docs/atelier-coherence.md §14)
 **Webhook:** POST /api/triggers/webhook/:id (fire a webhook trigger from anywhere)
 **Pilote:** GET /pilote + /pilote/api/* (scheduled agents, approval queue)
 

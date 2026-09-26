@@ -682,3 +682,158 @@ sur `PORT=3791`, avec un `HOME` temporaire), `test:hooks` (16), `test:lot-w` (16
 
 - Le mode `interactive` de `spawn_session` (un terminal ouvert pour une personne) lance
   toujours `claude` lui-même : c'est une fenêtre humaine, pas un agent lancé.
+
+## 14. W8 : capitalisation des conversations et mémoire de la personne
+
+Branche `v3-memoire` (depuis `098460c`), 26/09/2026, équipe M de la vague 3. Contrat
+côté Atelier : `Claude Code sspcloud/docs/vision/architecture-transverse.md` §1.6 bis
+(« État, vague 3 »), décisions A-7, S3 et S6. Tout est dans `src/memoire/`, sur les
+briques existantes : même stockage et même lecteur que la connaissance, jobs et
+triggers du lot W3, lancements du lot D.
+
+### 14.1 Ce qui a changé
+
+| Étape | Qui | Code |
+|---|---|---|
+| **(a) Faits** | le code, sans modèle, depuis le transcript **filtré** fourni par l'Atelier (`GET /v1/memoire/conversations/{id}`, clé du lanceur). Dates, surfaces, projet créé, créations, agents lancés, décisions (note `decision`, fichier `docs/decisions/`), fichiers touchés, commits, erreurs par outil, jetons, trois premiers messages de la personne. Une création en échec n'est pas un fait | `memoire/extraction.mjs`, `memoire/capitalisation.mjs` |
+| Quand | toutes les 15 min (trigger `memoire-faits`, job `capitaliser_faits`) pour les conversations **au repos** (30 min sans écriture, ou rangées) dont l'empreinte a changé ; tout de suite à la fin d'une conversation (hook `SessionEnd`, regroupé 15 s). 30 fiches par passage au plus | `memoire/triggers.mjs`, `hooks-serveur.mjs` (une ligne) |
+| **(b) Sens** | routine de nuit (trigger `memoire-nuit`, 03:30, job `capitaliser_nuit`), **née désactivée** (J-b2). Chaque conversation passe par **un lancement de l'Atelier** (`lancerParAtelier`, origine `wikichat:memoire:nuit`), modèle `qwen3-8-27b`, mode `dontAsk` (rien de ce qui n'est pas permis ne passe : ni écriture ni commande), aucune autorisation d'outil demandée, projet `default`. Le modèle rend un objet JSON (résumé de 5 lignes, sujets, décisions, questions, 3 candidats au plus) | `memoire/nuit.mjs` |
+| Plafonds (A-7) | 20 conversations par nuit ; entrée ≤ 30 000 jetons (caractères / 3,4) **et** ≤ 58 000 caractères (le lot D refuse un message de plus de 60 000) ; sortie demandée sous 800 jetons, dépassement compté ; une nuit par jour ; deux échecs sur une fiche et elle n'est plus retentée seule ; un refus de l'Atelier (plafond, clé) arrête la nuit. Bilan de chaque nuit dans `~/.wikichat/memoire/nuits.jsonl` (jetons estimés d'entrée et de sortie, surcoût du harnais) | `memoire/nuit.mjs` |
+| **(c) Rangement** | le code : `~/.wikichat/knowledge/conversations/<projet>/<id>.md` (une fiche par `session_id` de l'Atelier, l'identifiant du CLI noté à côté) et `conversations/index.jsonl`. Le sens ne remplace pas les faits : une conversation qui grandit garde son sens, marqué antérieur, jusqu'à la nuit suivante | `memoire/fiches.mjs` |
+| Recherche | `connaissance.mjs` lit les fiches (sujet `conversation:<id>`) : `search_knowledge` et `/api/knowledge` les trouvent. Elles ne sont pas centrales : **profil `code` = les fiches de son projet**, l'Assistant toutes. Le rappel (`chercherConversations`) lit l'index, sans accents, pondéré comme `chercher` | `connaissance.mjs` |
+| **Mémoire de la personne** | `~/.wikichat/memoire/personne.json` : `profil`, `preference`, `interpretation` n'entrent que par la personne (route écrite avec la clé, appelée par les commandes réservées de l'Atelier) ; les **faits** extraits par le code (projet créé, création, agent, décision) sont enregistrés **d'office**. Doublons ignorés ; un fait oublié n'est plus réenregistré ; profil ≤ 1 500 caractères, préférences ≤ 1 200 ; 200 faits au plus ; « Corriger » garde l'historique | `memoire/personne.mjs` |
+| Candidats | les candidats de la nuit partent dans « À valider » de l'Atelier (`POST /v1/memoire/propositions`, source `memoire`) : rien n'est retenu sans la personne | `memoire/nuit.mjs`, `memoire/atelier.mjs` |
+| **Publication (S6)** | `export-memory` exporte les fiches (`conversations/<projet>/<id>.md`, `conversations-index.json`), chemins retirés ; chaque fiche passe le scan anti-secret (un motif bloque l'export, le rapport ne recopie pas le secret) ; les fiches entrent dans l'empreinte du manifeste. `publish-memory` gère ces deux chemins. Ni le transcript, ni `memoire/` ne sont publiés | `scripts/export-memory.mjs`, `scripts/publish-memory.mjs` |
+
+**Routes** (`memoire/routes.mjs`, branchées par une ligne dans `server.mjs`) :
+
+| Route | Rôle |
+|---|---|
+| `GET /api/memoire/rappel?q&projet&depuis&limite` | les fiches proches : `{ total, fiches, resultats: [{ id, projet, genre, debut, fin, titre, resume, objets, statut, score }] }` |
+| `GET /api/memoire/fiches?projet&limite`, `GET /api/memoire/fiches/:id?projet` | l'index ; une fiche (identifiant ou préfixe unique de 8 caractères), 404 hors du projet demandé |
+| `GET /api/memoire/personne`, `GET /api/memoire/personne.md?partie=` | la mémoire de la personne ; une partie en markdown, pour un import `@` du contexte de l'Assistant (C1, équipe A) |
+| `GET /api/memoire/etat` | fiches par statut, éléments, dernières nuits |
+| `POST /api/memoire/personne`, `PATCH`, `DELETE /api/memoire/personne/:id` | **clé du lanceur** (`X-Atelier-Lanceur`) : 401 sans elle |
+| `POST /api/memoire/capitaliser` `{ ids? }` | un passage des faits, tout de suite (clé) |
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `WIKICHAT_MEMOIRE` | (vide) | `0` : ni triggers de la mémoire, ni passage à la fin d'une conversation |
+| `WIKICHAT_MEMOIRE_NUIT` | (vide) | `1` : le trigger de nuit naît actif (sinon la personne l'active) |
+| `WIKICHAT_MEMOIRE_MODELE` | `qwen3-8-27b` | modèle de la nuit |
+| `WIKICHAT_MEMOIRE_PROJET` | `default` | projet de l'Atelier où tournent les lancements de nuit |
+
+La clé du lanceur (`WIKICHAT_ATELIER_LANCEUR_CLE_FICHIER`) et l'adresse de l'Atelier
+(`WIKICHAT_ATELIER_URL`) sont celles du §13.
+
+### 14.2 Tests
+
+`npm run test:memoire` (nouveau, 14 cas) : extraction sur un transcript fixe ; entrée
+de la nuit (jamais un résultat d'outil, début et fin gardés sous plafond) ; fiche,
+index et même recherche que la connaissance, profil `code` borné ; faits d'office et
+oubli qui tient ; passage borné, repos, fin signalée ; doublons, plafonds, historique ;
+**routine de nuit** : 25 candidats → 20 lancements, chaque message ≤ 30 000 jetons et
+≤ 58 000 caractères, `qwen3-8-27b`, `dontAsk`, aucune autorisation d'outil, 60
+propositions (3 par conversation), une nuit par jour, les 5 restantes la nuit
+suivante ; refus de l'Atelier qui arrête la nuit ; réponse illisible notée et non
+retentée sans fin ; lecture de la sortie ; puis contre un serveur isolé : rappel et
+fiche bornés, écriture de la mémoire refusée sans la clé, `search_knowledge` en profil
+`code` sans les fiches d'un autre projet, triggers (nuit désactivée), export qui
+publie les fiches et qui **bloque** une fiche porteuse d'un jeton.
+
+Les autres suites passent : `npm test` (36, serveur isolé sur `PORT=3791` avec un
+`HOME` temporaire), `test:hooks` (16), `test:lot-w` (16, plus 1 sauté sous Windows),
+`test:profils` (14), `test:lancement` (47), `test:site` (3).
+
+Essai de bout en bout, hors suites (Atelier de la branche `v3-memoire` servi par
+uvicorn, wikichat isolé lisant sa clé) : une conversation dont le transcript porte un
+secret est fichée sans le secret ; `atelier_rappel` et `atelier_fiche` la rendent ;
+une proposition acceptée par la personne arrive dans `personne.json`.
+
+### 14.3 Mesures sur le pod (lecture seule, 26/09)
+
+| Objet | Mesure |
+|---|---|
+| Conversations de l'Atelier (`~/work/sessions/*.json`) | 54, toutes `kind=code` ; 44 d'au moins 3 échanges |
+| Registres par conversation (journal de l'Atelier + transcript du CLI) | moyenne 3,4 Mo, médiane 2,4 Mo, maximum 14,7 Mo (184 Mo en tout) ; 502 entrées en moyenne, 2 965 au plus |
+| Paroles de la personne | moyenne 16, médiane 11, maximum 74 |
+| Entrée préparée (paroles et textes du modèle, sans résultats d'outils) | moyenne 47 000 caractères (≈ 13 800 jetons), médiane 24 400 (≈ 7 200), maximum 209 000 (≈ 61 600) ; 9 conversations sur 44 dépassent 30 000 jetons, 15 dépassent 58 000 caractères |
+| Rythme | 1 à 10 conversations modifiées par jour sur les dix derniers jours (≈ 4,5) |
+| Conversations « Assistant » d'avant (`~/.claude/projects/-home-onyxia-work-wikichat-memory`) | 56 transcripts du CLI, 247 Ko en moyenne, une parole chacun : hors de l'Atelier, donc hors capitalisation |
+
+**Coût estimé de la nuit** : entrée ≤ 17 000 jetons par conversation (plafond du
+message), plus le plancher du harnais mesuré au relais (21 695 jetons) : ≈ 35 000
+jetons par conversation. Rattrapage : 44 conversations, trois nuits (20, 20, 4), ≈
+0,7 M jetons les deux premières. Régime : ≈ 3 à 4 conversations éligibles par jour, ≈
+120 000 jetons par nuit ; pire cas 20 × (17 000 + 21 700 + 800) ≈ 0,8 M. La durée sur
+`qwen3-8-27b` n'est pas mesurée (lancement réel interdit : pod en lecture seule).
+
+### 14.4 Mettre le pod à jour
+
+1. Déployer d'abord l'Atelier de la branche `v3-memoire` (routes `/v1/memoire/*`,
+   commandes, filtre T10), et le redémarrer.
+2. `cd ~/work/wikichat/src && git fetch origin && git checkout v3-memoire` (une fois
+   poussée), puis redémarrer wikichat. Aucune dépendance, aucune migration : les
+   dossiers `knowledge/conversations/` et `memoire/` naissent au premier passage.
+3. Vérifier, dans l'ordre :
+   ```sh
+   jq '.[] | select(.id|startswith("memoire-")) | {id, enabled}' ~/.wikichat/triggers.json
+   curl -s -X POST 127.0.0.1:3777/api/memoire/capitaliser -H "X-Atelier-Lanceur: $(cat ~/work/.secrets/atelier_lanceur_key)" -H 'Content-Type: application/json' -d '{}'
+   curl -s 127.0.0.1:3777/api/memoire/etat | jq '{fiches, par_statut, faits}'
+   grep -rlE 'ghp_|github_pat_|sk-' ~/.wikichat/knowledge/conversations | wc -l   # 0 attendu
+   ```
+   Le premier passage fiche au plus 30 conversations ; les suivantes au quart d'heure.
+4. La nuit consomme du modèle : c'est la personne qui l'active, dans le Pilote
+   (`POST /pilote/api/agent/memoire-nuit/toggle`). La première nuit traite le
+   rattrapage (20 conversations au plus). Pour un essai de jour, depuis une
+   conversation de l'Assistant : `fire_trigger(id="memoire-nuit", force=true)` (une
+   nuit entière, dans les mêmes plafonds). Puis :
+   ```sh
+   tail -1 ~/.wikichat/memoire/nuits.jsonl | jq '{traitees, reussies, echecs, propositions, jetons_entree_estimes, jetons_sortie_estimes, surcout_harnais_estime, arret}'
+   ```
+   Les propositions arrivent dans « À valider » (source Mémoire).
+5. Publication (S6) : le seul éditeur est le pod, par la brique existante. Poser
+   `WIKICHAT_MEMORY_REPO` (un clone de `wikichat-memory` sous `~/work/`, avec un jeton
+   d'écriture limité à ce dépôt dans `~/work/.secrets/`) dans l'environnement du service,
+   puis `node scripts/publish-memory.mjs --no-push` une fois et relire le commit. Ensuite
+   la publication repart après chaque clôture de projet et après chaque nuit qui a
+   enrichi des fiches (`triggerMemoryPublish`). La tâche planifiée du poste n'est pas
+   modifiée ici : voir « Poste » ci-dessous.
+6. Retour arrière : `WIKICHAT_MEMOIRE=0` et redémarrer, ou revenir à `098460c`. Les
+   fiches restent sur le disque, lisibles par `search_knowledge` tant que le code de
+   `v3-memoire` tourne ; supprimer `~/.wikichat/knowledge/conversations/` les retire.
+
+**Poste** (à faire par Nicolas, rien n'a été changé) : la tâche planifiée qui lance
+`sync-memory.mjs` toutes les 15 min depuis `Github Repositories/wikichat` publie une
+mémoire que le poste seul voit, sans les fiches du pod, et a divergé (T12 : 28 commits
+d'avance, 3 de retard). Dans l'ordre : (1) réconcilier une fois le dépôt
+`wikichat-memory` (garder la branche du pod, reprendre à la main ce qui n'existe que sur le
+poste, retirer les 19 axes en double `omen__*.md`) ; (2) désactiver la tâche planifiée
+(`node scripts/install-memory-refresh.mjs --uninstall` depuis ce dépôt, ou le
+Planificateur de tâches) ; elle faisait aussi l'ingestion des idées de la boîte
+d'arrivée du dépôt : à reprendre sur le pod (`scripts/ingest-inbox.mjs`) si elle sert ;
+(3) sur le poste, ne plus que lire le dépôt (`git pull`) ; (4) laisser le pod publier
+(étape 5 ci-dessus).
+
+### 14.5 Ce qui reste
+
+- Le plafond effectif d'entrée est celui du message du lot D (58 000 caractères, ≈
+  17 000 jetons), pas les 30 000 jetons d'A-7 : 15 conversations du pod sont
+  raccourcies au milieu. Monter à 30 000 demande de relever la limite de
+  `lancements.py` (équipe L) ou de passer l'entrée par un fichier lu en lecture seule.
+- Chaque lancement de nuit coûte le harnais d'un agent code (≈ 21 700 jetons) en plus
+  de l'entrée : un appel direct au relais, sans harnais, diviserait le coût par deux.
+  Ce n'est pas ce qu'A-7 demande (« par un lancement de l'Atelier »).
+- Les 20 lancements d'une nuit ouvrent 20 conversations dans le projet `default` de
+  l'Atelier ; elles sont exclues de la capitalisation (origine `wikichat:memoire`).
+- Recherche lexicale seule. `qwen3-embedding-8b` répond en 0,19 s pour un texte court
+  (mesuré sur une chaîne synthétique), mais sa qualité n'est pas mesurée sur de vraies
+  fiches : cela revient à envoyer le texte des conversations au point d'accès, ce que
+  la garde des permissions a refusé pendant la mesure. À décider par Nicolas, puis à
+  mesurer une fois des fiches avec leur sens (le résumé et les sujets de la nuit sont
+  ce qui rend le rappel utile : sur les seuls en-têtes, un message ultérieur de la
+  personne ne retrouve sa conversation dans les 5 premières que 7 fois sur 39).
+- Les conversations tenues hors de l'Atelier (terminal, anciennes sessions de
+  l'Assistant) ne sont pas fichées : l'Atelier ne les connaît pas.
+- La routine hebdomadaire de consolidation (diff du profil, `assistant-contexte.md`
+  §3.4) n'est pas écrite.

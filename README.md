@@ -307,7 +307,9 @@ npm run memory:refresh -- --uninstall                # retirer le battement
 | Triggers | `register_trigger`, `list_triggers`, `fire_trigger`, `set_trigger_enabled`, `delete_trigger` |
 | Jobs | `run_cartography`, `run_clustering` |
 
-Les jobs déterministes (`run_cartography`, `run_clustering`, `harmonize_ideas`, `audit_all_projects`, `scan_changes`, `absorb_closures`) s'appellent aussi sans agent : étape `job` d'une routine, action `job` d'un trigger (`src/jobs/index.mjs`). Un trigger créé par un agent (`register_trigger`) naît désactivé et se plafonne à 24 actions par jour par défaut ; la personne l'active depuis le Pilote.
+Les jobs déterministes (`run_cartography`, `run_clustering`, `harmonize_ideas`, `audit_all_projects`, `scan_changes`, `absorb_closures`, `capitaliser_faits`) s'appellent aussi sans agent : étape `job` d'une routine, action `job` d'un trigger (`src/jobs/index.mjs`). Un trigger créé par un agent (`register_trigger`) naît désactivé et se plafonne à 24 actions par jour par défaut ; la personne l'active depuis le Pilote.
+
+**Capitalisation des conversations (W8)** : `capitaliser_faits` fiche toutes les 15 min les conversations de l'Atelier au repos (faits extraits par le code, depuis le transcript filtré que fournit l'Atelier) dans `~/.wikichat/knowledge/conversations/<projet>/<id>.md`, que `search_knowledge` retrouve (en profil `code` : les fiches de son projet seulement). `capitaliser_nuit` (trigger `memoire-nuit`, né désactivé) en tire le sens la nuit, 20 conversations de 30 000 jetons au plus, par des lancements de l'Atelier. Détail : `docs/atelier-coherence.md` §14.
 
 ## Ressources MCP (6)
 
@@ -340,6 +342,8 @@ Les agents nommés reprennent leur session précédente (`--resume`) quand leur 
 | `GET /api/projects`, `/api/projects/:slug`, `/api/projects/scan` | Projets |
 | `GET /api/knowledge` (`?q=` pour chercher), `/api/knowledge/:sujet`, `/api/knowledge/:projet/:nom` | Connaissance : index, recherche, fiche |
 | `GET /api/cartographie` | Graphe des projets pour la carte de l'Atelier (contrat : `docs/cartographie-contrat.md`) |
+| `GET /api/memoire/rappel`, `/api/memoire/fiches`, `/api/memoire/fiches/:id`, `/api/memoire/personne`, `/api/memoire/personne.md`, `/api/memoire/etat` | Mémoire : rappel des conversations, fiches, mémoire de la personne (§14 de `docs/atelier-coherence.md`) |
+| `POST /api/memoire/personne`, `PATCH`/`DELETE /api/memoire/personne/:id`, `POST /api/memoire/capitaliser` | Écritures de la mémoire : clé du lanceur de l'Atelier (`X-Atelier-Lanceur`) seulement |
 | `GET /`, `/status`, `/api/health` | Santé |
 | `POST /api/triggers/webhook/:id` | Déclencher un trigger webhook |
 | `GET /pilote` + `/pilote/api/*` | Agents planifiés et file d'approbation |
