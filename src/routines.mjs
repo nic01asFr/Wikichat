@@ -171,7 +171,8 @@ export async function runRoutine(id, params = {}, opts = {}) {
     const step = def.steps[i];
     try {
       const resolved = _resolveStep(step, params, stepResults);
-      const out = await _executeStep(resolved, { ...opts, permission: modeDeLaDefinition(def, step) });
+      // L'origine d'un lancement nomme la routine : l'Atelier plafonne par origine.
+      const out = await _executeStep(resolved, { ...opts, routineId: opts.routineId || id, permission: modeDeLaDefinition(def, step) });
       stepResults.push({ step: i, action: step.action, output: out });
     } catch (err) {
       status = "failed";

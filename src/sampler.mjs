@@ -32,7 +32,7 @@ import { recall, remember } from "./identity.mjs";
 import {
   resoudreModePermission, outilsAutorises, argumentsMcp, supprimerConfigMcp, environnementEnfant,
 } from "./lancement.mjs";
-import { lanceurActif, lancerParAtelier } from "./lanceur-atelier.mjs";
+import { lanceurActif, lancerParAtelier, configAtelier } from "./lanceur-atelier.mjs";
 
 // ── Global respawn rate limiter ───────────────────────────────────────────────
 let _activeRespawns = 0;
@@ -492,6 +492,16 @@ export const PROMPT_TEMPLATES = {
     `Écris aussi dans .wikichat/artifacts/watchdog-<timestamp>.md comme backup. Termine.`,
 };
 
+/** `allowedTools` (tableau ou CSV) en tableau, ou null. */
+function listeOutils(allowedTools) {
+  if (!allowedTools) return null;
+  const liste = Array.isArray(allowedTools)
+    ? allowedTools.map(String)
+    : String(allowedTools).split(",").map((s) => s.trim());
+  const propre = liste.filter(Boolean);
+  return propre.length ? propre : null;
+}
+
 // ── spawnHeadless ─────────────────────────────────────────────────────────────
 
 /**
@@ -525,7 +535,7 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
   if (permission.avertissement) console.warn(`[spawn] ${name} : ${permission.avertissement}`);
   const viaAtelier = lanceurActif() === "atelier";
 
-  const claudeBin = viaAtelier ? null : findClaudeBin();
+  let claudeBin = viaAtelier ? null : findClaudeBin();
   if (!viaAtelier && !claudeBin) {
     return { success: false, stdout: "", stderr: "claude CLI not found", exitCode: -1 };
   }
@@ -560,29 +570,47 @@ export async function spawnHeadless(projectPath, prompt, options = {}) {
     status: "starting",
     prompt: prompt.slice(0, 200),
     claude_session_name: name,
-    permission_mode: viaAtelier ? null : permission.mode,
+    permission_mode: permission.mode,
   };
   try { upsertSpawnRegistry(spawnEntry); } catch { /* non-blocking */ }
 
-  // Lot D (inactif par défaut) : le tour est joué par l'Atelier, avec son
-  // harnais, ses secrets et son mode — pas par un `claude -p` de wikichat.
+  // Lot D : le tour est demandé à l'Atelier, qui le joue avec son harnais, le
+  // profil et le mode du projet, et ses plafonds — pas par un `claude -p` de
+  // wikichat. Repli sur `claude -p` seulement si l'Atelier ne répond pas.
   if (viaAtelier) {
     const r = await lancerParAtelier({
-      projectPath, prompt, name, model, timeoutMs,
+      projectPath, prompt, name, model, timeoutMs, spawnedBy,
+      mode: permission.mode, bypassAutorise: options.bypassAutorise === true,
+      allowedTools: listeOutils(allowedTools),
       conversation: options.atelierConversation || recall(name, "__atelier_conversation") || null,
     });
-    if (r.conversationId) { try { remember(name, "__atelier_conversation", r.conversationId); } catch { /* */ } }
-    try {
-      upsertSpawnRegistry({
-        ...spawnEntry,
-        status: r.success ? "done" : (r.bloque ? "awaiting_permission" : "failed"),
-        exit_code: r.exitCode,
-        ...(r.conversationId ? { atelier_conversation: r.conversationId } : {}),
-        ended_at: new Date().toISOString(),
-      });
-    } catch { /* */ }
-    _releaseSlot(); _releaseQuota(spawnedBy);
-    return { ...r, sessionId: null };
+    if (r.injoignable && configAtelier().repli) {
+      claudeBin = findClaudeBin();
+      console.warn(`[spawn] ${name} : ${r.stderr} — repli sur claude -p`);
+      spawnEntry.mode = "headless-repli";
+      spawnEntry.repli = r.stderr;
+      try { upsertSpawnRegistry(spawnEntry); } catch { /* */ }
+      if (!claudeBin) {
+        _releaseSlot(); _releaseQuota(spawnedBy);
+        return { success: false, stdout: "", stderr: `${r.stderr} ; claude CLI not found`, exitCode: -1 };
+      }
+    } else {
+      if (r.conversationId) { try { remember(name, "__atelier_conversation", r.conversationId); } catch { /* */ } }
+      try {
+        upsertSpawnRegistry({
+          ...spawnEntry,
+          status: r.success ? "done" : (r.refus ? "refused" : "failed"),
+          exit_code: r.exitCode,
+          ...(r.mode ? { permission_mode: r.mode } : {}),
+          ...(r.lancementId ? { atelier_lancement: r.lancementId } : {}),
+          ...(r.conversationId ? { atelier_conversation: r.conversationId } : {}),
+          ...(r.success ? {} : { error: r.stderr }),
+          ended_at: new Date().toISOString(),
+        });
+      } catch { /* */ }
+      _releaseSlot(); _releaseQuota(spawnedBy);
+      return { ...r, sessionId: null };
+    }
   }
 
   return new Promise((resolve) => {
@@ -779,7 +807,8 @@ export function spawnDaemon(projectPath, options = {}) {
   } = options;
   const permission = resoudreModePermission(options);
   if (permission.avertissement) console.warn(`[spawn] ${name} : ${permission.avertissement}`);
-  const viaAtelier = lanceurActif() === "atelier";
+  // `_sansAtelier` : le repli, quand l'Atelier n'a pas répondu à ce lancement.
+  const viaAtelier = !options._sansAtelier && lanceurActif() === "atelier";
 
   // Daemon mode is only spawnable by service / residents / principal
   // (not by random subagents — prevents fork-bomb cascades)
@@ -843,28 +872,45 @@ export function spawnDaemon(projectPath, options = {}) {
     mode: viaAtelier ? "atelier" : "daemon",
     status: "running",
     task: task || null,
-    permission_mode: viaAtelier ? null : permission.mode,
+    permission_mode: permission.mode,
+    ...(options._sansAtelier ? { repli: options._sansAtelier } : {}),
   };
   try { upsertSpawnRegistry(spawnEntry); } catch { /* non-blocking */ }
 
-  // Lot D (inactif par défaut) : un tour dans la conversation Atelier de
-  // l'agent. Pas de processus à surveiller ni de respawn : l'Atelier tient le
-  // tour, et le prochain réveil reprendra la même conversation.
+  // Lot D : un tour dans la conversation Atelier de l'agent, avec sa durée
+  // plafonnée (celle des daemons). Pas de processus à surveiller ni de
+  // respawn : l'Atelier tient le tour, et le prochain réveil reprendra la même
+  // conversation. Si l'Atelier ne répond pas, repli sur le daemon local.
   if (viaAtelier) {
     lancerParAtelier({
-      projectPath, prompt, name, model: options.model || null, attendreFin: false,
+      projectPath, prompt, name, model: options.model || null, attendreFin: false, spawnedBy,
+      timeoutMs: MAX_DUREE_DAEMON_MS,
+      mode: permission.mode, bypassAutorise: options.bypassAutorise === true,
+      allowedTools: listeOutils(options.allowedTools || null),
       conversation: options.atelierConversation || recall(name, "__atelier_conversation") || null,
     }).then((r) => {
+      if (r.injoignable && configAtelier().repli) {
+        console.warn(`[spawn] ${name} : ${r.stderr} — repli sur le daemon local`);
+        _releaseSlot(); _releaseQuota(spawnedBy);
+        const repli = spawnDaemon(projectPath, { ...options, name, _sansAtelier: r.stderr || "Atelier injoignable" });
+        if (!repli.success) {
+          try { upsertSpawnRegistry({ ...spawnEntry, status: "error", error: repli.error }); } catch { /* */ }
+        }
+        return;
+      }
       if (r.conversationId) { try { remember(name, "__atelier_conversation", r.conversationId); } catch { /* */ } }
       try {
         upsertSpawnRegistry({
           ...spawnEntry,
-          status: r.success ? "delegated" : "error",
+          status: r.success ? "delegated" : (r.refus ? "refused" : "error"),
           ...(r.success ? {} : { error: r.stderr }),
+          ...(r.mode ? { permission_mode: r.mode } : {}),
+          ...(r.lancementId ? { atelier_lancement: r.lancementId } : {}),
           ...(r.conversationId ? { atelier_conversation: r.conversationId } : {}),
         });
       } catch { /* */ }
-    }).catch(() => {}).finally(() => { _releaseSlot(); _releaseQuota(spawnedBy); });
+      _releaseSlot(); _releaseQuota(spawnedBy);
+    }).catch(() => { _releaseSlot(); _releaseQuota(spawnedBy); });
     return { success: true, pid: null, name, via: "atelier" };
   }
 

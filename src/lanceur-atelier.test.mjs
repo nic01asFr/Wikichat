@@ -1,10 +1,10 @@
 /**
- * lanceur-atelier.test.mjs — Lot D préparé : lancer un tour par l'API MCP de l'Atelier.
+ * lanceur-atelier.test.mjs — Lot D : demander le lancement à l'Atelier.
  *
- * Un faux Atelier (fetch simulé) répond comme `POST /mcp` : initialize avec
- * Mcp-Session-Id, puis tools/call de atelier_ouvrir / atelier_envoyer /
- * atelier_suivre au format de outils_conversation.py (charge JSON dans un
- * bloc texte, isError pour un refus).
+ * Un faux Atelier (fetch simulé) répond comme `POST /v1/lancements` et
+ * `GET /v1/lancements/<id>` (mcp_gateway/atelier/lancements.py) : 202 avec le
+ * lancement, 403 pour un refus (plafond, projet inconnu), 401 pour une clé
+ * refusée, et l'état du tour au suivi.
  *
  * Usage : node --test src/lanceur-atelier.test.mjs
  */
@@ -15,148 +15,161 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import {
-  lanceurActif, slugProjetAtelier, lancerParAtelier, configAtelier,
+  lanceurActif, slugProjetAtelier, lancerParAtelier, configAtelier, demandeDeLancement, arreterParAtelier,
 } from "./lanceur-atelier.mjs";
 
 const RACINE = fs.mkdtempSync(path.join(os.tmpdir(), "wikichat-atelier-"));
-const CLE = path.join(RACINE, "atelier_owner_key");
-fs.writeFileSync(CLE, "cle-proprietaire\n");
+const CLE = path.join(RACINE, "atelier_lanceur_key");
+fs.writeFileSync(CLE, "cle-du-lanceur\n");
 const PROJETS = path.join(RACINE, "projects");
 
 function cfg(extra = {}) {
   return {
     url: "http://127.0.0.1:8787", fichierCle: CLE, racineProjets: PROJETS,
-    projetDefaut: "default", delaiMs: 5000, ...extra,
+    projetDefaut: "default", delaiMs: 5000, pasSuiviMs: 5, repli: true, ...extra,
   };
 }
 
-/** Faux Atelier : consigne les appels, rejoue un scénario de `suivre`. */
-function fauxAtelier({ suivis = [{ fini: true, texte: "fait" }], refus = null } = {}) {
+/** Faux Atelier : consigne les appels, rejoue un scénario de suivi. */
+function fauxAtelier({ etats = ["en_cours", "fini"], statut = 202, erreur = null, jeter = null } = {}) {
   const appels = [];
   let n = 0;
   const fetchImpl = async (url, init) => {
-    const corps = JSON.parse(init.body);
-    appels.push({ url, entetes: init.headers, corps });
-    const repondre = (obj, entetes = {}) => ({
-      ok: true, status: 200,
-      headers: { get: (k) => entetes[k.toLowerCase()] ?? null },
-      text: async () => (obj === null ? "" : JSON.stringify(obj)),
-    });
-    if (init.headers.Authorization !== "Bearer cle-proprietaire") {
-      return { ok: false, status: 401, headers: { get: () => null }, text: async () => "" };
+    if (jeter) throw jeter;
+    const corps = init.body ? JSON.parse(init.body) : null;
+    appels.push({ url, methode: init.method, entetes: init.headers, corps });
+    const repondre = (status, obj) => ({ ok: status < 400, status, text: async () => JSON.stringify(obj) });
+    if (init.headers["X-Atelier-Lanceur"] !== "cle-du-lanceur") return repondre(401, { detail: "clé du lanceur requise" });
+    if (init.method === "POST" && url.endsWith("/v1/lancements")) {
+      if (statut !== 202) return repondre(statut, { statut: "refus", erreur });
+      return repondre(202, { statut: "fait", lancement: {
+        id: "lc-20260926-0000abcd", conversation: corps.conversation || "conv-42", etat: "en_cours",
+        mode: corps.mode || "acceptEdits", avertissements: [] } });
     }
-    if (corps.method === "initialize") {
-      return repondre({ jsonrpc: "2.0", id: corps.id, result: { serverInfo: { name: "atelier" } } }, { "mcp-session-id": "sess-mcp-1" });
+    if (init.method === "GET") {
+      const etat = etats[Math.min(n++, etats.length - 1)];
+      return repondre(200, { lancement: { id: "lc-20260926-0000abcd", etat, texte: etat === "fini" ? "rapport" : "", erreur: etat === "echec" ? "code 1" : "" } });
     }
-    if (corps.method === "notifications/initialized") return repondre(null);
-    const { name, arguments: args } = corps.params;
-    const outil = (charge, isError = false) => repondre({
-      jsonrpc: "2.0", id: corps.id,
-      result: { content: [{ type: "text", text: JSON.stringify(charge) }], isError },
-    });
-    if (refus && refus.outil === name) return outil({ erreur: refus.erreur }, true);
-    if (name === "atelier_ouvrir") return outil({ id: "conv-42", projet: args.projet, titre: args.titre, dossier: "/x", etat: "idle" });
-    if (name === "atelier_envoyer") return outil({ conversation: args.conversation, etat: "parti", curseur: 0 });
-    if (name === "atelier_suivre") {
-      const s = suivis[Math.min(n++, suivis.length - 1)];
-      return outil({ conversation: args.conversation, etat: "idle", curseur: n, blocs: [], ...s });
-    }
-    return outil({ erreur: "inconnu" }, true);
+    if (url.endsWith("/arreter")) return repondre(200, { lancement: { etat: "arrete" } });
+    return repondre(404, {});
   };
   return { appels, fetchImpl };
 }
 
-test("lanceur : claude par défaut, atelier seulement si demandé", () => {
+test("lanceur : auto par défaut — l'Atelier dès que sa clé existe, claude sinon", () => {
   const avant = process.env.WIKICHAT_LANCEUR;
   try {
     delete process.env.WIKICHAT_LANCEUR;
-    assert.equal(lanceurActif(), "claude");
+    assert.equal(lanceurActif(cfg()), "atelier");
+    assert.equal(lanceurActif(cfg({ fichierCle: path.join(RACINE, "absente") })), "claude");
+    process.env.WIKICHAT_LANCEUR = "claude";
+    assert.equal(lanceurActif(cfg()), "claude");
     process.env.WIKICHAT_LANCEUR = "Atelier";
-    assert.equal(lanceurActif(), "atelier");
-    process.env.WIKICHAT_LANCEUR = "autre";
-    assert.equal(lanceurActif(), "claude");
+    assert.equal(lanceurActif(cfg({ fichierCle: path.join(RACINE, "absente") })), "atelier");
   } finally {
     if (avant === undefined) delete process.env.WIKICHAT_LANCEUR; else process.env.WIKICHAT_LANCEUR = avant;
   }
 });
 
-test("configuration par défaut : Atelier local, clé dans ~/work/.secrets", () => {
+test("configuration par défaut : Atelier local, clé du lanceur dans ~/work/.secrets, repli permis", () => {
   const c = configAtelier();
   assert.equal(c.url, "http://127.0.0.1:8787");
-  assert.match(c.fichierCle.replace(/\\/g, "/"), /work\/\.secrets\/atelier_owner_key$/);
+  assert.match(c.fichierCle.replace(/\\/g, "/"), /work\/\.secrets\/atelier_lanceur_key$/);
+  assert.equal(c.repli, true);
 });
 
 test("slug : premier dossier sous la racine des projets, sinon projet par défaut", () => {
   assert.equal(slugProjetAtelier(path.join(PROJETS, "lecteur-grist", "src"), cfg()), "lecteur-grist");
   assert.equal(slugProjetAtelier(path.join(PROJETS, "lecteur-grist"), cfg()), "lecteur-grist");
   assert.equal(slugProjetAtelier(path.join(RACINE, "ailleurs"), cfg()), "default");
-  assert.equal(slugProjetAtelier(PROJETS, cfg()), "default");
 });
 
-test("nouvel agent : ouvrir, envoyer, suivre jusqu'à la fin", async () => {
-  const { appels, fetchImpl } = fauxAtelier({ suivis: [{}, { fini: true, texte: "rapport" }] });
+test("demande : origine, projet, identité, mode, durée, outils", () => {
+  const d = demandeDeLancement({
+    projectPath: path.join(PROJETS, "lecteur-grist"), prompt: "fais ceci", name: "Agent-X",
+    spawnedBy: "trigger:evt-wake-any:mention", mode: "plan", timeoutMs: 90_500, model: "sonnet",
+    conversation: "conv-7", allowedTools: ["mcp__wikichat", "Read"],
+  }, cfg());
+  assert.equal(d.origine, "wikichat:trigger:evt-wake-any:mention");
+  assert.equal(d.projet, "lecteur-grist");
+  assert.equal(d.nom, "Agent-X");
+  assert.equal(d.mode, "plan");
+  assert.equal(d.mode_de_la_definition, undefined, "un mode ad hoc ne dit jamais venir d'une définition");
+  assert.deepEqual(d.plafonds, { duree_s: 91 });
+  assert.equal(d.modele, "sonnet");
+  assert.equal(d.conversation, "conv-7");
+  assert.deepEqual(d.outils, ["mcp__wikichat", "Read"]);
+  const def = demandeDeLancement({ projectPath: RACINE, prompt: "p", mode: "bypassPermissions", bypassAutorise: true }, cfg());
+  assert.equal(def.mode_de_la_definition, true);
+  assert.equal(def.projet, "default");
+});
+
+test("tour suivi jusqu'à sa fin : succès, texte, conversation et mode rendus", async () => {
+  const { appels, fetchImpl } = fauxAtelier({ etats: ["en_cours", "en_cours", "fini"] });
   const r = await lancerParAtelier({
     projectPath: path.join(PROJETS, "lecteur-grist"), prompt: "fais ceci", name: "Agent-X",
-    model: "sonnet", cfg: cfg(), fetchImpl, timeoutMs: 10000,
+    cfg: cfg(), fetchImpl, timeoutMs: 10000,
   });
   assert.equal(r.success, true, r.stderr);
-  assert.equal(r.conversationId, "conv-42");
   assert.equal(r.stdout, "rapport");
-  const outils = appels.filter((a) => a.corps.method === "tools/call").map((a) => a.corps.params);
-  assert.deepEqual(outils.map((o) => o.name), ["atelier_ouvrir", "atelier_envoyer", "atelier_suivre", "atelier_suivre"]);
-  assert.deepEqual(outils[0].arguments, { projet: "lecteur-grist", titre: "Agent-X", modele: "sonnet" });
-  assert.deepEqual(outils[1].arguments, { conversation: "conv-42", message: "fais ceci" });
-  assert.ok(outils[2].arguments.attendre_s <= 25);
-  // Session MCP portée après initialize
-  assert.equal(appels.at(-1).entetes["Mcp-Session-Id"], "sess-mcp-1");
+  assert.equal(r.conversationId, "conv-42");
+  assert.equal(r.lancementId, "lc-20260926-0000abcd");
+  assert.equal(appels[0].methode, "POST");
+  assert.ok(appels[0].url.endsWith("/v1/lancements"));
+  assert.equal(appels.filter((a) => a.methode === "GET").length, 3);
+  assert.ok(!("Authorization" in appels[0].entetes), "jamais la clé du propriétaire");
 });
 
-test("agent connu : la conversation est reprise, pas rouverte", async () => {
-  const { appels, fetchImpl } = fauxAtelier();
-  const r = await lancerParAtelier({ projectPath: RACINE, prompt: "suite", name: "Agent-X", conversation: "conv-7", cfg: cfg(), fetchImpl });
-  assert.equal(r.success, true);
-  const noms = appels.filter((a) => a.corps.method === "tools/call").map((a) => a.corps.params.name);
-  assert.ok(!noms.includes("atelier_ouvrir"));
-  assert.equal(r.conversationId, "conv-7");
+test("échec du tour dans l'Atelier : remonté tel quel", async () => {
+  const { fetchImpl } = fauxAtelier({ etats: ["echec"] });
+  const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", name: "Z", cfg: cfg(), fetchImpl });
+  assert.equal(r.success, false);
+  assert.equal(r.etat, "echec");
+  assert.match(r.stderr, /code 1/);
 });
 
-test("sans attendre la fin (daemon) : rend la main après envoyer", async () => {
+test("sans attendre la fin (daemon) : rend la main après la demande", async () => {
   const { appels, fetchImpl } = fauxAtelier();
   const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", name: "D", attendreFin: false, cfg: cfg(), fetchImpl });
   assert.equal(r.success, true);
-  assert.ok(!appels.some((a) => a.corps.params?.name === "atelier_suivre"));
+  assert.equal(appels.length, 1);
 });
 
-test("tour bloqué sur une autorisation : on rend la main, sans décider à la place de l'humain", async () => {
-  const { appels, fetchImpl } = fauxAtelier({ suivis: [{ autorisations_attendues: [{ request_id: "r1" }] }] });
-  const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", name: "B", cfg: cfg(), fetchImpl });
-  assert.equal(r.success, false);
-  assert.equal(r.bloque, true);
-  assert.ok(!appels.some((a) => a.corps.params?.name === "atelier_decider"));
-});
-
-test("refus de l'Atelier (projet inconnu) : erreur remontée", async () => {
-  const { fetchImpl } = fauxAtelier({ refus: { outil: "atelier_ouvrir", erreur: "projet inconnu : zz" } });
+test("refus de l'Atelier (plafond) : refus, jamais un repli", async () => {
+  const { fetchImpl } = fauxAtelier({ statut: 403, erreur: "plafond atteint : 3 agents lancés tournent déjà" });
   const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", name: "Z", cfg: cfg(), fetchImpl });
   assert.equal(r.success, false);
-  assert.match(r.stderr, /projet inconnu/);
+  assert.equal(r.refus, true);
+  assert.equal(r.injoignable, undefined);
+  assert.match(r.stderr, /plafond atteint/);
 });
 
-test("clé absente : aucun appel, erreur explicite", async () => {
-  const { appels, fetchImpl } = fauxAtelier();
-  const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", name: "Z", cfg: cfg({ fichierCle: path.join(RACINE, "absente") }), fetchImpl });
-  assert.equal(r.success, false);
-  assert.match(r.stderr, /clé Atelier introuvable/);
-  assert.equal(appels.length, 0);
-});
-
-test("clé refusée : 401 remonté", async () => {
+test("clé refusée (401) : refus, pas de repli", async () => {
   const mauvaise = path.join(RACINE, "mauvaise");
   fs.writeFileSync(mauvaise, "autre");
   const { fetchImpl } = fauxAtelier();
-  const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", name: "Z", cfg: cfg({ fichierCle: mauvaise }), fetchImpl });
-  assert.equal(r.success, false);
+  const r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", cfg: cfg({ fichierCle: mauvaise }), fetchImpl });
+  assert.equal(r.refus, true);
   assert.match(r.stderr, /401/);
+});
+
+test("Atelier injoignable (connexion refusée, 503, clé absente) : injoignable, pour le repli", async () => {
+  const refus = new TypeError("fetch failed");
+  let r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", cfg: cfg(), fetchImpl: fauxAtelier({ jeter: refus }).fetchImpl });
+  assert.equal(r.injoignable, true);
+  r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", cfg: cfg(), fetchImpl: fauxAtelier({ statut: 503 }).fetchImpl });
+  assert.equal(r.injoignable, true);
+  const { appels, fetchImpl } = fauxAtelier();
+  r = await lancerParAtelier({ projectPath: RACINE, prompt: "p", cfg: cfg({ fichierCle: path.join(RACINE, "absente") }), fetchImpl });
+  assert.equal(r.injoignable, true);
+  assert.equal(appels.length, 0);
+});
+
+test("arrêter : la demande part à l'Atelier", async () => {
+  const { appels, fetchImpl } = fauxAtelier();
+  const r = await arreterParAtelier("lc-20260926-0000abcd", { cfg: cfg(), fetchImpl });
+  assert.equal(r.ok, true);
+  assert.ok(appels[0].url.endsWith("/v1/lancements/lc-20260926-0000abcd/arreter"));
 });
 
 test.after(() => { try { fs.rmSync(RACINE, { recursive: true, force: true }); } catch { /* */ } });

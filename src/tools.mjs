@@ -26,6 +26,7 @@ import {
 } from "./persistence.mjs";
 import { recordHeartbeat, loadCronRegistry, saveCronRegistry, upsertCron, deleteCron } from "./resilience.mjs";
 import { spawnHeadless, spawnDaemon, findClaudeBin, PROMPT_TEMPLATES } from "./sampler.mjs";
+import { arreterParAtelier } from "./lanceur-atelier.mjs";
 import { resoudreModePermission, argumentsMcp, OUTILS_DE_BASE } from "./lancement.mjs";
 import { restoreIdentity, remember, recall, forgetKey } from "./identity.mjs";
 import { registerTrigger, listTriggers, deleteTrigger, setEnabled, fireTrigger } from "./triggers.mjs";
@@ -2946,9 +2947,8 @@ ${lines.join("\n\n")}`);
       const isPrincipal = caller === principalName;
 
       const reg = loadSpawnRegistry();
-      const entry = reg.find(e => e.name === name);
+      const entry = [...reg].reverse().find(e => e.name === name);
       if (!entry) return txt(`❌ "${name}" introuvable dans le spawn registry.`);
-      if (!entry.pid) return txt(`❌ "${name}" n'a pas de PID enregistré.`);
 
       const isWorker = typeof entry.spawned_by === "string" && entry.spawned_by.startsWith("trigger:");
       const isOwner = entry.spawned_by === caller;
@@ -2959,6 +2959,16 @@ ${lines.join("\n\n")}`);
       if (!isOwner && !isPrincipal) {
         return txt(`🚫 "${name}" est owned par ${entry.spawned_by}, pas par toi (${caller}).`);
       }
+
+      // Lancé par l'Atelier (lot D) : pas de processus ici, c'est l'Atelier
+      // qui tient le tour. On lui demande de l'arrêter.
+      if (entry.atelier_lancement) {
+        const r = await arreterParAtelier(entry.atelier_lancement);
+        if (!r.ok) return txt(`⚠️ "${name}" : l'Atelier n'a pas pu arrêter le lancement ${entry.atelier_lancement} (${r.erreur || "?"}).`);
+        upsertSpawnRegistry({ ...entry, status: "ended", ended_at: new Date().toISOString(), ended_reason: `killed_by:${caller}` });
+        return txt(`🗑️  "${name}" (lancement Atelier ${entry.atelier_lancement}) arrêté par ${caller}.`);
+      }
+      if (!entry.pid) return txt(`❌ "${name}" n'a pas de PID enregistré.`);
 
       try {
         process.kill(entry.pid, "SIGTERM");

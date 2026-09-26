@@ -1,25 +1,35 @@
 /**
- * lanceur-atelier.mjs — Lancer un agent PAR l'Atelier plutôt que par `claude -p`.
+ * lanceur-atelier.mjs — Demander le lancement d'un agent à l'Atelier (lot D).
  *
- * Lot D de la cohérence de projet (docs/atelier-coherence.md). Préparé, pas
- * activé : tant que `WIKICHAT_LANCEUR` ne vaut pas `atelier`, rien ici n'est
- * appelé et wikichat lance `claude -p` comme avant.
+ * Jusqu'ici wikichat lançait `claude -p` lui-même : un réveil sur mention, une
+ * routine, un trigger tournaient HORS de l'Atelier — sans fiche, sans le profil
+ * du projet, avec un mode à part, et personne ne les voyait. Désormais il
+ * DEMANDE le lancement à l'Atelier, qui :
+ *   - crée (ou reprend) une conversation : une fiche, donc une identité, visible
+ *     dans l'interface ;
+ *   - lui applique le profil `code` du projet visé et le mode du projet ;
+ *   - tient les plafonds : durée, nombre simultané, nombre par jour et par
+ *     origine (J-b).
  *
- * Pourquoi : un réveil wikichat reprenait la conversation HORS de l'Atelier —
- * sans fiche, sans les secrets ni les connecteurs du harnais, avec un mode de
- * permission à part. En passant par l'Atelier, le tour est joué par le même
- * harnais que tous les autres, s'affiche dans l'interface, et un humain peut
- * reprendre la main.
+ * Contrat (Atelier, `mcp_gateway/atelier/lancements.py`) :
+ *   POST /v1/lancements          en-tête X-Atelier-Lanceur: <clé>
+ *     { origine, projet, dossier?, nom?, titre?, message, mode?,
+ *       mode_de_la_definition?, plafonds: { duree_s, jetons? }, modele?,
+ *       conversation?, outils? }
+ *     → 202 { statut: "fait", lancement: { id, conversation, etat, mode, … } }
+ *     → 403 { statut: "refus", erreur }  (plafond, projet inconnu, …)
+ *   GET  /v1/lancements/<id>     → { lancement: { etat, texte, erreur, … } }
+ *     etat ∈ en_cours | fini | echec | delai | arrete | interrompu
+ *   POST /v1/lancements/<id>/arreter
  *
- * Comment : l'Atelier expose ses verbes en MCP (streamable HTTP, `POST /mcp`,
- * porteur = clé propriétaire). On en utilise deux, plus un troisième pour
- * savoir quand le tour a fini :
- *   - atelier_ouvrir  { projet, titre?, modele? }     → { id, projet, dossier, … }
- *   - atelier_envoyer { conversation, message }        → { etat: "parti", curseur }
- *   - atelier_suivre  { conversation, curseur?, attendre_s? (≤ 30) }
- *                                                      → { blocs, curseur, fini?, texte?, erreur?,
- *                                                          autorisations_attendues? }
- * Schémas lus dans atelier-src/mcp_gateway/atelier/outils_conversation.py.
+ * La clé est celle du LANCEUR (`~/work/.secrets/atelier_lanceur_key`), posée par
+ * l'Atelier à son démarrage : distincte de la clé du propriétaire, elle ne sert
+ * qu'à demander un lancement, dans les plafonds.
+ *
+ * REPLI : si l'Atelier ne répond pas (connexion refusée, délai, 502/503/504),
+ * l'appelant retombe sur `claude -p` comme avant (`WIKICHAT_LANCEUR_REPLI=0`
+ * l'interdit). Un REFUS de l'Atelier (plafond, projet inconnu) n'est jamais
+ * contourné par le repli : ce serait sauter les plafonds.
  */
 
 import fs from "fs";
@@ -28,21 +38,29 @@ import os from "os";
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-/** `claude` (défaut) ou `atelier`. */
-export function lanceurActif() {
-  const v = String(process.env.WIKICHAT_LANCEUR || "claude").trim().toLowerCase();
-  return v === "atelier" ? "atelier" : "claude";
-}
-
 export function configAtelier() {
   const secrets = path.join(os.homedir(), "work", ".secrets");
   return {
     url: String(process.env.WIKICHAT_ATELIER_URL || "http://127.0.0.1:8787").replace(/\/+$/, ""),
-    fichierCle: process.env.WIKICHAT_ATELIER_CLE_FICHIER || path.join(secrets, "atelier_owner_key"),
+    fichierCle: process.env.WIKICHAT_ATELIER_LANCEUR_CLE_FICHIER || path.join(secrets, "atelier_lanceur_key"),
     racineProjets: process.env.WIKICHAT_ATELIER_PROJETS || path.join(os.homedir(), "work", "projects"),
     projetDefaut: process.env.WIKICHAT_ATELIER_PROJET_DEFAUT || "default",
-    delaiMs: parseInt(process.env.WIKICHAT_ATELIER_DELAI_MS || "45000", 10),
+    delaiMs: parseInt(process.env.WIKICHAT_ATELIER_DELAI_MS || "20000", 10),
+    pasSuiviMs: parseInt(process.env.WIKICHAT_ATELIER_SUIVI_MS || "2000", 10),
+    repli: String(process.env.WIKICHAT_LANCEUR_REPLI ?? "1").trim() !== "0",
   };
+}
+
+/**
+ * `atelier` ou `claude`. `WIKICHAT_LANCEUR` vaut `auto` par défaut : l'Atelier
+ * dès que sa clé de lanceur existe (le pod), `claude` sinon (un poste sans
+ * Atelier). `claude` et `atelier` forcent l'un ou l'autre.
+ */
+export function lanceurActif(cfg = configAtelier()) {
+  const v = String(process.env.WIKICHAT_LANCEUR || "auto").trim().toLowerCase();
+  if (v === "atelier") return "atelier";
+  if (v === "claude") return "claude";
+  return lireCleAtelier(cfg) ? "atelier" : "claude";
 }
 
 /**
@@ -68,131 +86,128 @@ export function lireCleAtelier(cfg = configAtelier()) {
   } catch { return null; }
 }
 
-// ── Client MCP minimal (streamable HTTP, réponses JSON) ──────────────────────
-
-export class ClientMcpAtelier {
-  constructor({ url, cle, fetchImpl = globalThis.fetch, delaiMs = 45000 }) {
-    this.url = `${url}/mcp`;
-    this.cle = cle;
-    this.fetch = fetchImpl;
-    this.delaiMs = delaiMs;
-    this.session = null;
-    this.suivant = 1;
-  }
-
-  async _poster(corps) {
-    const entetes = {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      Authorization: `Bearer ${this.cle}`,
-    };
-    if (this.session) entetes["Mcp-Session-Id"] = this.session;
-    const r = await this.fetch(this.url, {
-      method: "POST",
-      headers: entetes,
-      body: JSON.stringify(corps),
-      signal: AbortSignal.timeout(this.delaiMs),
-    });
-    if (r.status === 401) throw new Error("Atelier : clé refusée (401)");
-    if (!r.ok) throw new Error(`Atelier : HTTP ${r.status}`);
-    const sid = r.headers?.get?.("mcp-session-id");
-    if (sid) this.session = sid;
-    const texte = await r.text();
-    return texte ? JSON.parse(texte) : {};
-  }
-
-  async _ouvrirSession() {
-    if (this.session) return;
-    const rep = await this._poster({
-      jsonrpc: "2.0", id: this.suivant++, method: "initialize",
-      params: {
-        protocolVersion: "2025-03-26",
-        capabilities: {},
-        clientInfo: { name: "wikichat", version: "2.0.0" },
-      },
-    });
-    if (rep.error) throw new Error(`Atelier : initialize — ${rep.error.message || "erreur"}`);
-    await this._poster({ jsonrpc: "2.0", method: "notifications/initialized" });
-  }
-
-  /** Appelle un outil `atelier_*` et rend sa charge JSON décodée. */
-  async appeler(nom, args = {}) {
-    await this._ouvrirSession();
-    const rep = await this._poster({
-      jsonrpc: "2.0", id: this.suivant++, method: "tools/call",
-      params: { name: nom, arguments: args },
-    });
-    if (rep.error) throw new Error(`Atelier : ${nom} — ${rep.error.message || "erreur"}`);
-    const res = rep.result || {};
-    const texte = (res.content || []).filter((c) => c && c.type === "text").map((c) => c.text).join("");
-    let charge = {};
-    try { charge = texte ? JSON.parse(texte) : {}; } catch { charge = { texte }; }
-    if (res.isError) throw new Error(`Atelier : ${nom} — ${charge.erreur || texte || "refus"}`);
-    return charge;
-  }
-}
-
-// ── Lancement ────────────────────────────────────────────────────────────────
+// ── La demande ───────────────────────────────────────────────────────────────
 
 /**
- * Ouvre (ou reprend) la conversation Atelier d'un agent et y envoie un tour.
+ * Le corps de `POST /v1/lancements` pour un lancement de wikichat.
  *
  * @param {object} p
  *   @param {string}  p.projectPath
  *   @param {string}  p.prompt
- *   @param {string}  p.name            titre de la conversation à l'ouverture
+ *   @param {string}  [p.name]           nom de l'agent : son identité wikichat
+ *   @param {string}  [p.spawnedBy]      qui demande (trigger:…, routine:…, un agent)
+ *   @param {string}  [p.mode]           mode déjà résolu par `resoudreModePermission`
+ *   @param {boolean} [p.bypassAutorise] vrai si le mode vient d'une DÉFINITION
+ *   @param {number}  [p.timeoutMs]      durée maximale du tour
  *   @param {string}  [p.model]
- *   @param {string}  [p.conversation]  conversation Atelier déjà connue de l'agent
- *   @param {boolean} [p.attendreFin=true]  suivre le tour jusqu'à sa fin
- *   @param {number}  [p.timeoutMs]
- *   @param {object}  [p.cfg]  configuration (tests)
- *   @param {Function}[p.fetchImpl]  (tests)
- * @returns {Promise<{ success, stdout, stderr, exitCode, conversationId, bloque? }>}
+ *   @param {string}  [p.conversation]   conversation Atelier déjà tenue par l'agent
+ *   @param {string[]}[p.allowedTools]   liste fixée par l'appelant (Pilote)
+ */
+export function demandeDeLancement(p, cfg = configAtelier()) {
+  const corps = {
+    origine: `wikichat:${p.spawnedBy || "wikichat-service"}`,
+    projet: slugProjetAtelier(p.projectPath, cfg),
+    dossier: p.projectPath || undefined,
+    nom: p.name || undefined,
+    titre: p.name || undefined,
+    message: p.prompt,
+    plafonds: { duree_s: Math.max(1, Math.ceil((p.timeoutMs || 5 * 60 * 1000) / 1000)) },
+  };
+  if (p.mode) corps.mode = p.mode;
+  if (p.bypassAutorise === true) corps.mode_de_la_definition = true;
+  if (p.model) corps.modele = p.model;
+  if (p.conversation) corps.conversation = p.conversation;
+  if (Array.isArray(p.allowedTools) && p.allowedTools.length) corps.outils = p.allowedTools.map(String);
+  return corps;
+}
+
+const INJOIGNABLE = new Set([502, 503, 504]);
+const ETATS_FINAUX = new Set(["fini", "echec", "delai", "arrete", "interrompu"]);
+
+async function appeler(cfg, cle, fetchImpl, methode, chemin, corps) {
+  const r = await fetchImpl(`${cfg.url}${chemin}`, {
+    method: methode,
+    headers: { "Content-Type": "application/json", "X-Atelier-Lanceur": cle },
+    body: corps === undefined ? undefined : JSON.stringify(corps),
+    signal: AbortSignal.timeout(cfg.delaiMs),
+  });
+  const texte = await r.text();
+  let json = {};
+  try { json = texte ? JSON.parse(texte) : {}; } catch { json = { erreur: texte.slice(0, 300) }; }
+  return { status: r.status, json };
+}
+
+/**
+ * Demande un lancement à l'Atelier ; suit le tour jusqu'à sa fin si demandé.
+ *
+ * @returns {Promise<{ success, stdout, stderr, exitCode, conversationId,
+ *   lancementId?, injoignable?, refus?, mode? }>}
+ *   `injoignable` : l'Atelier n'a pas répondu — l'appelant peut se replier.
+ *   `refus` : l'Atelier a répondu non — jamais de repli.
  */
 export async function lancerParAtelier(p) {
   const cfg = p.cfg || configAtelier();
+  const fetchImpl = p.fetchImpl || globalThis.fetch;
   const cle = lireCleAtelier(cfg);
   if (!cle) {
-    return { success: false, stdout: "", stderr: `clé Atelier introuvable (${cfg.fichierCle})`, exitCode: -5, conversationId: null };
+    return { success: false, stdout: "", stderr: `clé du lanceur introuvable (${cfg.fichierCle})`, exitCode: -5, conversationId: null, injoignable: true };
   }
-  const client = new ClientMcpAtelier({ url: cfg.url, cle, fetchImpl: p.fetchImpl, delaiMs: cfg.delaiMs });
-  let conversationId = p.conversation || null;
+  let reponse;
   try {
-    if (!conversationId) {
-      const ouverte = await client.appeler("atelier_ouvrir", {
-        projet: slugProjetAtelier(p.projectPath, cfg),
-        titre: p.name || "",
-        ...(p.model ? { modele: p.model } : {}),
-      });
-      conversationId = ouverte.id;
-      if (!conversationId) throw new Error("Atelier : atelier_ouvrir n'a pas rendu d'identifiant");
-    }
-    const envoi = await client.appeler("atelier_envoyer", { conversation: conversationId, message: p.prompt });
-    if (p.attendreFin === false) {
-      return { success: true, stdout: "", stderr: "", exitCode: 0, conversationId };
-    }
-
-    const limite = Date.now() + (p.timeoutMs || 5 * 60 * 1000);
-    let curseur = Number(envoi.curseur || 0);
-    while (Date.now() < limite) {
-      const reste = Math.max(1, Math.min(25, Math.floor((limite - Date.now()) / 1000)));
-      const s = await client.appeler("atelier_suivre", { conversation: conversationId, curseur, attendre_s: reste });
-      curseur = Number(s.curseur ?? curseur);
-      if (s.fini) {
-        const ok = !s.erreur;
-        return { success: ok, stdout: s.texte || "", stderr: s.erreur || "", exitCode: ok ? 0 : 1, conversationId };
-      }
-      if (Array.isArray(s.autorisations_attendues) && s.autorisations_attendues.length) {
-        // Personne ne répondra d'ici : le tour reste visible dans l'Atelier,
-        // où un humain peut décider. On rend la main plutôt que d'attendre.
-        return {
-          success: false, stdout: "", exitCode: 2, conversationId, bloque: true,
-          stderr: `tour en attente d'autorisation dans l'Atelier (${s.autorisations_attendues.length})`,
-        };
-      }
-    }
-    return { success: false, stdout: "", stderr: "[timeout] tour Atelier toujours en cours", exitCode: -1, conversationId };
+    reponse = await appeler(cfg, cle, fetchImpl, "POST", "/v1/lancements", demandeDeLancement(p, cfg));
   } catch (err) {
-    return { success: false, stdout: "", stderr: err.message, exitCode: -1, conversationId };
+    return { success: false, stdout: "", stderr: `Atelier injoignable : ${err.message}`, exitCode: -1, conversationId: null, injoignable: true };
+  }
+  if (INJOIGNABLE.has(reponse.status)) {
+    return { success: false, stdout: "", stderr: `Atelier injoignable (HTTP ${reponse.status})`, exitCode: -1, conversationId: null, injoignable: true };
+  }
+  if (reponse.status === 401) {
+    return { success: false, stdout: "", stderr: "Atelier : clé du lanceur refusée (401)", exitCode: -5, conversationId: null, refus: true };
+  }
+  const lancement = reponse.json?.lancement;
+  if (reponse.status !== 202 || !lancement?.id) {
+    const motif = reponse.json?.erreur || reponse.json?.detail || `HTTP ${reponse.status}`;
+    return { success: false, stdout: "", stderr: `Atelier : refusé — ${motif}`, exitCode: -4, conversationId: null, refus: true };
+  }
+  const base = {
+    conversationId: lancement.conversation || null,
+    lancementId: lancement.id,
+    mode: lancement.mode,
+    avertissements: lancement.avertissements || [],
+  };
+  if (p.attendreFin === false) {
+    return { success: true, stdout: "", stderr: "", exitCode: 0, ...base };
+  }
+
+  // Le tour tourne dans l'Atelier ; on le suit jusqu'à sa fin, avec une marge
+  // sur la durée plafonnée (c'est l'Atelier qui coupe, pas nous).
+  const limite = Date.now() + (p.timeoutMs || 5 * 60 * 1000) + 60_000;
+  let dernier = lancement;
+  while (Date.now() < limite) {
+    await new Promise((r) => setTimeout(r, cfg.pasSuiviMs));
+    try {
+      const suivi = await appeler(cfg, cle, fetchImpl, "GET", `/v1/lancements/${encodeURIComponent(lancement.id)}`);
+      if (suivi.status === 200 && suivi.json?.lancement) dernier = suivi.json.lancement;
+    } catch { /* un suivi raté n'arrête rien : on réessaie au pas suivant */ }
+    if (ETATS_FINAUX.has(dernier.etat)) {
+      const ok = dernier.etat === "fini";
+      return {
+        success: ok, stdout: dernier.texte || "", stderr: ok ? "" : (dernier.erreur || dernier.etat),
+        exitCode: ok ? 0 : 1, ...base, etat: dernier.etat,
+      };
+    }
+  }
+  return { success: false, stdout: "", stderr: "[timeout] tour Atelier toujours en cours", exitCode: -1, ...base };
+}
+
+/** Demande à l'Atelier d'arrêter un lancement (kill_spawn). */
+export async function arreterParAtelier(lancementId, { cfg = configAtelier(), fetchImpl = globalThis.fetch } = {}) {
+  const cle = lireCleAtelier(cfg);
+  if (!cle) return { ok: false, erreur: "clé du lanceur introuvable" };
+  try {
+    const r = await appeler(cfg, cle, fetchImpl, "POST", `/v1/lancements/${encodeURIComponent(lancementId)}/arreter`, {});
+    return { ok: r.status === 200, etat: r.json?.lancement?.etat, erreur: r.json?.detail };
+  } catch (err) {
+    return { ok: false, erreur: err.message };
   }
 }

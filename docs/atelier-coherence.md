@@ -1,4 +1,4 @@
-# wikichat et la cohérence de projet (lots A, C, D, W, profils)
+# wikichat et la cohérence de projet (lots A, C, D, W, profils, lancements)
 
 Branche `atelier-coherence`, 25/09/2026. Mise en œuvre, côté wikichat, de
 `Claude Code sspcloud/docs/coherence-projet.md` : un projet doit être le même
@@ -87,7 +87,7 @@ Code : `resoudreModePermission`, `outilsAutorises` (`src/lancement.mjs`),
 `modeDeLaDefinition` (`src/routines.mjs`), `bypassAutorise` posé par
 `src/triggers.mjs` et le Pilote.
 
-## 4. Lancement par l'Atelier — préparé, inactif (lot D)
+## 4. Lancement par l'Atelier — préparé (lot D ; remplacé par le §13)
 
 | Variable | Défaut | Rôle |
 |---|---|---|
@@ -552,3 +552,120 @@ Aucune dépendance ajoutée ; aucune donnée migrée.
   messagerie que le contrat garde ; seuls briefing et ressources sont bornés.
 - Non vérifié en réel : `/mcp` d'une vraie conversation Claude Code, sur le
   pod, avec les variables posées par l'Atelier.
+
+## 13. Lot D actif : les lancements passent par l'Atelier
+
+Branche `v2-lancements` (depuis `687fa9c`), 26/09/2026. Contrat côté Atelier :
+`Claude Code sspcloud/docs/coherence-projet.md`, « Vague 2, équipe L ». Remplace le
+lanceur préparé du §4 (MCP `atelier_ouvrir` / `atelier_envoyer` / `atelier_suivre`,
+clé du propriétaire).
+
+### 13.1 Ce qui a changé
+
+- **Tout passe par un seul point.** `spawnHeadless` et `spawnDaemon` sont empruntés
+  par :
+  - le réveil sur mention (`evt-wake-any`) ;
+  - les triggers et les routines ;
+  - `spawn_session` (headless et daemon), `contact_agent` avec `wake` ;
+  - le Pilote et l'API `/api/spawn/*`.
+
+  Chacun **demande** désormais le lancement à l'Atelier (`src/lanceur-atelier.mjs`) :
+  `POST /v1/lancements`, en-tête `X-Atelier-Lanceur`, clé
+  `~/work/.secrets/atelier_lanceur_key` posée par l'Atelier. Ce n'est plus la clé du
+  propriétaire.
+- **Ce que wikichat transmet** :
+
+  | Champ | Contenu |
+  |---|---|
+  | `origine` | `wikichat:<spawnedBy>` : `trigger:<id>:<source>`, `routine:<id>`, le nom d'un agent |
+  | `projet` | le slug, tiré du dossier |
+  | `nom` | l'identité wikichat de l'agent |
+  | `message` | le prompt |
+  | `plafonds.duree_s` | le délai du headless, ou 30 min pour un daemon |
+  | `mode` | le mode déjà résolu (`resoudreModePermission`) |
+  | `mode_de_la_definition: true` | seulement si le mode vient d'une définition de routine ou de trigger |
+  | `outils` | la liste fixée par l'appelant (Pilote) |
+  | `conversation` | la conversation Atelier retenue pour cet agent (`__atelier_conversation`), pour garder une seule identité d'un réveil à l'autre |
+
+  Le **`permission_mode` des routines est donc transmis** (§3, §9). C'est l'Atelier qui
+  décide du mode final : il applique le mode du projet, et n'accorde bypass que si le
+  projet l'accorde.
+- **Suivi** : un headless suit `GET /v1/lancements/<id>` jusqu'à un état final (`fini`,
+  `echec`, `delai`, `arrete`, `interrompu`). Un daemon rend la main après la demande. Le
+  registre (`spawn_registry`) note `mode: atelier`, `atelier_lancement`,
+  `atelier_conversation` et le mode retenu, avec le statut `done`, `failed`, `refused` ou
+  `delegated`.
+- **Repli** :
+  - si l'Atelier **ne répond pas** (connexion refusée, délai, 502/503/504, clé absente),
+    wikichat relance `claude -p` lui-même, comme avant. Le registre note
+    `mode: headless-repli` et `repli: <cause>` ; pour un daemon, `repli` sur l'entrée du
+    daemon local ;
+  - `WIKICHAT_LANCEUR_REPLI=0` interdit ce repli ;
+  - un **refus** de l'Atelier (plafond, projet inconnu, 401) n'est **jamais** contourné
+    par le repli.
+- **Activation** : `WIKICHAT_LANCEUR` vaut `auto` par défaut. L'Atelier est utilisé dès
+  que la clé du lanceur existe (le pod), `claude` sinon (un poste sans Atelier).
+  `atelier` et `claude` forcent l'un ou l'autre.
+- `kill_spawn` d'un agent lancé par l'Atelier appelle `POST /v1/lancements/<id>/arreter`.
+- Les routines nomment leur origine (`routine:<id>` et non plus `routine:?`) : l'Atelier
+  plafonne par origine.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `WIKICHAT_LANCEUR` | `auto` | `auto`, `atelier` ou `claude` |
+| `WIKICHAT_LANCEUR_REPLI` | `1` | `0` : pas de `claude -p` si l'Atelier ne répond pas |
+| `WIKICHAT_ATELIER_URL` | `http://127.0.0.1:8787` | base de l'Atelier |
+| `WIKICHAT_ATELIER_LANCEUR_CLE_FICHIER` | `~/work/.secrets/atelier_lanceur_key` | clé du lanceur, lue à chaque lancement, jamais journalisée |
+| `WIKICHAT_ATELIER_PROJETS` | `~/work/projects` | racine des projets |
+| `WIKICHAT_ATELIER_DELAI_MS` | `20000` | délai d'un appel HTTP |
+| `WIKICHAT_ATELIER_SUIVI_MS` | `2000` | pas du suivi d'un headless |
+
+`WIKICHAT_ATELIER_CLE_FICHIER` (clé du propriétaire) n'est plus lue.
+
+### 13.2 Tests
+
+`npm run test:lancement` compte 42 cas :
+
+- `src/lanceur-atelier.test.mjs` (12), contre un faux Atelier :
+  - le contrat de la demande ;
+  - le suivi jusqu'à la fin ;
+  - un échec ;
+  - un daemon ;
+  - un refus sans repli ;
+  - une clé refusée ;
+  - un Atelier injoignable ;
+  - l'arrêt.
+- `src/lancement-atelier.test.mjs` (9, nouveau), contre un faux Atelier HTTP réel et un
+  faux `claude` dans le PATH :
+  - un réveil passe par l'Atelier sans `claude` local, et la conversation est reprise ;
+  - le mode de la définition d'une routine (`plan`, `bypassPermissions`) est transmis
+    avec `mode_de_la_definition` ;
+  - un bypass ad hoc devient `acceptEdits` ;
+  - les outils du Pilote sont transmis ;
+  - un refus pour plafond ne se replie pas ;
+  - si l'Atelier est injoignable, le repli passe par `claude -p`, noté au registre ;
+  - avec le repli interdit, l'échec est remonté ;
+  - un daemon est demandé à l'Atelier avec une durée de 1 800 s ;
+  - si l'Atelier est injoignable, le daemon se replie en local.
+
+Les autres suites passent : `npm test` (36 cas, contre un serveur de la branche isolé
+sur `PORT=3791`, avec un `HOME` temporaire), `test:hooks` (16), `test:lot-w` (16, plus
+1 sauté sous Windows), `test:profils` (14) et `test:site` (3).
+
+### 13.3 Mettre le pod à jour
+
+1. Déployer d'abord l'Atelier de la vague 2 et le redémarrer : il pose la clé du lanceur.
+2. `cd ~/work/wikichat/src && git fetch origin && git checkout v2-lancements` (une fois
+   poussée), puis redémarrer wikichat. Aucune dépendance ajoutée, aucune donnée migrée.
+3. Vérifier :
+   - `grep -E '\[spawn\].*repli' <journal du service>` doit rester vide ;
+   - un `@agent` dans un canal fait apparaître une conversation dans l'Atelier ;
+   - `jq '.[-1] | {name, mode, status, atelier_lancement}' ~/.wikichat/spawn_registry.json`.
+4. Retour arrière : poser `WIKICHAT_LANCEUR=claude` et redémarrer, ou revenir à `687fa9c`.
+
+### 13.4 Ce qui reste
+
+- Le mode `interactive` de `spawn_session` (un terminal ouvert pour une personne) lance
+  toujours `claude` lui-même : c'est une fenêtre humaine, pas un agent lancé.
+- La réparation d'agents dans une branche (`branche` du contrat) n'est pas demandée par
+  wikichat : ses agents travaillent dans le dossier du projet, comme avant.
