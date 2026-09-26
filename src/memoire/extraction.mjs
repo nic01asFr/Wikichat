@@ -8,15 +8,14 @@
  * décisions, fichiers touchés, commits, erreurs, jetons, et les trois premiers
  * messages de la personne cités mot pour mot.
  *
- * Le même module prépare l'entrée de la routine de nuit (étape 2) : les
- * paroles de la personne et la réponse finale de chaque tour, jamais un
- * résultat d'outil, sous un plafond de caractères.
+ * L'entrée de la routine de nuit (étape 2) n'est plus préparée ici : depuis
+ * le 26/09, l'Atelier la prépare lui-même à partir de l'identifiant de la
+ * conversation (`memoire_modele.py`, même règle : paroles de la personne et
+ * réponse finale de chaque tour, jamais un résultat d'outil).
  *
  * Fonctions pures : elles ne lisent ni n'écrivent rien.
  */
 
-// Estimation des jetons, comme l'Atelier (relais, carte) : caractères / 3,4.
-export const CARACTERES_PAR_JETON = 3.4;
 export const CITATIONS = 3;
 export const CITATION_MAX = 280;
 
@@ -189,54 +188,4 @@ export function faitsDOffice(f) {
       texte: `${String(x.quand || f.fin || "").slice(8, 10)}/${String(x.quand || f.fin || "").slice(5, 7)} : ${x.texte}${f.projet ? ` (projet ${f.projet})` : ""}`,
       source: { conversation: f.id, projet: f.projet, quand: x.quand || f.fin },
     }));
-}
-
-// ── Entrée de la routine de nuit ─────────────────────────────────────────────
-
-/**
- * Les échanges : chaque parole de la personne, suivie de la dernière réponse
- * du modèle avant la parole suivante (sa réponse finale au tour).
- */
-export function echanges(evenements) {
-  const sortie = [];
-  let courant = null;
-  for (const e of evenements || []) {
-    if (e.role === "personne") {
-      courant = { quand: e.quand, personne: String(e.texte || ""), reponse: "" };
-      sortie.push(courant);
-    } else if (e.role === "modele" && courant) {
-      courant.reponse = String(e.texte || "");
-    }
-  }
-  return sortie;
-}
-
-/**
- * L'entrée préparée par le code (§3.4 : messages de la personne et réponses
- * finales, sans résultats d'outils), sous `maxCar` caractères.
- * Trop longue : le début (deux échanges) et la fin, avec la marque de ce qui
- * est omis au milieu.
- */
-export function preparerEntree(evenements, { maxCar = 100_000, parPersonne = 1500, parReponse = 1000 } = {}) {
-  const ech = echanges(evenements);
-  const bloc = (x) => `[Personne ${dateCourte(x.quand)}] ${COURT(x.personne, parPersonne)}` +
-    (x.reponse ? `\n[Réponse] ${COURT(x.reponse, parReponse)}` : "");
-  const blocs = ech.map(bloc);
-  const total = blocs.join("\n\n");
-  if (total.length <= maxCar) return { texte: total, echanges: ech.length, omis: 0 };
-  const tete = blocs.slice(0, 2);
-  let taille = tete.join("\n\n").length + 80;
-  const queue = [];
-  for (let i = blocs.length - 1; i >= 2; i--) {
-    if (taille + blocs[i].length + 2 > maxCar) break;
-    queue.unshift(blocs[i]);
-    taille += blocs[i].length + 2;
-  }
-  const omis = blocs.length - tete.length - queue.length;
-  const texte = [...tete, `[… ${omis} échange(s) omis au milieu …]`, ...queue].join("\n\n");
-  return { texte: texte.slice(0, maxCar), echanges: ech.length, omis };
-}
-
-export function jetonsEstimes(texte) {
-  return Math.ceil(String(texte || "").length / CARACTERES_PAR_JETON);
 }

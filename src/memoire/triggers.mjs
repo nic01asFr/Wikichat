@@ -1,10 +1,12 @@
 /**
  * memoire/triggers.mjs — Les deux tâches automatiques de la capitalisation.
  *
- *   - `memoire-faits` : toutes les 15 min, job `capitaliser_faits` (code seul,
- *     aucun modèle). Actif dès sa création.
- *   - `memoire-nuit` : chaque nuit à 03:30, job `capitaliser_nuit` (lance des
- *     agents par l'Atelier : consomme du modèle). **Né désactivé** (J-b2 :
+ *   - `memoire-faits` : toutes les 15 min, job `capitaliser_faits` (faits par
+ *     le code, sans modèle de langage ; vecteurs des fiches écrites par
+ *     `qwen3-embedding-8b`, via l'Atelier). Actif dès sa création.
+ *   - `memoire-nuit` : chaque nuit à 03:30, job `capitaliser_nuit` (fait
+ *     résumer les conversations par l'Atelier : consomme du modèle).
+ *     **Né désactivé** (J-b2 :
  *     l'activation revient à la personne, par le Pilote ou la vue Agents) ;
  *     `WIKICHAT_MEMOIRE_NUIT=1` le crée actif.
  *
@@ -40,7 +42,7 @@ export function assurerTriggersMemoire() {
       enabled: process.env.WIKICHAT_MEMOIRE_NUIT === "1",
       cooldown_s: 3600,
       max_per_day: 1,
-      description: "Mémoire : routine de nuit plafonnée (20 conversations de 30 000 jetons au plus, qwen3-8-27b, par l'Atelier)",
+      description: "Mémoire : routine de nuit plafonnée (20 conversations au plus, entrée de 58 000 caractères, qwen3-8-27b, résumé direct par l'Atelier)",
     }));
   }
   return crees;

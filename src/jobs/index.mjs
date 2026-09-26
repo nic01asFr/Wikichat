@@ -143,7 +143,7 @@ const CATALOGUE = {
     executer: (args = {}) => capitaliserFaits({ ids: Array.isArray(args.ids) ? args.ids : null }),
   },
   capitaliser_nuit: {
-    description: "Routine de nuit plafonnée : le sens de 20 conversations au plus, par des lancements de l'Atelier",
+    description: "Routine de nuit plafonnée : le sens de 20 conversations au plus, résumées par un appel direct de l'Atelier (sans agent)",
     executer: (args = {}) => capitaliserNuit({ force: args.force === true }),
   },
 };

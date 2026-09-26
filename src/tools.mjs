@@ -43,6 +43,7 @@ import { vueProjet, texteVueProjet } from "./hooks-serveur.mjs";
 import { conversationParNom } from "./conversations.mjs";
 import { absorberCloture, ficheDeCloture, promptCloser } from "./closures.mjs";
 import { chercher as chercherConnaissance, dossierCentral as dossierConnaissance } from "./connaissance.mjs";
+import { completerParLeSens } from "./memoire/vecteurs.mjs";
 import { estCode } from "./profils.mjs";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2107,12 +2108,18 @@ export function registerTools(server, sessionId) {
       // (sans projet annoncé : la centrale seule).
       const code = profilCode(sessionId);
       const portee = code && !code.projet ? "central" : scope;
-      const r = chercherConnaissance(query, { portee, limite: limit, projet: code ? code.projet : null });
+      const projetCode = code ? code.projet : null;
+      // Le sens (vecteurs des fiches de conversation) complète le classement
+      // lexical, dans la même portée ; lexical seul s'il est indisponible.
+      const lexical = chercherConnaissance(query, { portee, limite: Math.max(limit * 4, 20), projet: projetCode });
+      const r = portee === "all"
+        ? await completerParLeSens(query, lexical, { projet: projetCode, limite: limit })
+        : { ...lexical, resultats: lexical.resultats.slice(0, limit) };
       if (r.fichiers === 0) return txt(`📭 Aucun fichier de connaissance trouvé (scope=${scope}).
 💡 Vérifier ~/.wikichat/knowledge/ ou les .wikichat/knowledge/ des projets du registry.`);
       if (r.resultats.length === 0) return txt(`🔍 Aucun match pour "${query}" (scope=${scope}, ${r.fichiers} fichier(s) scannés).`);
       const lines = r.resultats.map((x, i) =>
-        `**${i + 1}. ${x.titre}** (score=${x.score})
+        `**${i + 1}. ${x.titre}** (score=${x.score}${x.similarite != null ? `, sens=${x.similarite}` : ""})
    📁 [${x.source}] ${x.chemin}
    🔖 wikichat://kb/${x.sujet}
    📄 …${x.extrait}…`

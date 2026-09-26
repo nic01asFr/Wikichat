@@ -739,10 +739,10 @@ triggers du lot W3, lancements du lot D.
 |---|---|---|
 | **(a) Faits** | le code, sans modèle, depuis le transcript **filtré** fourni par l'Atelier (`GET /v1/memoire/conversations/{id}`, clé du lanceur). Dates, surfaces, projet créé, créations, agents lancés, décisions (note `decision`, fichier `docs/decisions/`), fichiers touchés, commits, erreurs par outil, jetons, trois premiers messages de la personne. Une création en échec n'est pas un fait | `memoire/extraction.mjs`, `memoire/capitalisation.mjs` |
 | Quand | toutes les 15 min (trigger `memoire-faits`, job `capitaliser_faits`) pour les conversations **au repos** (30 min sans écriture, ou rangées) dont l'empreinte a changé ; tout de suite à la fin d'une conversation (hook `SessionEnd`, regroupé 15 s). 30 fiches par passage au plus | `memoire/triggers.mjs`, `hooks-serveur.mjs` (une ligne) |
-| **(b) Sens** | routine de nuit (trigger `memoire-nuit`, 03:30, job `capitaliser_nuit`), **née désactivée** (J-b2). Chaque conversation passe par **un lancement de l'Atelier** (`lancerParAtelier`, origine `wikichat:memoire:nuit`), modèle `qwen3-8-27b`, mode `dontAsk` (rien de ce qui n'est pas permis ne passe : ni écriture ni commande), aucune autorisation d'outil demandée, projet `default`. Le modèle rend un objet JSON (résumé de 5 lignes, sujets, décisions, questions, 3 candidats au plus) | `memoire/nuit.mjs` |
-| Plafonds (A-7) | 20 conversations par nuit ; entrée ≤ 30 000 jetons (caractères / 3,4) **et** ≤ 58 000 caractères (le lot D refuse un message de plus de 60 000) ; sortie demandée sous 800 jetons, dépassement compté ; une nuit par jour ; deux échecs sur une fiche et elle n'est plus retentée seule ; un refus de l'Atelier (plafond, clé) arrête la nuit. Bilan de chaque nuit dans `~/.wikichat/memoire/nuits.jsonl` (jetons estimés d'entrée et de sortie, surcoût du harnais) | `memoire/nuit.mjs` |
+| **(b) Sens** | routine de nuit (trigger `memoire-nuit`, 03:30, job `capitaliser_nuit`), **née désactivée** (J-b2). Depuis le 26/09 (§14.6), chaque conversation est résumée par **un appel direct de l'Atelier** (`POST /v1/memoire/resumer`, identifiant seulement) : plus de lancement d'agent, plus de conversation ouverte dans `default`. Le modèle (`qwen3-8-27b`) rend un objet JSON (résumé de 5 lignes, sujets, décisions, questions, 3 candidats au plus) | `memoire/nuit.mjs` |
+| Plafonds (A-7) | 20 conversations par nuit ; une nuit par jour ; deux échecs sur une fiche et elle n'est plus retentée seule ; un refus de l'Atelier (clé, un à la fois, plafond du jour) ou un modèle indisponible arrête la nuit. L'Atelier borne l'entrée à 58 000 caractères consigne comprise et la sortie à 800 jetons, et compte 20 résumés par jour tous appelants. Bilan de chaque nuit dans `~/.wikichat/memoire/nuits.jsonl` (jetons réels d'entrée et de sortie rendus par l'Atelier) | `memoire/nuit.mjs` |
 | **(c) Rangement** | le code : `~/.wikichat/knowledge/conversations/<projet>/<id>.md` (une fiche par `session_id` de l'Atelier, l'identifiant du CLI noté à côté) et `conversations/index.jsonl`. Le sens ne remplace pas les faits : une conversation qui grandit garde son sens, marqué antérieur, jusqu'à la nuit suivante | `memoire/fiches.mjs` |
-| Recherche | `connaissance.mjs` lit les fiches (sujet `conversation:<id>`) : `search_knowledge` et `/api/knowledge` les trouvent. Elles ne sont pas centrales : **profil `code` = les fiches de son projet**, l'Assistant toutes. Le rappel (`chercherConversations`) lit l'index, sans accents, pondéré comme `chercher` | `connaissance.mjs` |
+| Recherche | `connaissance.mjs` lit les fiches (sujet `conversation:<id>`) : `search_knowledge` et `/api/knowledge` les trouvent. Elles ne sont pas centrales : **profil `code` = les fiches de son projet**, l'Assistant toutes. Le rappel (`chercherConversations`) lit l'index, sans accents, pondéré comme `chercher`. Depuis le 26/09, le rappel et `search_knowledge` sont **complétés par le sens** (§14.6), dans la même portée | `connaissance.mjs`, `memoire/vecteurs.mjs` |
 | **Mémoire de la personne** | `~/.wikichat/memoire/personne.json` : `profil`, `preference`, `interpretation` n'entrent que par la personne (route écrite avec la clé, appelée par les commandes réservées de l'Atelier) ; les **faits** extraits par le code (projet créé, création, agent, décision) sont enregistrés **d'office**. Doublons ignorés ; un fait oublié n'est plus réenregistré ; profil ≤ 1 500 caractères, préférences ≤ 1 200 ; 200 faits au plus ; « Corriger » garde l'historique | `memoire/personne.mjs` |
 | Candidats | les candidats de la nuit partent dans « À valider » de l'Atelier (`POST /v1/memoire/propositions`, source `memoire`) : rien n'est retenu sans la personne | `memoire/nuit.mjs`, `memoire/atelier.mjs` |
 | **Publication (S6)** | `export-memory` exporte les fiches (`conversations/<projet>/<id>.md`, `conversations-index.json`), chemins retirés ; chaque fiche passe le scan anti-secret (un motif bloque l'export, le rapport ne recopie pas le secret) ; les fiches entrent dans l'empreinte du manifeste. `publish-memory` gère ces deux chemins. Ni le transcript, ni `memoire/` ne sont publiés | `scripts/export-memory.mjs`, `scripts/publish-memory.mjs` |
@@ -751,19 +751,24 @@ triggers du lot W3, lancements du lot D.
 
 | Route | Rôle |
 |---|---|
-| `GET /api/memoire/rappel?q&projet&depuis&limite` | les fiches proches : `{ total, fiches, resultats: [{ id, projet, genre, debut, fin, titre, resume, objets, statut, score }] }` |
+| `GET /api/memoire/rappel?q&projet&depuis&limite` | les fiches proches : `{ total, fiches, resultats: [{ id, projet, genre, debut, fin, titre, resume, objets, statut, score, similarite? }], sens }` ; `sens` vaut `fait` ou `indisponible` (lexical seul) |
 | `GET /api/memoire/fiches?projet&limite`, `GET /api/memoire/fiches/:id?projet` | l'index ; une fiche (identifiant ou préfixe unique de 8 caractères), 404 hors du projet demandé |
 | `GET /api/memoire/personne`, `GET /api/memoire/personne.md?partie=` | la mémoire de la personne ; une partie en markdown, pour un import `@` du contexte de l'Assistant (C1, équipe A) |
 | `GET /api/memoire/etat` | fiches par statut, éléments, dernières nuits |
 | `POST /api/memoire/personne`, `PATCH`, `DELETE /api/memoire/personne/:id` | **clé du lanceur** (`X-Atelier-Lanceur`) : 401 sans elle |
 | `POST /api/memoire/capitaliser` `{ ids? }` | un passage des faits, tout de suite (clé) |
+| `POST /api/memoire/vecteurs` `{ ids? }` | (re)calcul des vecteurs des fiches, tout de suite (clé) |
+| `POST /api/memoire/nuit?limite=N` `{ ids? }` | **essai de la nuit à la main** (clé) : N conversations (3 par défaut, 20 au plus) ou celles choisies ; marqué `essai`, il ne compte pas pour la nuit du jour ; les plafonds de l'Atelier tiennent |
 
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `WIKICHAT_MEMOIRE` | (vide) | `0` : ni triggers de la mémoire, ni passage à la fin d'une conversation |
 | `WIKICHAT_MEMOIRE_NUIT` | (vide) | `1` : le trigger de nuit naît actif (sinon la personne l'active) |
-| `WIKICHAT_MEMOIRE_MODELE` | `qwen3-8-27b` | modèle de la nuit |
-| `WIKICHAT_MEMOIRE_PROJET` | `default` | projet de l'Atelier où tournent les lancements de nuit |
+| `WIKICHAT_MEMOIRE_SENS` | (vide) | `0` : ni calcul de vecteurs, ni recherche par le sens |
+| `WIKICHAT_MEMOIRE_SEUIL_SENS` | `0.35` | similarité cosinus minimale d'une fiche trouvée par le seul sens |
+
+Le modèle de la nuit se règle côté Atelier (`ATELIER_MEMOIRE_MODELE`, défaut `qwen3-8-27b`) ;
+`WIKICHAT_MEMOIRE_MODELE` et `WIKICHAT_MEMOIRE_PROJET` n'existent plus (26/09).
 
 La clé du lanceur (`WIKICHAT_ATELIER_LANCEUR_CLE_FICHIER`) et l'adresse de l'Atelier
 (`WIKICHAT_ATELIER_URL`) sont celles du §13.
@@ -831,7 +836,7 @@ jetons par conversation. Rattrapage : 44 conversations, trois nuits (20, 20, 4),
    conversation de l'Assistant : `fire_trigger(id="memoire-nuit", force=true)` (une
    nuit entière, dans les mêmes plafonds). Puis :
    ```sh
-   tail -1 ~/.wikichat/memoire/nuits.jsonl | jq '{traitees, reussies, echecs, propositions, jetons_entree_estimes, jetons_sortie_estimes, surcout_harnais_estime, arret}'
+   tail -1 ~/.wikichat/memoire/nuits.jsonl | jq '{essai, traitees, reussies, echecs, propositions, jetons_entree, jetons_sortie, plus_grande_entree, secondes, arret}'
    ```
    Les propositions arrivent dans « À valider » (source Mémoire).
 5. Publication (S6) : le seul éditeur est le pod, par la brique existante. Poser
@@ -859,23 +864,116 @@ d'arrivée du dépôt : à reprendre sur le pod (`scripts/ingest-inbox.mjs`) si 
 
 ### 14.5 Ce qui reste
 
-- Le plafond effectif d'entrée est celui du message du lot D (58 000 caractères, ≈
-  17 000 jetons), pas les 30 000 jetons d'A-7 : 15 conversations du pod sont
-  raccourcies au milieu. Monter à 30 000 demande de relever la limite de
-  `lancements.py` (équipe L) ou de passer l'entrée par un fichier lu en lecture seule.
-- Chaque lancement de nuit coûte le harnais d'un agent code (≈ 21 700 jetons) en plus
-  de l'entrée : un appel direct au relais, sans harnais, diviserait le coût par deux.
-  Ce n'est pas ce qu'A-7 demande (« par un lancement de l'Atelier »).
-- Les 20 lancements d'une nuit ouvrent 20 conversations dans le projet `default` de
-  l'Atelier ; elles sont exclues de la capitalisation (origine `wikichat:memoire`).
-- Recherche lexicale seule. `qwen3-embedding-8b` répond en 0,19 s pour un texte court
-  (mesuré sur une chaîne synthétique), mais sa qualité n'est pas mesurée sur de vraies
-  fiches : cela revient à envoyer le texte des conversations au point d'accès, ce que
-  la garde des permissions a refusé pendant la mesure. À décider par Nicolas, puis à
-  mesurer une fois des fiches avec leur sens (le résumé et les sujets de la nuit sont
-  ce qui rend le rappel utile : sur les seuls en-têtes, un message ultérieur de la
-  personne ne retrouve sa conversation dans les 5 premières que 7 fois sur 39).
 - Les conversations tenues hors de l'Atelier (terminal, anciennes sessions de
   l'Assistant) ne sont pas fichées : l'Atelier ne les connaît pas.
 - La routine hebdomadaire de consolidation (diff du profil, `assistant-contexte.md`
   §3.4) n'est pas écrite.
+- Les trois points ouverts au 26/09 (plafond d'entrée du lot D, coût du harnais, sens
+  par `qwen3-embedding-8b`) sont tranchés par Nicolas et traités au §14.6. Reste à
+  décider : activer la nuit, après l'essai sur trois conversations.
+
+### 14.6 Révision du 26/09 : résumé direct par l'Atelier, recherche par le sens
+
+Branche `v3-resume` (depuis `43f029d`), équipe R. Décisions de Nicolas : A-7 révisée et
+A-9 (`Claude Code sspcloud/docs/vision/decisions.md`).
+
+**Résumé direct.** `capitaliserNuit` appelle `POST /v1/memoire/resumer` de l'Atelier
+(`atelier.resumer(id)`, clé du lanceur, délai 330 s) avec le seul identifiant de la
+conversation. L'Atelier (`mcp_gateway/atelier/memoire_modele.py`) lit le transcript, le
+filtre (T10), prépare l'entrée avec la règle qui était ici (paroles de la personne,
+1 500 caractères chacune, et réponse finale de chaque tour, 1 000 ; début et fin gardés
+au-delà), la borne à **58 000 caractères consigne comprise**, appelle `qwen3-8-27b` une
+fois par son relais (non streamé, 800 jetons de sortie), et écrit l'appel au journal
+unique avec ses jetons. wikichat ne fait plus que lire la réponse (`lireSortie`) et
+ranger. Retirés d'ici : `promptDeNuit`, `preparerEntree`, `echanges`, le lanceur, le
+projet `default`, le surcoût du harnais.
+
+| Réponse de l'Atelier | La nuit |
+|---|---|
+| 200 `fait` | sens rangé, jetons réels ajoutés au bilan, candidats vers « À valider » |
+| 401, 403 (clé), 409 (un à la fois), 429 (20 par jour) | s'arrête, sans contournement |
+| 502 (modèle indisponible) | s'arrête |
+| 404 (conversation inconnue), 422 (rien à résumer), réponse illisible | tentative notée, la nuit continue |
+| Atelier injoignable | s'arrête ; la nuit peut se rejouer le même jour |
+
+**Mesure sur le pod** (lecture seule, 26/09, sans appel de modèle : la préparation de la
+route appliquée aux 44 conversations d'au moins 3 échanges, jetons = caractères / 3,4) :
+
+| Par conversation | Avant (lancement d'agent) | Après (résumé direct) |
+|---|---|---|
+| médiane | ≈ 24 900 jetons | ≈ 3 100 jetons |
+| moyenne | ≈ 26 400 | ≈ 4 600 |
+| maximum | ≈ 38 800 | ≈ 17 000 (57 950 caractères) |
+
+Plus la sortie (≤ 800) dans les deux cas. La différence est le harnais d'un agent code
+(21 695 jetons). Une nuit de 20 conversations : ≈ 530 000 → ≈ 92 000 jetons d'entrée.
+2 conversations sur 44 sont raccourcies au milieu. L'usage réel rendu par le modèle n'est
+pas mesuré (aucun appel sur le pod).
+
+**Recherche par le sens** (`memoire/vecteurs.mjs`) :
+
+- quoi : le texte de la fiche, sans son en-tête, 6 000 caractères au plus ; il vient du
+  transcript filtré par l'Atelier et passe `masquerJetons`. Jamais le transcript brut ;
+- quand : après chaque passage des faits (fiches écrites, puis rattrapage de 32 fiches au
+  plus) et après la nuit (fiches résumées) ; une fiche dont le texte a changé est
+  recalculée (empreinte du texte) ; `POST /api/memoire/vecteurs` à la main ;
+- où : `~/.wikichat/knowledge/conversations/vecteurs.jsonl`, une ligne par fiche
+  (`id`, `projet`, `empreinte`, `modele`, `dim`, `v` en Float32 normalisé, base64). L'export
+  assaini (S6) ne publie que les `.md` : les vecteurs restent sur le pod ;
+- recherche : `rappelFusionne` (route du rappel, donc `atelier_rappel`) et
+  `completerParLeSens` (`search_knowledge`, portée `all`) fusionnent les deux classements
+  par rang réciproque (k = 60) ; une fiche trouvée par le seul sens doit dépasser le seuil
+  (0,35, `WIKICHAT_MEMOIRE_SEUIL_SENS`, non calibré) ; la requête part avec l'instruction
+  de requête de Qwen3-Embedding (posée par l'Atelier) ;
+- portée : un projet donné (profil `code`, `projet` du rappel) ne compare que les vecteurs
+  de ce projet ; profil `code` sans projet : la connaissance centrale seule, sans sens ;
+- repli : point d'accès absent, refus, aucun vecteur : la recherche reste lexicale, sans
+  erreur (`sens: "indisponible"`).
+
+**Pourquoi par l'Atelier** et pas par la même configuration dans wikichat : S5 (l'Atelier
+porte l'état opérationnel). Le point d'accès du modèle, sa clé (`llm_api_key`), le relais,
+le filtre des secrets et le journal unique y sont déjà ; les faire passer par wikichat
+aurait mis une seconde copie de la clé et un second chemin de sortie du texte, sans filtre
+commun ni journal. Le prix : un saut local de plus par requête (délai de 4 s, puis repli
+lexical).
+
+**Tests** : `test:memoire` passe de 14 à 18 cas. Nuit : 20 résumés par identifiant (jamais
+un texte), jetons réels, candidats, vecteurs des fiches résumées, une nuit par jour ;
+refus 401, 409, 429 et modèle indisponible qui arrêtent la nuit ; 404 et réponse illisible
+notées sans arrêter ; essai de N conversations ou de celles choisies, qui ne prend pas la
+place de la nuit. Sens : vecteurs depuis le texte de la fiche (jamais un résultat d'outil,
+sans en-tête), normalisés, rangés à côté de l'index, recalculés quand la fiche change ;
+rappel fusionné qui trouve sans mot commun, borné au projet, lexical seul si le point
+d'accès échoue ou manque. Serveur isolé avec un faux Atelier : `POST /api/memoire/nuit` et
+`/api/memoire/vecteurs` refusés sans clé ; `search_knowledge` en profil `code` qui trouve
+par le sens sans jamais rendre une fiche d'un autre projet, l'Assistant qui les voit
+toutes ; repli lexical quand le point d'accès tombe. Autres suites inchangées et vertes :
+`npm test` (36, **contre un serveur isolé** : `SERVER_URL=http://localhost:3791`, sinon la
+suite vise le service qui écoute sur 3777), `test:profils` (15), `test:hooks` (16),
+`test:lot-w` (16, 1 sauté sous Windows), `test:lancement` (47).
+
+**Mettre le pod à jour** (après intégration, dans l'ordre) :
+
+1. Déployer l'Atelier de la branche `v3-resume` (routes `/v1/memoire/resumer` et
+   `/v1/memoire/vecteurs`), le redémarrer, puis vérifier la route sans rien consommer :
+   ```sh
+   curl -s -o /dev/null -w '%{http_code}
+' -X POST 127.0.0.1:8787/v1/memoire/resumer -H 'Content-Type: application/json' -d '{}'   # 401 attendu
+   ```
+2. Déployer wikichat de la branche `v3-resume`, le redémarrer.
+3. Vecteurs (quelques fiches, peu coûteux) ; si le bilan dit `HTTP 404` ou `405`, poser
+   `ATELIER_EMBEDDINGS_URL` (adresse complète du point d'accès des embeddings) dans
+   l'environnement de l'Atelier et recommencer :
+   ```sh
+   curl -s -X POST 127.0.0.1:3777/api/memoire/vecteurs -H "X-Atelier-Lanceur: $(cat ~/work/.secrets/atelier_lanceur_key)" -H 'Content-Type: application/json' -d '{}' | jq
+   ```
+4. **Essai de la nuit sur 3 conversations**, sans activer le trigger :
+   ```sh
+   curl -s -X POST '127.0.0.1:3777/api/memoire/nuit?limite=3' -H "X-Atelier-Lanceur: $(cat ~/work/.secrets/atelier_lanceur_key)" -H 'Content-Type: application/json' -d '{}' | jq '{essai, candidats, traitees, reussies, echecs, propositions, jetons_entree, jetons_sortie, plus_grande_entree, secondes, arret, vecteurs}'
+   ```
+   Pour des conversations choisies : `-d '{"ids": ["<id1>", "<id2>", "<id3>"]}'`. Puis
+   relire les trois fiches (`GET /api/memoire/fiches/<id>`), les propositions dans « À
+   valider », et les lignes `memoire_resumer` du journal unique
+   (`~/work/.atelier-etat/journal/2026-09.jsonl`, champs `cout.entree`, `cout.sortie`).
+5. Aucune conversation ne doit être apparue dans le projet `default` ; la nuit reste
+   désactivée tant que la personne ne l'active pas.

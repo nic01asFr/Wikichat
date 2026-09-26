@@ -8,7 +8,10 @@
  *      changé depuis la dernière fiche : lire son transcript filtré, en
  *      extraire les faits (`extraction.mjs`), ranger la fiche (`fiches.mjs`) ;
  *   3. enregistrer d'office les faits datés dans la mémoire de la personne
- *      (A-7 : projet créé, création, agent lancé, décision).
+ *      (A-7 : projet créé, création, agent lancé, décision) ;
+ *   4. (re)calculer les vecteurs des fiches écrites, et rattraper ceux qui
+ *      manquent (`vecteurs.mjs`, par l'Atelier). Sans point d'accès, rien ne
+ *      casse : la recherche reste lexicale.
  *
  * Borné : `limite` conversations par passage (30), le reste au suivant.
  */
@@ -17,6 +20,7 @@ import { clientAtelier } from "./atelier.mjs";
 import { extraireFaits, faitsDOffice } from "./extraction.mjs";
 import { entreeDeLIndex, rangerFaits } from "./fiches.mjs";
 import { enregistrerFaitsDOffice } from "./personne.mjs";
+import { indexerVecteurs } from "./vecteurs.mjs";
 
 export const LIMITE_PAR_PASSAGE = 30;
 export const REPOS_MIN = 30;
@@ -51,6 +55,9 @@ export async function capitaliserFaits({ atelier = clientAtelier(), limite = LIM
       bilan.erreurs++;
     }
   }
+  // Les vecteurs suivent les fiches : celles écrites à l'instant, puis le rattrapage.
+  const v = await indexerVecteurs({ atelier });
+  bilan.vecteurs = { calcules: v.calcules, a_jour: v.a_jour, erreur: v.erreur };
   return bilan;
 }
 

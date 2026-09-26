@@ -3,7 +3,8 @@
  *
  * Lues par l'Atelier (`mcp_gateway/atelier/memoire.py`, `commandes/rappel.py`) :
  *   GET    /api/memoire/etat                      fiches, faits, dernières nuits
- *   GET    /api/memoire/rappel?q&projet&depuis&limite   { total, fiches, resultats }
+ *   GET    /api/memoire/rappel?q&projet&depuis&limite   { total, fiches, resultats, sens }
+ *          (lexical et sens fusionnés ; lexical seul si le sens est indisponible)
  *   GET    /api/memoire/fiches?projet&limite      l'index (sans le détail)
  *   GET    /api/memoire/fiches/:id?projet         { id, projet, genre, titre, texte }
  *   GET    /api/memoire/personne                  { elements, plafonds, fiches }
@@ -14,6 +15,9 @@
  *   PATCH  /api/memoire/personne/:id     { texte, par? }
  *   DELETE /api/memoire/personne/:id
  *   POST   /api/memoire/capitaliser      { ids? }   un passage des faits, tout de suite
+ *   POST   /api/memoire/vecteurs         { ids? }   (re)calcul des vecteurs des fiches
+ *   POST   /api/memoire/nuit?limite=N    { ids? }   essai de la nuit à la main (N ≤ 20),
+ *          qui ne compte pas pour la nuit du jour ; l'Atelier tient ses plafonds
  *
  * Le service n'écoute que la boucle locale (garde `Host`). La clé ne protège
  * pas d'un agent du pod qui la lirait sur le disque : elle ferme la porte à
@@ -25,7 +29,8 @@ import { chercherConversations, lireFicheConversation, lireIndexConversations } 
 import { lireCleAtelier } from "../lanceur-atelier.mjs";
 import { capitaliserFaits } from "./capitalisation.mjs";
 import { indexPublic } from "./fiches.mjs";
-import { lireNuits } from "./nuit.mjs";
+import { capitaliserNuit, lireNuits } from "./nuit.mjs";
+import { indexerVecteurs, rappelFusionne } from "./vecteurs.mjs";
 import { PLAFONDS, RefusMemoire, corriger, lirePersonne, oublier, rendrePartie, retenir } from "./personne.mjs";
 
 function cleValide(req) {
@@ -67,12 +72,13 @@ export function enregistrerRoutesMemoire(app) {
     });
   });
 
-  app.get("/api/memoire/rappel", (req, res) => {
+  app.get("/api/memoire/rappel", async (req, res) => {
     const q = String(req.query.q || "").slice(0, 300);
-    const r = chercherConversations(q, {
+    const r = await rappelFusionne(q, {
       projet: req.query.projet ? String(req.query.projet) : null,
       depuis: req.query.depuis ? String(req.query.depuis) : null,
       limite: entier(req.query.limite, 5, 1, 10),
+      lexical: chercherConversations,
     });
     res.json({ requete: q, ...r });
   });
@@ -133,6 +139,23 @@ export function enregistrerRoutesMemoire(app) {
     if (!exigerCle(req, res)) return;
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 50) : null;
     try { res.json(await capitaliserFaits({ ids, reposMin: ids ? 0 : undefined })); }
+    catch (err) { res.status(500).json({ erreur: err.message }); }
+  });
+
+  app.post("/api/memoire/vecteurs", async (req, res) => {
+    if (!exigerCle(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 200) : null;
+    try { res.json(await indexerVecteurs({ ids, max: ids ? ids.length : undefined })); }
+    catch (err) { res.status(500).json({ erreur: err.message }); }
+  });
+
+  // Essai de la nuit à la main : la nuit elle-même, sur N conversations (ou
+  // celles choisies), dans les mêmes plafonds. Consomme du modèle : clé.
+  app.post("/api/memoire/nuit", async (req, res) => {
+    if (!exigerCle(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 20) : null;
+    const limite = entier(req.query.limite ?? req.body?.limite, 3, 1, 20);
+    try { res.json(await capitaliserNuit({ essai: true, limite, ids })); }
     catch (err) { res.status(500).json({ erreur: err.message }); }
   });
 }
