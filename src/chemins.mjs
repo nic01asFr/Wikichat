@@ -34,6 +34,11 @@ export const CHEMINS = Object.freeze({
   crons: path.join(WIKICHAT_HOME, "crons.json"),
   roles: path.join(WIKICHAT_HOME, "roles"),
   connaissance: path.join(WIKICHAT_HOME, "knowledge"),
+  // W8 : les fiches de conversation vivent avec la connaissance (même
+  // stockage, même recherche) : knowledge/conversations/<projet>/<id>.md.
+  conversations: path.join(WIKICHAT_HOME, "knowledge", "conversations"),
+  // État de la capitalisation et mémoire de la personne (jamais publiés tels quels).
+  memoire: path.join(WIKICHAT_HOME, "memoire"),
   audits: path.join(WIKICHAT_HOME, "audits.json"),
   clusters: path.join(WIKICHAT_HOME, "clusters"),
   cartographie: path.join(WIKICHAT_HOME, "cartography"),

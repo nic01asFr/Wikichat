@@ -31,6 +31,8 @@ import { saveProject, writeAtomicJSON } from "../persistence.mjs";
 import { emitEvent } from "../events.mjs";
 import { CHEMINS } from "../chemins.mjs";
 import { absorberClotures } from "../closures.mjs";
+import { capitaliserFaits } from "../memoire/capitalisation.mjs";
+import { capitaliserNuit } from "../memoire/nuit.mjs";
 import fs from "fs";
 
 const journal = (m) => console.log(m);
@@ -135,6 +137,15 @@ const CATALOGUE = {
     description: "Range chaque clôture non encore absorbée en fiche de connaissance (closure-<projet>.md)",
     executer: () => absorberClotures(),
   },
+  // W8 : capitalisation des conversations (src/memoire/).
+  capitaliser_faits: {
+    description: "Fiche les conversations au repos : faits extraits par le code, depuis le transcript filtré de l'Atelier",
+    executer: (args = {}) => capitaliserFaits({ ids: Array.isArray(args.ids) ? args.ids : null }),
+  },
+  capitaliser_nuit: {
+    description: "Routine de nuit plafonnée : le sens de 20 conversations au plus, par des lancements de l'Atelier",
+    executer: (args = {}) => capitaliserNuit({ force: args.force === true }),
+  },
 };
 
 const ALIAS = {
@@ -144,6 +155,8 @@ const ALIAS = {
   auditMany: "audit_all_projects", audits: "audit_all_projects",
   scanForChanges: "scan_changes", instantanes: "scan_changes",
   absorberClotures: "absorb_closures",
+  capitaliserFaits: "capitaliser_faits", memoire_faits: "capitaliser_faits",
+  capitaliserNuit: "capitaliser_nuit", memoire_nuit: "capitaliser_nuit",
 };
 
 /** Nom canonique d'un job, ou null s'il n'existe pas. */

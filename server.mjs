@@ -43,6 +43,8 @@ import { ensureUserOverlay } from "./src/overlay-installer.mjs";
 import { chargerConversations, flushConversations, getConversation, estGenerique, declarerDebut } from "./src/conversations.mjs";
 import { chargerFils, flushFils, marquerLus } from "./src/fils.mjs";
 import { enregistrerRoutesHooks } from "./src/hooks-serveur.mjs";
+import { enregistrerRoutesMemoire } from "./src/memoire/routes.mjs";
+import { assurerTriggersMemoire } from "./src/memoire/triggers.mjs";
 import { createIdea, updateIdea, listIdeas, getIdea, ideaStats, deleteIdea, searchIdeas } from "./src/ideas.mjs";
 import { auditProject, auditMany } from "./src/repo-audit.mjs";
 import { runHarmonizer, formatHarmonizerSummary } from "./src/harmonizer.mjs";
@@ -92,6 +94,7 @@ configureTriggers({
 });
 loadTriggers();    // Restore persisted triggers
 ensureWakeTrigger(); // Réveil des agents nommés hors ligne — un seul trigger pour tous
+assurerTriggersMemoire(); // W8 : fiches des conversations (15 min) et routine de nuit (désactivée à la création)
 startCronCatchup(); // Rejoue au réveil les crons manqués pendant le sommeil
 addMessageListener(notifyMessageForTriggers); // Wire mention/channel_match triggers
 reconcileDaemonsAtBoot();  // Mark dead PIDs as ended (cleanup before re-spawn)
@@ -941,6 +944,7 @@ function conversationIsHot(agent) {
 // et lectures pour l'Atelier : conversations, fils, état de projet.
 // Conception : docs/hooks-et-dialogue.md.
 enregistrerRoutesHooks(app);
+enregistrerRoutesMemoire(app); // W8 : /api/memoire/* (rappel, fiches, mémoire de la personne)
 
 app.get("/api/inbox", async (req, res) => {
   const agent = (req.query.agent || "").toString().trim();

@@ -23,7 +23,8 @@
     "memory:server": "node remote/memory-mcp-server.mjs",
     "test:hooks": "node --test --test-concurrency=1 src/hooks.test.mjs",
     "test:lot-w": "node --test --test-concurrency=1 --test-force-exit src/lot-w.test.mjs",
-    "test:profils": "node --test --test-concurrency=1 --test-force-exit src/profils.test.mjs"
+    "test:profils": "node --test --test-concurrency=1 --test-force-exit src/profils.test.mjs",
+    "test:memoire": "node --test --test-concurrency=1 --test-force-exit src/memoire.test.mjs"
   },
   "keywords": [
     "mcp",

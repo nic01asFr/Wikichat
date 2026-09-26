@@ -14,6 +14,12 @@
  *
  * Identifiant d'une fiche (`sujet`) : le nom du fichier sans `.md`, préfixé du
  * slug du projet pour une fiche de projet (`<slug>/<nom>`).
+ *
+ * W8 : les fiches de conversation (`knowledge/conversations/<projet>/<id>.md`,
+ * écrites par `memoire/fiches.mjs`) sont lues ici aussi, sous le sujet
+ * `conversation:<id>`. Elles ne sont pas « centrales » : un profil `code` ne
+ * voit que celles de son projet, l'Assistant toutes. Leur index
+ * (`conversations/index.jsonl`) sert au rappel (`chercherConversations`).
  */
 
 import fs from "fs";
@@ -22,6 +28,8 @@ import { CHEMINS } from "./chemins.mjs";
 import { loadRegistry } from "./registry.mjs";
 import { racineProjetsAtelier, slugifier } from "./projet-fichiers.mjs";
 
+export const PREFIXE_CONVERSATION = "conversation:";
+
 /** Dossier central (calculé à l'appel : les tests changent de HOME par processus). */
 export function dossierCentral() { return CHEMINS.connaissance; }
 
@@ -29,7 +37,7 @@ function reel(p) { try { return fs.realpathSync(p); } catch { return path.resolv
 
 /**
  * Liste des fiches.
- * @param {{ portee?: "central"|"projects"|"all", projet?: string|null }} o
+ * @param {{ portee?: "central"|"projects"|"conversations"|"all", projet?: string|null }} o
  *   `projet` (slug) : seule la connaissance de ce projet est lue côté projets
  *   (profil code) — le projet du registre qui porte ce slug, et le dossier
  *   `<racine des projets de l'Atelier>/<slug>`.
@@ -64,7 +72,120 @@ export function listerFiches({ portee = "all", projet = null } = {}) {
     }
     if (borne) ajouter(borne, path.join(racineProjetsAtelier(), borne, ".wikichat", "knowledge"), borne);
   }
+  if (portee === "all" || portee === "conversations") {
+    for (const f of listerFichesConversations({ projet })) fiches.push(f);
+  }
   return fiches;
+}
+
+// ── Fiches de conversation (W8) ──────────────────────────────────────────────
+
+/** `knowledge/conversations/` : un dossier par projet, une fiche par conversation. */
+export function dossierConversations() { return CHEMINS.conversations; }
+
+const _ID_FICHE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/;
+
+/** Le nom du dossier d'un projet dans les fiches de conversation (`_` pour aucun projet). */
+export function nomDuDossierProjet(projet) {
+  return slugifier(projet) || "_";
+}
+
+/**
+ * Les fiches de conversation, bornées à un projet quand `projet` est donné
+ * (profil code) ; toutes sinon (l'Assistant).
+ */
+export function listerFichesConversations({ projet = null } = {}) {
+  const racine = dossierConversations();
+  let dossiers;
+  try { dossiers = fs.readdirSync(racine, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name); }
+  catch { return []; }
+  if (projet) dossiers = dossiers.filter(d => d === nomDuDossierProjet(projet));
+  const sortie = [];
+  for (const d of dossiers) {
+    let noms;
+    try { noms = fs.readdirSync(path.join(racine, d)); } catch { continue; }
+    for (const n of noms) {
+      if (!n.endsWith(".md")) continue;
+      const id = n.slice(0, -3);
+      sortie.push({ sujet: `${PREFIXE_CONVERSATION}${id}`, source: `${PREFIXE_CONVERSATION}${d}`, chemin: path.join(racine, d, n), nom: id, projet: d });
+    }
+  }
+  return sortie;
+}
+
+/**
+ * Une fiche de conversation par son identifiant, ou un préfixe unique d'au
+ * moins 8 caractères (l'identifiant court que rend le rappel). `projet` borne
+ * la recherche : une fiche d'un autre projet est introuvable.
+ */
+export function lireFicheConversation(id, { projet = null } = {}) {
+  const brut = String(id || "").trim().replace(/^conversation:/, "");
+  if (!_ID_FICHE.test(brut) || brut.includes("..")) return null;
+  const candidates = listerFichesConversations({ projet }).filter(f => f.nom === brut || (brut.length >= 8 && f.nom.startsWith(brut)));
+  const exacte = candidates.find(f => f.nom === brut);
+  const f = exacte || (candidates.length === 1 ? candidates[0] : null);
+  if (!f) return null;
+  try {
+    const texte = fs.readFileSync(f.chemin, "utf8");
+    const st = fs.statSync(f.chemin);
+    return { ...f, id: f.nom, titre: titreDe(texte, f.nom), texte, modifie: new Date(st.mtimeMs).toISOString(), taille: st.size };
+  } catch { return null; }
+}
+
+/** Les lignes de l'index des fiches (`conversations/index.jsonl`). */
+export function lireIndexConversations() {
+  let brut;
+  try { brut = fs.readFileSync(path.join(dossierConversations(), "index.jsonl"), "utf8"); } catch { return []; }
+  const sortie = [];
+  for (const l of brut.split("\n")) {
+    if (!l.trim()) continue;
+    try { const o = JSON.parse(l); if (o && o.id) sortie.push(o); } catch { /* ligne abîmée : ignorée */ }
+  }
+  return sortie;
+}
+
+/** Minuscules, sans accents : « décision » et « decision » se retrouvent. */
+export function plier(s) {
+  return String(s || "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+const MOTS_VIDES = new Set(["les", "des", "une", "dans", "pour", "par", "sur", "avec", "est", "que", "qui", "pas", "plus", "mon", "mes", "notre", "nos", "the", "and", "for", "dont", "cette", "ces", "aux"]);
+
+/** Les termes d'une requête : pliés, sans mots vides ni mots de deux lettres. */
+export function termesDe(requete) {
+  return [...new Set(plier(requete).split(/[^a-z0-9]+/).filter(t => t.length > 2 && !MOTS_VIDES.has(t)))];
+}
+
+/**
+ * Rappel : recherche dans l'index des fiches, avec la pondération de
+ * `chercher` (titre ×3, sujets et objets ×2, résumé, décisions et citations
+ * ×1, occurrences plafonnées), sans accents. Les plus récentes départagent.
+ */
+export function chercherConversations(requete, { projet = null, depuis = null, limite = 5 } = {}) {
+  const termes = termesDe(requete);
+  let index = lireIndexConversations();
+  if (projet) index = index.filter(e => e.projet === nomDuDossierProjet(projet));
+  if (depuis) index = index.filter(e => String(e.fin || e.debut || "") >= String(depuis));
+  if (!termes.length) return { total: 0, fiches: index.length, resultats: [] };
+  const compter = (texte, t) => Math.min(texte.split(t).length - 1, 10);
+  const resultats = [];
+  for (const e of index) {
+    const titre = plier(e.titre);
+    const etiquettes = plier([...(e.sujets || []), ...(e.objets || []), e.projet].join(" "));
+    const corps = plier([e.resume, ...(e.decisions || []), ...(e.citations || [])].join(" "));
+    let score = 0;
+    for (const t of termes) score += 3 * Math.min(compter(titre, t), 3) + 2 * Math.min(compter(etiquettes, t), 5) + compter(corps, t);
+    if (score) resultats.push({ ...e, score });
+  }
+  resultats.sort((a, b) => b.score - a.score || String(b.fin || "").localeCompare(String(a.fin || "")));
+  return {
+    total: resultats.length,
+    fiches: index.length,
+    resultats: resultats.slice(0, limite).map(e => ({
+      id: e.id, projet: e.projet, genre: e.genre, debut: e.debut, fin: e.fin,
+      titre: e.titre, resume: e.resume || "", objets: (e.objets || []).slice(0, 5), statut: e.statut, score: e.score,
+    })),
+  };
 }
 
 /** Titre d'une fiche : premier `# `, sinon son nom. */
@@ -81,6 +202,7 @@ export function titreDe(texte, nom) {
  */
 export function lireFiche(sujet, { projet = null } = {}) {
   const s = String(sujet || "").trim().replace(/\.md$/i, "");
+  if (s.startsWith(PREFIXE_CONVERSATION)) return lireFicheConversation(s.slice(PREFIXE_CONVERSATION.length), { projet });
   if (!s || s.includes("..") || s.includes("\\")) return null;
   if (projet && s.includes("/") && slugifier(s.split("/")[0]) !== slugifier(projet)) return null;
   const fiches = listerFiches({ portee: s.includes("/") ? "projects" : "central", projet });

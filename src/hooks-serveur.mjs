@@ -19,6 +19,7 @@ import {
 } from "./conversations.mjs";
 import { lireProjet, blocProjet, ageLisible, couper } from "./projet-fichiers.mjs";
 import { filsDe, filDuMessage, marquerLus, enRetard, resumerFil, filPourApi, filsEntre } from "./fils.mjs";
+import { signalerFinDeConversation } from "./memoire/capitalisation.mjs";
 
 // ── Plafonds (caractères) ────────────────────────────────────────────────────
 export const PLAFONDS = {
@@ -304,6 +305,7 @@ function reveillerCle(cle) {
 export function hookSessionEnd(e) {
   if (!e.session_id) return {};
   declarerFin(e.session_id, e.raison);
+  signalerFinDeConversation(e.session_id); // W8 : sa fiche, sans attendre le repos
   reveillerCle(`guet:${e.session_id}`);
   return {};
 }
