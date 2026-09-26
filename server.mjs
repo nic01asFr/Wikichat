@@ -668,7 +668,7 @@ app.get("/sse", async (req, res) => {
   registerTools(serveurDuProfil, sid);
   registerResources(serveurDuProfil, sid);
   if (serveurDuProfil.outilsCaches?.length) {
-    console.log(`[WikiChat] profil code — ${serveurDuProfil.outilsCaches.length} outil(s) non exposé(s) à ${session.name}`);
+    console.log(`[WikiChat] profil ${session.profil} — ${serveurDuProfil.outilsCaches.length} outil(s) non exposé(s) à ${session.name}`);
   }
   await mcpServer.connect(transport);
 });

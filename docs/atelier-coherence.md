@@ -422,7 +422,8 @@ connexion voit et peut appeler, pas une consigne au modèle.
 
 ### 12.2 Outils par profil
 
-**`assistant`** (et connexion sans profil) : les 53 outils.
+**`assistant`** : le noyau de dix outils (§12.8, vague 3). **Connexion sans profil** (la
+passerelle de l'Atelier, `passerelle-atelier`) : les 53 outils.
 
 **`code`** : 26 outils, liste fermée (`OUTILS_CODE` dans `src/profils.mjs`).
 Un outil ajouté à wikichat n'est donné à un agent code qu'en l'ajoutant à
@@ -552,6 +553,47 @@ Aucune dépendance ajoutée ; aucune donnée migrée.
   messagerie que le contrat garde ; seuls briefing et ressources sont bornés.
 - Non vérifié en réel : `/mcp` d'une vraie conversation Claude Code, sur le
   pod, avec les variables posées par l'Atelier.
+
+### 12.8 Noyau de l'Assistant (vague 3)
+
+Décision du coordinateur (26/09), adoptée par défaut, sur une mesure de l'équipe A : le pont
+wikichat natif coûtait environ 10 000 jetons à chaque requête de l'Assistant, qui recevait
+les 53 outils. En profil `assistant`, la connexion n'enregistre plus que le **noyau**
+(`OUTILS_ASSISTANT_NOYAU` dans `src/profils.mjs`) :
+
+`get_briefing`, `send_message`, `poll`, `read_messages`, `list_threads`, `contact_agent`,
+`search_knowledge`, `recall`, `remember`, `project_state`.
+
+- Mécanique : celle du profil `code` (§12.1) ; un outil hors noyau n'est jamais enregistré
+  sur la connexion, `tools/call` le refuse comme inconnu. Aucune borne de projet : l'Assistant
+  lit tout projet (`project_state` de n'importe lequel). Les ressources restent toutes.
+- Le reste (déclarer un projet, lancer, triggers, routines, clôture avec le Closer…) passe par
+  le catalogue de la passerelle de l'Atelier (`gateway_find_tools` / `gateway_call_tool`),
+  dont l'entrée SSE `passerelle-atelier` n'annonce pas de profil et garde les 53 outils.
+- La capitalisation des conversations (§14) n'ajoute aucun outil wikichat : le rappel passe
+  par `atelier_rappel` et `atelier_fiche` de l'Atelier, et `search_knowledge` (du noyau)
+  trouve aussi les fiches.
+
+**Mesure** (`npm run test:profils`, poids du JSON de `tools/list`, caractères / 3,4) :
+
+| Connexion | Outils | Schémas | Jetons estimés |
+|---|---|---|---|
+| sans profil (passerelle) | 53 | 37 770 car. | ≈ 11 100 |
+| `assistant` (noyau) | 10 | 8 402 car. | ≈ 2 470 |
+
+Soit 78 % de moins, environ 8 600 jetons par requête de l'Assistant.
+
+**Tests** : `test:profils` passe à 15 cas : `tools/list` de l'Assistant égal au noyau ; un outil
+hors noyau (`spawn_session`, `list_projects`, `declare_project`) refusé ; `project_state`
+d'un autre projet lu ; le poids des schémas mesuré et borné (moins de 40 % du total) ; le vrai
+pont stdio avec `WIKICHAT_PROFIL=assistant` ne reçoit que le noyau. Le cas du briefing
+déclare ses projets par une connexion sans profil, comme le ferait la passerelle.
+
+**Pod** : rien de plus que le déploiement de `v3-memoire` ; l'Atelier pose déjà
+`WIKICHAT_PROFIL=assistant` pour l'Assistant (§12.6, équipe S). Vérifier dans une
+conversation de l'Assistant : `/mcp` montre 10 outils wikichat ; le journal du service porte
+`profil assistant — 43 outil(s) non exposé(s)` (53 moins les 10 du noyau). Retour arrière : vider la liste (tout
+redevient visible) ou revenir au commit d'avant.
 
 ## 13. Lot D actif : les lancements passent par l'Atelier
 

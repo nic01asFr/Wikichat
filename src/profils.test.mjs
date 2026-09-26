@@ -6,7 +6,8 @@
  *   2. contre un serveur isolé (HOME jetable, deux projets `alpha` et `beta`) :
  *      - un agent code ne voit ni n'appelle un outil hors profil ;
  *      - un agent code qui vise un autre projet est refusé ;
- *      - l'Assistant voit tout, une connexion sans profil aussi ;
+ *      - l'Assistant voit le noyau (OUTILS_ASSISTANT_NOYAU), une connexion sans
+ *        profil voit tout (la passerelle de l'Atelier, son catalogue) ;
  *      - ressources filtrées ; briefing et hook SessionStart bornés au projet ;
  *      - bout en bout par le vrai pont stdio, qui lit WIKICHAT_PROFIL et WIKICHAT_PROJET.
  *
@@ -36,7 +37,7 @@ const W = path.join(MAISON, ".wikichat");
 const ecrire = (p, contenu) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, typeof contenu === "string" ? contenu : JSON.stringify(contenu, null, 2)); };
 const attendre = (ms) => new Promise(r => setTimeout(r, ms));
 
-const { lireAnnonce, memeProjet, OUTILS_CODE, RESSOURCES_CODE, nomCanonique } = await import("./profils.mjs");
+const { lireAnnonce, memeProjet, OUTILS_CODE, OUTILS_ASSISTANT_NOYAU, RESSOURCES_CODE, nomCanonique } = await import("./profils.mjs");
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Fonctions pures
@@ -142,7 +143,7 @@ const HORS_PROFIL_CODE = [
   "create_channel", "update_idea", "harmonize_ideas", "list_spawned", "poll_ticket", "poll_messages",
 ];
 
-test("tools/list : l'agent code reçoit exactement les outils de son profil, l'Assistant et une connexion sans profil reçoivent tout", async () => {
+test("tools/list : l'agent code reçoit exactement les outils de son profil, l'Assistant son noyau, une connexion sans profil tout", async () => {
   const code = await client("Code-Alpha", { profil: "code", projet: "alpha" });
   const assistant = await client("Assistant-Test", { profil: "assistant" });
   const sansProfil = await client("Sans-Profil");
@@ -150,18 +151,37 @@ test("tools/list : l'agent code reçoit exactement les outils de son profil, l'A
   const vusAssistant = await assistant.outils();
   const vusSans = await sansProfil.outils();
   assert.deepEqual(vusCode, [...OUTILS_CODE].sort());
-  for (const o of OUTILS_CODE) assert.ok(vusAssistant.includes(o), `${o} n'est pas un outil de wikichat`);
+  assert.deepEqual(vusAssistant, [...OUTILS_ASSISTANT_NOYAU].sort(), "l'Assistant : le noyau, exactement");
+  for (const o of [...OUTILS_CODE, ...OUTILS_ASSISTANT_NOYAU]) assert.ok(vusSans.includes(o), `${o} n'est pas un outil de wikichat`);
   for (const o of HORS_PROFIL_CODE) {
     assert.ok(!vusCode.includes(o), `${o} visible en profil code`);
-    assert.ok(vusAssistant.includes(o), `${o} absent pour l'Assistant`);
+    assert.ok(!vusAssistant.includes(o), `${o} visible dans le noyau de l'Assistant`);
+    assert.ok(vusSans.includes(o), `${o} absent sans profil (passerelle)`);
   }
-  assert.deepEqual(vusSans, vusAssistant, "sans profil : comportement d'avant, tous les outils");
-  assert.ok(vusAssistant.length >= 53, `${vusAssistant.length} outils`);
+  assert.ok(vusSans.length >= 53, `${vusSans.length} outils`);
   assert.match(serveur.journal, /profil non annoncé — Sans-Profil garde tous les outils/);
   assert.match(serveur.journal, /profil code \(projet alpha\) — Code-Alpha/);
   const statut = await (await fetch(`${URL_BASE}/status`)).json();
   const s = statut.sessions.find(x => x.name === "Code-Alpha");
   assert.deepEqual([s.profil, s.projet], ["code", "alpha"]);
+});
+
+test("noyau de l'Assistant : le gain se mesure au poids des schémas ; un outil hors noyau est refusé, comme pour le profil code", async () => {
+  const assistant = await client("Assistant-Noyau", { profil: "assistant" });
+  const sansProfil = await client("Sans-Profil-Noyau");
+  const poids = async (c) => JSON.stringify((await c.brut.listTools()).tools).length;
+  const pAssistant = await poids(assistant);
+  const pTout = await poids(sansProfil);
+  const jetons = (n) => Math.ceil(n / 3.4);
+  console.log(`# schémas : ${pTout} car. (≈ ${jetons(pTout)} jetons) pour tous les outils, ${pAssistant} car. (≈ ${jetons(pAssistant)} jetons) pour le noyau de l'Assistant, soit ${Math.round(100 * (1 - pAssistant / pTout))} % de moins`);
+  assert.ok(pAssistant < pTout * 0.4, `le noyau pèse ${pAssistant} car. sur ${pTout}`);
+  for (const [outil, args] of [["spawn_session", { name: "X", task: "t" }], ["list_projects", {}], ["declare_project", { name: "gamma" }]]) {
+    const r = await assistant.appel(outil, args);
+    assert.ok(r.erreur, `${outil} n'a pas été refusé à l'Assistant : ${r.texte}`);
+    assert.match(r.texte, /not found/);
+  }
+  assert.match((await assistant.appel("project_state", { project: "beta" })).texte, /tetebeta/, "l'Assistant lit tout projet");
+  assert.match(serveur.journal, /profil assistant — \d+ outil\(s\) non exposé\(s\) à Assistant-Noyau/);
 });
 
 test("tools/call : un outil hors profil est refusé à l'agent code, même appelé directement", async () => {
@@ -244,8 +264,10 @@ test("messagerie : contact_agent vers un agent d'un autre projet passe, sans ré
 
 test("briefing : l'agent code voit son projet et son courrier, pas les autres projets ; l'Assistant voit tout", async () => {
   const assistant = await client("Assistant-Brief", { profil: "assistant" });
-  await assistant.appel("declare_project", { name: "alpha", description: "projet alpha" });
-  await assistant.appel("declare_project", { name: "beta", description: "projet beta" });
+  // declare_project n'est pas du noyau : la passerelle (sans profil) déclare.
+  const passerelle = await client("Passerelle-Brief");
+  await passerelle.appel("declare_project", { name: "alpha", description: "projet alpha" });
+  await passerelle.appel("declare_project", { name: "beta", description: "projet beta" });
   await assistant.appel("send_message", { channel: "proj-beta", content: "bruit interne de beta" });
   const code = await client("Code-Alpha-6", { profil: "code", projet: "alpha" });
   const b = (await code.appel("get_briefing", {})).texte;
@@ -322,6 +344,9 @@ test("bout en bout par le pont stdio : WIKICHAT_PROFIL et WIKICHAT_PROJET font l
   assert.match(refus.content[0].text, /limité au projet "alpha"/);
   const cache = await code.callTool({ name: "spawn_session", arguments: { repo_path: BETA, name: "X", task: "t" } });
   assert.ok(cache.isError);
+
+  const pontAssistant = await pont({ WIKICHAT_AGENT: "Pont-Assistant", WIKICHAT_PROFIL: "assistant" });
+  assert.deepEqual((await pontAssistant.listTools()).tools.map(t => t.name).sort(), [...OUTILS_ASSISTANT_NOYAU].sort(), "le pont en profil assistant : le noyau");
 
   const sans = await pont({ WIKICHAT_AGENT: "Pont-Sans", WIKICHAT_PROFIL: "${WIKICHAT_PROFIL}" });
   const tous = (await sans.listTools()).tools.map(t => t.name);

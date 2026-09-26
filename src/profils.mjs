@@ -7,7 +7,11 @@
  * `tools/call`, et dans les ressources. Une consigne au modèle ne suffit pas.
  *
  *   - `code`      : un agent code, limité à son projet ;
- *   - `assistant` : l'Assistant de l'Atelier, tous les outils ;
+ *   - `assistant` : l'Assistant de l'Atelier, un **noyau** de dix outils
+ *     (`OUTILS_ASSISTANT_NOYAU`, décision du coordinateur, 26/09, vague 3) ;
+ *     tous les autres restent joignables par le catalogue de la passerelle de
+ *     l'Atelier (`gateway_find_tools` / `gateway_call_tool`), dont l'entrée
+ *     SSE `passerelle-atelier` n'annonce pas de profil et garde tout ;
  *   - rien        : comportement d'avant les profils (tous les outils), journalisé.
  *
  * Transport de l'annonce : `?profil=` et `?projet=` dans l'URL `/sse` (le pont
@@ -54,6 +58,17 @@ export const OUTILS_CODE = Object.freeze([
   "set_status", "declare_delay", "share_artifact", "list_channels",
 ]);
 
+/**
+ * Outils du profil `assistant` : le noyau (vague 3). Mesuré par l'équipe A : les
+ * 53 outils du pont natif coûtaient environ 10 000 jetons à chaque requête de
+ * l'Assistant. Le reste passe par le catalogue de la passerelle, qui ne coûte
+ * que ce qu'on y cherche. Liste fermée, comme celle du profil `code`.
+ */
+export const OUTILS_ASSISTANT_NOYAU = Object.freeze([
+  "get_briefing", "send_message", "poll", "read_messages", "list_threads", "contact_agent",
+  "search_knowledge", "recall", "remember", "project_state",
+]);
+
 /** Outils dont l'argument `project` est remplacé par le projet du profil. */
 export const OUTILS_LIES_AU_PROJET = Object.freeze([
   "project_state", "add_project_note", "claim_task", "release_task", "set_project_meta", "close_project",
@@ -64,6 +79,7 @@ export const OUTILS_LIES_AU_PROJET = Object.freeze([
 export const RESSOURCES_CODE = Object.freeze(["briefing", "role", "identity", "knowledge"]);
 
 const OUTILS_CODE_SET = new Set(OUTILS_CODE);
+const OUTILS_ASSISTANT_SET = new Set(OUTILS_ASSISTANT_NOYAU);
 const LIES_SET = new Set(OUTILS_LIES_AU_PROJET);
 const RESSOURCES_CODE_SET = new Set(RESSOURCES_CODE);
 
@@ -108,8 +124,15 @@ export function memeProjet(a, b) {
   return !!sa && sa === sb;
 }
 
+/** Vrai si la session est en profil `assistant`. */
+export function estAssistant(session) {
+  return session?.profil === PROFIL_ASSISTANT;
+}
+
 export function outilVisible(session, nom) {
-  return !estCode(session) || OUTILS_CODE_SET.has(nom);
+  if (estCode(session)) return OUTILS_CODE_SET.has(nom);
+  if (estAssistant(session)) return OUTILS_ASSISTANT_SET.has(nom);
+  return true;
 }
 
 export function ressourceVisible(session, nom) {
@@ -172,6 +195,7 @@ export function nomCanonique(slug, projets) {
  * @param {{ projets?: () => Map, journal?: (m: string) => void }} o
  */
 export function serveurFiltre(serveur, session, { projets = () => new Map(), journal = () => {} } = {}) {
+  if (estAssistant(session)) return serveurDuNoyau(serveur, session);
   if (!estCode(session)) return serveur;
   const caches = [];
   const enveloppe = Object.create(serveur);
@@ -215,6 +239,23 @@ export function serveurFiltre(serveur, session, { projets = () => new Map(), jou
     return serveur.resource(nom, ...reste);
   };
 
+  enveloppe.outilsCaches = caches;
+  return enveloppe;
+}
+
+/**
+ * Profil `assistant` : seuls les outils du noyau sont enregistrés ; ni borne de
+ * projet ni garde (l'Assistant voit tout l'Atelier). Les ressources restent
+ * toutes exposées.
+ */
+function serveurDuNoyau(serveur, session) {
+  const caches = [];
+  const enveloppe = Object.create(serveur);
+  enveloppe.tool = (nom, ...reste) => {
+    if (!outilVisible(session, nom)) { caches.push(nom); return undefined; }
+    return serveur.tool(nom, ...reste);
+  };
+  enveloppe.resource = (nom, ...reste) => serveur.resource(nom, ...reste);
   enveloppe.outilsCaches = caches;
   return enveloppe;
 }
